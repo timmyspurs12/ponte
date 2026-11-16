@@ -153,3 +153,39 @@ test("language selector and bilingual layouts at all five supported widths", asy
   }
   expect(errors).toEqual([]);
 });
+
+test("Portuguese accessibility and stable translated status filters", async ({
+  page,
+}) => {
+  const { default: AxeBuilder } = await import("@axe-core/playwright");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const route of ["/", "/app", "/app/invoices/new", "/pay/demo-1"]) {
+    await page.goto(route);
+    await page.waitForTimeout(200);
+    if (route === "/")
+      await expect(page.locator(".hero-visual")).toHaveCSS("opacity", "1");
+    const results = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+      .analyze();
+    expect(
+      results.violations.map((v) => ({
+        id: v.id,
+        nodes: v.nodes.map((n) => n.target),
+      })),
+      route,
+    ).toEqual([]);
+  }
+  await page.goto("/app/invoices");
+  await page
+    .getByRole("combobox", { name: "Filtrar por status" })
+    .selectOption("Settled");
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+  await page
+    .getByRole("combobox", { name: "Idioma", exact: true })
+    .selectOption("en-US");
+  await expect(
+    page.getByRole("combobox", { name: "Filter by status" }),
+  ).toHaveValue("Settled");
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+  await expect(page.locator(".badge").first()).toHaveText("Settled");
+});

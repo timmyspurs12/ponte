@@ -12,3 +12,6 @@ export function translate(
       : match,
   );
 }
+
+export const isMessageKey = (key: string) =>
+  Object.prototype.hasOwnProperty.call(ptBR, key);

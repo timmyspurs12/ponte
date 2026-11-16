@@ -1,47 +1,63 @@
-# Phase 1 QA handoff
+# Phase 1.1 QA handoff
 
-Validated on 16 November 2026 in the Arena Linux environment. Final preview runs the production build on port 3000. No external deployment was initiated.
+Validated on 16 November 2026. The live Arena preview serves the production frontend build on port 3000. No public deployment, payment integration or Phase 2 implementation was initiated. Phase 1 screenshots remain as baselines; new Portuguese screenshots have the `phase1.1-pt-` prefix.
 
 ## Results
 
-| Check | Result |
+| Check | Observed result |
 |---|---|
-| `npm ci` / dependency installation | Initial `npm install` succeeded; package-lock included for repeatable `npm ci` |
-| `npm run lint` | Pass, zero errors or warnings |
-| `npm run typecheck` | Pass |
-| `npm run build` | Pass, Next.js production compilation and route generation |
-| `npm test` on production preview | **3 passed**, 41.2 seconds on final run |
-| Browser JS/console errors | None in tested journeys, including reduced-motion check |
+| Dependency installation | Lockfile installation succeeded in real Ubuntu GitHub Actions (`npm ci`) |
+| ESLint | `npm run lint`: pass |
+| TypeScript | `npm run typecheck`: pass |
+| Production build | `npm run build`: pass |
+| Full local suite | **11 passed**, approximately 1.6 minutes, against the production preview |
+| Browser JS and console errors | None in the tested bilingual journeys/layouts |
+| Ubuntu / standard Chromium | Actual GitHub Actions runs succeeded; see CI evidence below |
+| Windows 10 native execution | **Not performed**: no Windows host is available in this session. Portable commands and code paths are implemented, not claimed as a native Windows test result. |
 | Production dependency audit | `npm audit --omit=dev`: zero vulnerabilities |
-| Full dependency audit | Eight moderate development-tool advisories in ESLint/TypeScript ESLint/minimatch dependency tree. Not silently forced to an incompatible Next ESLint major; review upstream updates before production delivery. |
+| Full dependency audit | Eight moderate dev-tool advisories remain in the ESLint ecosystem; no incompatible forced major downgrade was applied. |
+
+## CI evidence and behavior
+
+Workflow: [Frontend quality](../.github/workflows/frontend.yml). Ubuntu 24.04 + Node 22, `npm ci`, lint, typecheck, production build, `playwright install --with-deps chromium`, full tests and artifact upload. It triggers on PRs targeting main and pushes to the existing feature branch. There are no deployment steps or credentials.
+
+The first Phase 1.1 source commit, `2f31bf1db13e860e3a00c5a53c8a6a5506e20931`, produced **real successful Actions runs**, including standard Chromium browser installation and the then-eight-test suite:
+
+- [PR event run 43872766548](https://github.com/timmyspurs12/ponte/actions/runs/43872766548)
+- [Push event run 43872766243](https://github.com/timmyspurs12/ponte/actions/runs/43872766243)
+
+The suite was subsequently expanded to eleven tests. Check the [current PR checks](https://github.com/timmyspurs12/ponte/pull/1/checks) and the Phase 1.1 PR handoff comment for the final head SHA and its observed run results. No success is inferred merely from creating workflow YAML.
 
 ## Actually tested
 
-- Business overview and sample totals.
-- Invoice form validation and error messages; valid invoice creation.
-- Pix confirmation simulation, alternate liquidity route selection and route locking.
-- Refresh persistence before settlement and reopening settled records.
-- Confirmation dialog cancel, confirm and Escape behavior.
-- Simulated receipt and JSON download filename.
-- Public-facing payment route in the same browser store.
-- Search, status filter, empty result, clear filters, sorting selection and pagination.
-- Missing demo invoice recovery.
-- All main pages at 1440, 1280, 768, 390 and 360px; document-width overflow assertions.
-- Mobile navigation disclosure and in-page navigation.
-- Keyboard arrow selection for the radio group, with focus and checked-state assertions.
-- Reduced-motion rendering and successful mobile settlement.
-- Axe WCAG 2 A/AA + 2.1 AA rule scan of `/`, `/app`, `/app/invoices/new`, `/pay/demo-1`: no detected violations in those initial states. Not a complete WCAG audit.
+- The existing complete English flow: invalid form, creation, Pix simulation, alternate route, cancel/confirm dialog, refresh persistence, receipt export, public checkout, missing invoice, search/filter/sort/pagination.
+- Portuguese is the default on a fresh browser, with server/client `html.lang` alignment.
+- Selector changes labels, validation errors, statuses, route labels and number formatting immediately without resetting the journey.
+- English preference survives reload; Portuguese-created invoice data and user-entered business names remain unchanged.
+- Complete Portuguese invoice/Pix/settlement flow with language switching before and after route selection.
+- Selected route's minimum output is displayed in both locales from the candidate model, not recalculated in the panel.
+- Filter values remain stable when translated option labels change.
+- Both languages across `/`, `/app`, `/app/invoices`, `/app/invoices/new`, `/pay/demo-1` and `/developers` at **1440, 1280, 768, 390 and 360px**. Language selector visible and functional; no document horizontal overflow.
+- Brazilian `R$ 25.000,00`, English `R$25,000.00`, localized USDG decimals, pt-BR/en-US dates and explicitly UTC timestamps.
+- Exact integer output/minimum/fee formulas, boundary values, rejection of fractional minor units/sub-cent legacy amounts, JSON serialization, three distinct candidate minimums, locked-route settlement rejection and old receipt normalization.
+- Translation-registry completeness for every static interface `t()` message key.
+- Keyboard radio navigation, Escape/cancel/confirm dialog handling, reduced motion and mobile settlement.
+- Axe A/AA + 2.1 AA scans of four main initial screens in **both languages**. No detected violations. Scans wait for the initial hero opacity entrance to complete to avoid measuring transient faded colors. Not an accessibility certification.
 
-## Visual review and corrections
+## Visual preservation and refinement
 
-Inspected actual screenshots of desktop/mobile homepage, overview and settlement receipt. Refined small-copy sizing and dark panel contrast. Fixed mobile page overflow caused by a visually hidden invoice-table header escaping its scroll region. Corrected low-contrast process labels, final CTA metadata and inactive journey labels discovered by axe. Removed a reduced-motion server/client initial-style mismatch. Native confirmation dialog closes before removal, restoring focus to the payment action. The skip link uses clipped hidden styling when unfocused, preventing full-page screenshot artifacts without removing keyboard access.
+Inspected actual Portuguese desktop/mobile screenshots of homepage, overview and payment detail, alongside the original English baselines. The mineral-green/chalk identity, Manrope, IBM Plex Mono, bridge illustration, editorial hierarchy, compact navigation, tables and restrained Motion remain intact. Changes are limited to the language control, small responsive header adjustments and Portuguese headline sizing. A 360px developer-header overflow discovered in testing was corrected by grouping its controls consistently with marketing navigation.
 
-Final images: `docs/screenshots/home-1440.png`, `home-390.png`, `overview-desktop.png`, `overview-mobile.png`, `receipt-desktop.png`, `receipt-mobile.png`.
+Six new images: `docs/screenshots/phase1.1-pt-{home,overview,payment}-{1440,390}.png`. Automated test screenshots now go to ignored `test-results/screenshots/`, so normal CI does not rewrite the approved baselines.
 
-## Test environment caveats
+## Platform boundaries
 
-The standard Playwright browser CDN download failed due to network restrictions. Tests **did run**, using `@sparticuz/chromium` from the allowed npm registry and its bundled Linux libraries. Preparation is scripted by `npm test`. These are headless Chromium checks, not Safari/Firefox, screen-reader certification or physical low-powered-device measurements. No claims of live PSP, chain or Stylus integration are made. Generated browser caches and test reports are ignored by Git.
+Standard Playwright is the default. The Node runner uses `spawnSync(process.execPath, ...)` and forwards exit codes/arguments without Bash environment assignment, shell expansion or Windows `.cmd` quoting. Playwright starts the built frontend itself; it only reuses existing servers outside CI.
 
-## Remaining frontend boundaries
+This restricted Linux sandbox cannot download standard Chromium from the browser CDN. Local tests therefore used the **explicit** `PONTE_BROWSER_FALLBACK=1` path with the existing registry-packaged Chromium and bundled libraries. Paths are resolved by the package, not a hardcoded `/tmp/chromium` in config. GitHub Actions uses the standard path and actually installed its browser/dependencies successfully. The fallback refuses unsupported operating systems; Windows uses `npm run test:install` then `npm test` without modifying source configuration.
 
-Local demo links cannot transfer browser-local records to another user. No production sign-in, PDF receipt, localization, cross-device synchronization or banking QR code. Filtering is component-local rather than encoded in URL query parameters. Invoice due dates use native date inputs and ISO date text. A full localized money-input mask, deeper screen-reader testing and independent performance profiling would be useful follow-up polish. Phase 2 is unimplemented and gated on frontend approval.
+## Remaining issues / non-claims
+
+No native Windows 10, Safari/Firefox, physical low-powered device or manual screen-reader testing was available. Native number/date input editing follows browser conventions; there is no custom localized money-entry mask. Invoice/payment amounts retain the explicitly marked Phase 1 major-unit storage boundary; real backend persistence must migrate to integer minor units as described in [FINANCIAL_MODEL.md](FINANCIAL_MODEL.md). USDG's two-decimal demo scale is not a claim about onchain decimals.
+
+Demo links remain browser-local, not shareable records. No real quotes, payments, authentication, banking QR codes, smart contracts, wallet signing, PDF receipts or backend persistence. These boundaries are intentional and unchanged.

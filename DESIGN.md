@@ -31,3 +31,11 @@ Semantic headings/landmarks, skip link, visible focus, labeled inputs and inline
 
 ## Review
 Avoid the default three-card repetition: use a route atlas, horizontal lifecycle, split dark routing workspace, numbered process only where sequential, and editorial security columns. No fabricated traction, audits, customers or deployed integration claims.
+
+## Phase 1.1 — localization, not redesign
+
+The approved mineral-green/chalk palette, Manrope/Plex Mono, route SVG, editorial grid, compact navigation, financial tables and Motion vocabulary are unchanged. A native keyboard-accessible globe/language select offers **Português (Brasil)** and **English** in marketing, developer and application headers. Portuguese is the default. On narrow screens, optional header actions give way to the language control; the invoice/payment CTAs remain in the page content.
+
+English source messages form stable translation keys in `src/lib/i18n/pt-BR.ts`, used through a shared provider rather than duplicate page components. Whole-message interpolation is used for amounts, pagination and confirmation sentences. Status codes, business names, user-entered content, addresses, hashes, token/protocol names and code identifiers remain locale-neutral. Language preference is a first-party cookie (no account/backend); initial server markup, HTML lang and client switching stay aligned. Switching updates metadata, labels, errors, status text and toasts without resetting the journey.
+
+Formatting uses `Intl` with pt-BR/en-US, including Brazilian grouping/decimal separators and localized dates. Date-only values do not shift by timezone; settlement timestamps explicitly indicate UTC. Financial amount and timestamp data remain unformatted in storage. A modest Portuguese hero type-size adjustment accommodates longer copy without changing the grid. The selector and bilingual page widths are tested at 1440/1280/768/390/360px. See `docs/FINANCIAL_MODEL.md` for integer quote precision and rounding rules.

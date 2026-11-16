@@ -1,6 +1,6 @@
-import type { PaymentQuote, RouteCandidate } from "./models";
+import type { MinorUnits, PaymentQuote, RouteCandidate } from "./models";
 /** JSON-safe integer minor units. Demo USDG scale is 2; NOT onchain token decimals. */
-export type MinorUnits = string;
+export type { MinorUnits } from "./models";
 export interface QuoteInput {
   fundingMinor: MinorUnits;
 }

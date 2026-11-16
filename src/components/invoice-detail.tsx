@@ -1,4 +1,5 @@
 "use client";
+import { isMessageKey } from "@/lib/i18n/messages";
 import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { useState } from "react";
@@ -76,7 +77,7 @@ export function InvoiceDetail({
       );
     } catch (e) {
       setError(
-        e instanceof Error
+        e instanceof Error && isMessageKey(e.message)
           ? e.message
           : "Could not save demo state. Please try again.",
       );
@@ -281,7 +282,13 @@ export function InvoiceDetail({
                         )}
                   </p>
                   <div className="quote-meta">
-                    <span>{t("Sample FX: 1 USDG = R$5.25")}</span>
+                    <span>
+                      {t("Sample FX: 1 USDG = {rate}", {
+                        rate: money(
+                          Number(q.rate.numerator) / Number(q.rate.denominator),
+                        ),
+                      })}
+                    </span>
                     <span>{t("No live market data")}</span>
                   </div>
                   <div
@@ -354,7 +361,14 @@ export function InvoiceDetail({
                     </div>
                     <div>
                       <dt>{t("Sample execution cost")}</dt>
-                      <dd className="mono">{t("$0.02 (illustrative)")}</dd>
+                      <dd className="mono">
+                        {t("{amount} (illustrative)", {
+                          amount: money(
+                            minorToDisplayNumber(q.executionCostMinor),
+                            "USD",
+                          ),
+                        })}
+                      </dd>
                     </div>
                   </dl>
                   <button
@@ -401,7 +415,17 @@ export function InvoiceDetail({
                       ],
                       [t("Settlement asset"), "USDG"],
                       [t("Selected route"), t(invoice.receipt.route)],
-                      [t("Execution cost"), t("$0.02 · illustrative")],
+                      [
+                        t("Execution cost"),
+                        t("{amount} · illustrative", {
+                          amount: money(
+                            minorToDisplayNumber(
+                              invoice.receipt.execution.costMinor,
+                            ),
+                            "USD",
+                          ),
+                        }),
+                      ],
                       [
                         t("Demo transaction ID"),
                         invoice.receipt.execution.identifier,

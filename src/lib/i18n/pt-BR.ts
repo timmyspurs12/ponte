@@ -1,5 +1,15 @@
 // English source strings are stable message keys; technical identifiers and user data are never translated.
 export const ptBR: Record<string, string> = {
+  "PONTE — A better way across borders":
+    "PONTE — Um caminho melhor entre fronteiras",
+  "Explore a frontend demonstration of Pix-to-USDG business settlement. No real funds are moved.":
+    "Demonstração de liquidação empresarial de Pix para USDG. Sem movimentação de dinheiro real.",
+  "Invalid demo amount.": "Valor de demonstração inválido.",
+  "{amount} (illustrative)": "{amount} (ilustrativo)",
+  "{amount} · illustrative": "{amount} · ilustrativo",
+  "Sample FX: 1 USDG = {rate}": "Câmbio ilustrativo: 1 USDG = {rate}",
+  "// Local payment. Global intent.": "// Pagamento local. Intenção global.",
+  "// Real integrations come next.": "// Integrações reais vêm depois.",
   "Skip to content": "Pular para o conteúdo",
   Language: "Idioma",
   "A better way across borders.": "Um caminho melhor entre fronteiras.",

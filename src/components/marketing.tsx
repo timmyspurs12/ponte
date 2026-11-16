@@ -113,7 +113,10 @@ function RouteAtlas() {
         <div>
           <small>{t("Your supplier receives")}</small>
           <strong>
-            {number(4745.23)} <em>USDG</em>
+            {number(
+              minorToDisplayNumber(demoQuote(25000).routes[0].outputMinor),
+            )}{" "}
+            <em>USDG</em>
           </strong>
           <span>{t("Digital dollars · Arbitrum")}</span>
         </div>
@@ -411,7 +414,10 @@ export function Marketing() {
               {t("Simulated settlement complete")}
             </span>
             <strong className="big-number">
-              {number(4745.23)} <small>USDG</small>
+              {number(
+                minorToDisplayNumber(demoQuote(25000).routes[0].outputMinor),
+              )}{" "}
+              <small>USDG</small>
             </strong>
             <div className="receipt-line">
               <span>{t("Invoice")}</span>
@@ -484,14 +490,14 @@ export function Marketing() {
               </div>
               <pre>
                 <code>
-                  <span>{"// Local payment. Global intent."}</span>
+                  <span>{t("// Local payment. Global intent.")}</span>
                   {"\n"}const payment = {"{"}
                   {"\n"} funding: <b>{'"BRL / Pix"'}</b>,{"\n"} settlement:{" "}
                   <b>{'"USDG"'}</b>,{"\n"} network: <b>{'"Arbitrum"'}</b>,{"\n"}{" "}
                   execution: <b>{'"simulated"'}</b>
                   {"\n"}
                   {"}"};{"\n\n"}
-                  <span>{"// Real integrations come next."}</span>
+                  <span>{t("// Real integrations come next.")}</span>
                 </code>
               </pre>
             </div>

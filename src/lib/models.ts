@@ -1,4 +1,5 @@
-import type { MinorUnits } from "./quotes";
+/** JSON-safe base-10 integer string, denominated in explicitly documented minor units. */
+export type MinorUnits = string;
 export type Status =
   "Draft" | "Pending payment" | "Funded" | "Routing" | "Settled" | "Failed";
 export interface Wallet {
@@ -13,6 +14,7 @@ export interface Business {
 export interface Payment {
   invoiceId: string;
   currency: "BRL";
+  /** Phase 1 legacy major-unit field. Never use for real financial execution. */
   amount: number;
   simulated: true;
   receivedAt?: string;
@@ -59,6 +61,7 @@ export interface Invoice {
   reference: string;
   supplier: string;
   wallet: string;
+  /** Phase 1 legacy major-unit field. Never use for real financial execution. */
   amount: number;
   fundingCurrency: "BRL";
   settlementCurrency: "USDG";

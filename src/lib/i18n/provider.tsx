@@ -21,6 +21,16 @@ export function LocaleProvider({
   }
   useEffect(() => {
     document.documentElement.lang = locale;
+    document.title = translate(locale, "PONTE — A better way across borders");
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute(
+        "content",
+        translate(
+          locale,
+          "Explore a frontend demonstration of Pix-to-USDG business settlement. No real funds are moved.",
+        ),
+      );
   }, [locale]);
   return (
     <Context.Provider value={{ locale, setLocale }}>
