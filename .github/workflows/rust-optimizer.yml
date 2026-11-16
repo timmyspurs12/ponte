@@ -49,7 +49,9 @@ jobs:
             cat /etc/os-release
             rustc --version
             cargo --version
+            echo "::notice title=Rust toolchain::$(rustc --version); $(cargo --version)"
             rustup target list --installed
+            echo "::notice title=Installed targets::$(rustup target list --installed | paste -sd, -)"
             sha256sum Cargo.lock
           } 2>&1 | tee ci-logs/environment.log
       - name: Download locked dependencies
