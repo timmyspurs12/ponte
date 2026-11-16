@@ -1,5 +1,10 @@
 // English source strings are stable message keys; technical identifiers and user data are never translated.
 export const ptBR: Record<string, string> = {
+  "Could not load the workspace. Sign in locally or try again.":
+    "Não foi possível carregar o ambiente. Entre localmente ou tente novamente.",
+  "Local sign in": "Acesso local",
+  "Try again": "Tentar novamente",
+
   "PONTE — A better way across borders":
     "PONTE — Um caminho melhor entre fronteiras",
   "Explore a frontend demonstration of Pix-to-USDG business settlement. No real funds are moved.":
@@ -136,14 +141,14 @@ export const ptBR: Record<string, string> = {
     "Criada para o Arbitrum Open House São Paulo.",
   "Frontend concept · All payments are simulated.":
     "Conceito de frontend · Todos os pagamentos são simulados.",
-  "Developer overview · Phase 1": "Visão para desenvolvedores · Fase 1",
+  "Developer overview · Phase 2A": "Visão para desenvolvedores · Fase 2A",
   "One bridge.": "Uma ponte.",
   "Separate integration layers.": "Camadas de integração separadas.",
-  "The current application uses a browser-local demo invoice service. No endpoint, contract, wallet or payment provider is connected.":
-    "A aplicação atual usa um serviço demonstrativo de faturas no navegador. Nenhum endpoint, contrato, carteira ou provedor de pagamentos está conectado.",
+  "Invoices and simulated settlement are persisted through an authenticated PostgreSQL API. No contract, wallet or payment provider is connected.":
+    "Faturas e liquidações simuladas são persistidas por uma API autenticada com PostgreSQL. Nenhum contrato, carteira ou provedor de pagamento está conectado.",
   "Invoice API & persistence": "API de faturas e persistência",
-  "Replace InvoiceService with an authenticated API adapter; validate inputs server-side and reconcile invoice events.":
-    "Substituir InvoiceService por um adaptador de API autenticada, validar dados no servidor e reconciliar eventos das faturas.",
+  "The API validates inputs, enforces tenant isolation and records transactional lifecycle events. Production authentication remains a deployment gate.":
+    "A API valida entradas, isola empresas e registra eventos transacionais do ciclo da fatura. A autenticação de produção continua sendo um requisito antes da implantação.",
   "Pix payment provider": "Provedor de pagamentos Pix",
   "Integrate a sandbox PSP, verified webhook signatures, idempotent payment events and reconciliation.":
     "Integrar um PSP em sandbox, assinaturas verificadas de webhooks, eventos idempotentes e reconciliação.",

@@ -118,7 +118,13 @@ export function Overview({ invoices }: { invoices: Invoice[] }) {
               "Take a demo invoice from Pix confirmation to a settlement receipt.",
             )}{" "}
           </p>
-          <Link href="/app/invoices/demo-1">
+          <Link
+            href={
+              invoices.find((i) => i.status === "Pending payment")
+                ? `/app/invoices/${invoices.find((i) => i.status === "Pending payment")!.id}`
+                : "/app/invoices/new"
+            }
+          >
             {" "}
             {t("Explore the payment flow")} <ArrowUpRight size={16} />
           </Link>

@@ -1,3 +1,5 @@
+import { resetFixtures } from "./setup-database";
+let seedId = "";
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
 test.beforeEach(async ({ context }) => {
@@ -7,6 +9,7 @@ test.beforeEach(async ({ context }) => {
 });
 test("complete invoice lifecycle, validation, filters and persistence", async ({
   page,
+  browser,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -38,6 +41,15 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
     page.getByRole("heading", { name: "São Paulo Test Supplier" }),
   ).toBeVisible();
   const detail = page.url();
+  const invoiceId = detail.split("/").pop();
+  const saved = await page.request.get(`/api/v1/invoices/${invoiceId}`);
+  expect(saved.status()).toBe(200);
+  expect((await saved.json()).data.fundingMinor).toBe("2500000");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "São Paulo Test Supplier" }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Simulate Pix payment received" })
     .click();
@@ -103,6 +115,25 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   await expect(
     page.getByRole("heading", { name: "Settlement receipt" }),
   ).toBeVisible();
+  const separate = await browser.newContext();
+  await separate.addCookies([
+    {
+      name: "ponte-dev-session",
+      value: process.env.PONTE_DEV_TOKEN!,
+      domain: "localhost",
+      path: "/",
+    },
+    { name: "ponte-locale", value: "en-US", domain: "localhost", path: "/" },
+  ]);
+  const reopened = await separate.newPage();
+  await reopened.goto(detail);
+  await expect(
+    reopened.getByRole("heading", { name: "Settlement receipt" }),
+  ).toBeVisible();
+  await expect(
+    reopened.getByText("Split liquidity", { exact: true }),
+  ).toBeVisible();
+  await separate.close();
   await page.goto("/pay/missing");
   await expect(
     page.getByRole("heading", { name: "Invoice not found" }),
@@ -123,7 +154,7 @@ test("responsive layouts and navigation", async ({ page }) => {
       "/app",
       "/app/invoices",
       "/app/invoices/new",
-      "/app/invoices/demo-1",
+      `/app/invoices/${seedId}`,
       "/developers",
     ]) {
       await page.goto(route);
@@ -170,9 +201,13 @@ test("keyboard, reduced motion, public demo payment and accessibility", async ({
   });
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  for (const route of ["/", "/app", "/app/invoices/new", "/pay/demo-1"]) {
+  for (const route of ["/", "/app", "/app/invoices/new", `/pay/${seedId}`]) {
     await page.goto(route);
     await page.waitForTimeout(400);
+    if (route === "/")
+      await expect(page.locator(".hero-visual")).toHaveCSS("opacity", "1");
+    if (route.startsWith("/pay/"))
+      await expect(page.locator(".execution")).toHaveCSS("opacity", "1");
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
       .analyze();
@@ -217,4 +252,46 @@ test("keyboard, reduced motion, public demo payment and accessibility", async ({
     path: "test-results/screenshots/receipt-mobile.png",
     fullPage: true,
   });
+});
+
+test.beforeEach(async ({ context, request }) => {
+  await resetFixtures();
+  await context.addCookies([
+    {
+      name: "ponte-dev-session",
+      value: process.env.PONTE_DEV_TOKEN!,
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
+  const response = await request.get("/api/v1/invoices", {
+    headers: { authorization: `Bearer ${process.env.PONTE_DEV_TOKEN}` },
+  });
+  const { data } = await response.json();
+  seedId = data.find(
+    (i: { reference: string }) => i.reference === "PNT-2026-1048",
+  ).id;
+});
+test("development login issues an HttpOnly session; unauthenticated API is not public", async ({
+  page,
+  context,
+}) => {
+  await context.clearCookies();
+  const denied = await page.request.get("/api/v1/invoices");
+  expect(denied.status()).toBe(401);
+  const invalid = await page.request.post("/dev-login", {
+    form: { token: "incorrect-local-token" },
+  });
+  expect(invalid.status()).toBe(401);
+  await page.goto("/dev-login");
+  await page.getByLabel("Development token").fill(process.env.PONTE_DEV_TOKEN!);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page).toHaveURL("/app");
+  const session = (await context.cookies()).find(
+    (c) => c.name === "ponte-dev-session",
+  )!;
+  expect(session.httpOnly).toBe(true);
+  expect(session.sameSite).toBe("Strict");
+  const allowed = await page.request.get("/api/v1/invoices");
+  expect(allowed.status()).toBe(200);
 });

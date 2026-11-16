@@ -1,3 +1,5 @@
+> **Phase 2A update (16 November 2026):** the backend now owns funding validation, quote generation, locked routes, expiry and settlement simulation in PostgreSQL. The Phase 1 descriptions below document the retained arithmetic/display model; browser-local receipt normalization has been removed and old localStorage data is not imported. See the delivered boundary at the end and [API.md](API.md).
+
 # Phase 1.1 monetary model
 
 All figures remain **deterministic frontend demo fixtures**, not market data, actual liquidity, a Stylus calculation, a token redemption guarantee or an executable quote.
@@ -39,12 +41,14 @@ The old panel rounded its independent minimum; Phase 1.1 displays the selected c
 
 `src/lib/i18n/format.ts` alone handles `Intl` currency, number and date presentation. Currency formatting is never persisted. USDG uses locale-aware decimal formatting with its unchanged symbol in the surrounding interface, not an ISO-USD currency formatter. Date-only invoice fields render in UTC without shifting the calendar date; timestamps explicitly say UTC.
 
-## Phase 2 transition — not implemented
+## Phase 2A delivered boundary
 
-1. Change invoice/payment input and persistence contracts to integer BRL minor-unit strings. Remove the legacy numeric adapter; migrate saved database records explicitly.
-2. Validate integer ranges, decimal scales, canonical encodings and arithmetic server-side; use fixed-point/rational math with documented rounding. Never trust browser-derived amounts.
-3. Separate fiat precision, USD accounting precision and actual token base units. Validate chain ID, contract address, decimals, quote expiry and provider fees.
-4. Use an authoritative quote ID, selected candidate ID, minimum output, deadline and token base-unit amounts for execution; verify on the backend and in audited contracts.
-5. Integrate the real market/PSP/routing sources only after frontend approval. Reconcile realized execution against quotes, including fees, price impact, failures and reorgs.
+- API creation/update accepts **canonical integer BRL cent strings only**, 100–1000000000. Floats, scientific notation, leading zeros, unknown fields and client outputs are rejected. PostgreSQL bigint stores authoritative funding; JSON transports strings.
+- `Invoice.amount` and `Payment.amount` remain numeric **display compatibility** fields for the approved UI. The form adapter validates/encodes its input; the server independently validates the minor string and calculates outputs. API never accepts the numeric display fields, client receipts or status in invoice fields.
+- Server quote snapshots persist all candidates, rational rate, fee units/bps, minima, tolerance, simulated=true/source, and a 15-minute expiry. The invoice also stores a server-generated display preview; locking requires a current persisted quote ID, never the preview alone.
+- Routing locks a candidate and quote for the same tenant/invoice. Settlement checks expiry again, uses the locked server candidate, writes expected/minimum/actual demo output and produces a server timestamp/receipt atomically with its event and idempotency record. Output below minimum is constrained by PostgreSQL; the simulation deterministically sets actual=expected.
+- Quote/receipt financial arithmetic remains **BigInt** with the exact floors above. Currency formatting is never a persistence format.
+- BRL cents, **USD accounting cents** for illustrative execution cost, and **two-decimal demo USDG units** are explicitly different units. Actual token base units, decimals, chain address and market FX remain unknown/unverified. NULL transaction hash is enforced; SIM identifiers are not blockchain evidence.
+- Expired routing cannot execute or silently change its quote/route. Mark Failed; explicit recovery/requote orchestration is future work.
 
-Tests cover exact candidate outputs, fee reconciliation, per-route floors, JSON safety, range/cent boundaries, selected minimum display after language changes, and settlement of the locked route. This is a frontend readiness improvement, not a backend or contract implementation.
+The authoritative state machine, replay/idempotency/concurrency and tenant constraints are tested against real PostgreSQL. No PSP, market quote, wallet, onchain token metadata or contract execution is implied. Further token/market adapters must introduce verified units and independent reconciliation rather than reuse this demo precision as actual token metadata.

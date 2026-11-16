@@ -1,2 +1,54 @@
-/** Phase 1 composition root. Replace with an API-backed InvoiceService after frontend approval. */
-export { demoInvoiceService as invoiceService } from "./demo-service";
+import type { Invoice, InvoiceInput, InvoiceService, Status } from "./models";
+import { majorToMinor } from "./quotes";
+async function api<T>(
+  path: string,
+  body?: unknown,
+  method = "POST",
+): Promise<T> {
+  const response = await fetch(`/api/v1/invoices${path}`, {
+    method: body === undefined ? "GET" : method,
+    headers:
+      body === undefined
+        ? {}
+        : {
+            "Content-Type": "application/json",
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store",
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error?.code ?? "REQUEST_FAILED");
+  return result.data;
+}
+export const invoiceService: InvoiceService = {
+  async list() {
+    const invoices: Invoice[] = [];
+    for (let offset = 0; offset <= 100000; offset += 100) {
+      const page = await api<Invoice[]>(`?limit=100&offset=${offset}`);
+      invoices.push(...page);
+      if (page.length < 100) break;
+    }
+    return invoices;
+  },
+  async create(input: InvoiceInput) {
+    const { amount, ...fields } = input;
+    const invoice = await api<Invoice>("", {
+      ...fields,
+      fundingMinor: majorToMinor(amount),
+    });
+    return api<Invoice>(`/${invoice.id}/transitions`, {
+      status: "Pending payment",
+    });
+  },
+  async transition(id: string, status: Status, route?: string) {
+    let quoteId: string | undefined;
+    if (status === "Routing")
+      quoteId = (await api<{ id: string }>(`/${id}/quotes`, {})).id;
+    return api<Invoice>(`/${id}/transitions`, {
+      status,
+      ...(route ? { route } : {}),
+      ...(quoteId ? { quoteId } : {}),
+    });
+  },
+};

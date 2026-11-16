@@ -17,7 +17,7 @@ import {
   CircleHelp,
 } from "lucide-react";
 import { Invoice, Status } from "@/lib/models";
-import { demoQuote, minorToDisplayNumber } from "@/lib/quotes";
+import { minorToDisplayNumber } from "@/lib/quotes";
 import { invoiceService as service } from "@/lib/services";
 import { Badge } from "./ui";
 export function InvoiceDetail({
@@ -47,7 +47,7 @@ export function InvoiceDetail({
   const dialogRef = (node: HTMLDialogElement | null) => {
     if (node && !node.open) node.showModal();
   };
-  const q = demoQuote(invoice.amount);
+  const q = invoice.quote!;
   const selected = q.routes.find((r) => r.id === route)!;
   const active =
     invoice.status === "Settled"
@@ -62,7 +62,6 @@ export function InvoiceDetail({
   async function transition(status: Status) {
     setBusy(true);
     setError("");
-    await new Promise((r) => setTimeout(r, 650));
     try {
       await service.transition(invoice.id, status, route);
       await refresh();

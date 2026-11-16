@@ -57,6 +57,8 @@ export interface SettlementReceipt {
   timestamp: string;
 }
 export interface Invoice {
+  fundingMinor?: MinorUnits;
+  quote?: PaymentQuote;
   id: string;
   reference: string;
   supplier: string;

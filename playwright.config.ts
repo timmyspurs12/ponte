@@ -16,10 +16,10 @@ export default defineConfig({
       : {},
   },
   webServer: {
-    command: "npm start",
+    command: "npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
-    timeout: 60000,
+    timeout: 120000,
   },
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
 });

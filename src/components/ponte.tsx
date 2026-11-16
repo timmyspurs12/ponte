@@ -27,11 +27,20 @@ export default function Ponte() {
   const pathname = usePathname();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [toast, setToast] = useState("");
+  const [loadError, setLoadError] = useState(false);
   async function refresh() {
-    setInvoices(await service.list());
+    try {
+      setInvoices(await service.list());
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
   }
   useEffect(() => {
-    const timer = setTimeout(refresh, 0);
+    const timer = setTimeout(() => {
+      if (location.pathname !== "/" && location.pathname !== "/developers")
+        void refresh();
+    }, 0);
     return () => clearTimeout(timer);
   }, []);
   useEffect(() => {
@@ -111,7 +120,17 @@ export default function Ponte() {
             </span>
           </div>
           <main className="app-main wrap" id="main">
-            {!invoices ? (
+            {loadError ? (
+              <section className="empty" role="alert">
+                <p>
+                  {t(
+                    "Could not load the workspace. Sign in locally or try again.",
+                  )}
+                </p>
+                <Link href="/dev-login">{t("Local sign in")}</Link>
+                <button onClick={() => void refresh()}>{t("Try again")}</button>
+              </section>
+            ) : !invoices ? (
               <div className="loading" role="status">
                 <div className="skeleton" />
                 <p>{t("Loading demo workspace…")}</p>

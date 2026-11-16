@@ -1,105 +1,81 @@
 # PONTE
 
-**Phase 1.1: a frontend-only Pix-to-USDG settlement concept for Brazilian businesses.** Built for Arbitrum Open House São Paulo. No real funds move, no bank QR code is generated, no wallet is connected, and no contract is called.
+**Phase 2A — persistent PostgreSQL backend for the bilingual Pix-to-USDG simulation.** Built for Arbitrum Open House São Paulo. No real funds move: no banking QR code, PSP, wallet signing, contract, custody or Stylus execution is connected.
 
 ## Run locally
 
-Requires Node.js 22 (22.17+ recommended) and npm. Ubuntu and Windows 10 development use the same npm commands.
+Requires Node.js **22.17+**, npm and PostgreSQL 18. No hosted account or paid service is required.
 
-```sh
-npm ci
-npm run dev
-# http://localhost:3000
-```
+1. `npm ci`
+2. Copy `.env.example` to `.env.local`. Generate a local token with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and put it in `PONTE_DEV_TOKEN`. Do not commit this file or share the token.
+3. In another terminal, `npm run db:local` starts a **real PostgreSQL** cluster, bound to loopback on port 54329, with data under ignored `.cache/postgres`. Alternatively use your own disposable PostgreSQL database and change `DATABASE_URL`.
+4. `npm run db:seed` applies the versioned migration and creates a local business/user/admin membership. `npm run db:fixtures` adds eight explicitly illustrative records using the backend lifecycle.
+5. `npm run dev`; open `http://localhost:3000/dev-login`, enter your local token, then continue to the workspace.
 
-Production preview: `npm run build && npm start`. Both servers bind to `0.0.0.0`. No environment variables, accounts, keys, or paid services are required. Fonts are self-hosted through fontsource packages. The Next.js server only serves the frontend; there are no backend APIs.
+The Node scripts load `.env.local`; existing environment variables take precedence. Commands do not require shell-specific environment syntax. Embedded PostgreSQL is a development convenience (a prerelease binary-distribution package), not a production database manager. Linux x64 is verified here; Windows/macOS are **not verified** in this phase. A separately installed PostgreSQL is the fallback if its binaries are unsupported.
+
+`npm run db:migrate` is safe to repeat. To **delete all local simulation data**, run `npm run db:reset -- --confirm-local-reset`; this requires a loopback database, refuses production, and reseeds. Never point test/reset commands at valuable data. Back up a persistent database with PostgreSQL's standard tools before changing it.
+
+### Production safety
+
+`npm run build && npm start` validates and serves the production build, but **all financial API access returns 503 `AUTH_NOT_CONFIGURED`** and `/dev-login` is disabled. Development authentication cannot be enabled in production with a flag. A real identity/session integration and deployment security review are explicit next gates. No cloud resources were created or deployed.
 
 ## Explore
 
 | Route | Experience |
 |---|---|
-| `/` | Marketing, animated SVG corridor, process, routing, receipt, infrastructure and security sections |
-| `/app` | Business overview, calculated demo totals, recent invoices, settlements and activity |
-| `/app/invoices` | Search, all six status filters, sorting, pagination and empty state |
-| `/app/invoices/new` | Validated supplier/address/amount/reference/date form; duplicate reference protection |
-| `/app/invoices/[id]` | Payment request, explicit Pix simulation, three routes, confirmation dialog, settlement and receipt export |
-| `/pay/[id]` | Public-facing demo payment presentation |
-| `/developers` | Integration boundaries and proposed Phase 2 roadmap |
+| `/` | Approved mineral-green/chalk-white marketing and animated SVG architecture |
+| `/dev-login` | Local-only token-to-HttpOnly-cookie access boundary |
+| `/app` | Persistent business overview and recent activity |
+| `/app/invoices` | Search, six status filters, sorting, pagination and empty state |
+| `/app/invoices/new` | Validated invoice creation; server-enforced tenant-unique reference |
+| `/app/invoices/[id]` | Pix simulation, server-calculated routes, locked selection, confirmation and receipt export |
+| `/pay/[id]` | Payment presentation; **authenticated tenant access**, not a public payment capability |
+| `/developers` | Implemented boundaries and remaining integrations |
+| `/api/v1/invoices…` | [Documented JSON API](docs/API.md) |
 
-### Recommended demonstration
-
-1. Open `/app/invoices/new` and create an invoice. Use an illustrative address such as `0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`—**never send funds**.
-2. Open the generated payment link in the **same browser and origin**.
-3. Choose **Simular recebimento via Pix** / **Simulate Pix payment received**.
-4. Compare the three deterministic routes, choose one and continue.
-5. Choose **Simular liquidação** / **Simulate settlement**, review and confirm.
-6. Export the clearly labeled JSON demo receipt. Refresh to verify local persistence.
-
-Invoices and transitions are stored in `localStorage` under `ponte-demo-v1`. Created invoice links are not shareable across browsers/devices/origins. Clear this key in browser storage to reset to the eight sample records. Seeded settled receipts use fixed sample timestamps; new simulated settlements use the interaction timestamp. A malformed store falls back to fixtures. Storage write failures show an error instead of claiming success.
+Create an invoice with a future due date and an illustrative address such as `0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` (**never send funds**). Confirm simulated Pix, select a route, confirm simulated settlement, export JSON, and reload/open the saved invoice URL. The database—not cookies or browser storage—owns the invoice and financial lifecycle. Another browser must authenticate to the same local tenant before opening that URL. Old `ponte-demo-v1` browser records are intentionally not imported or trusted.
 
 ## Architecture
 
-- Next.js App Router, React, TypeScript, Motion React, Lucide; custom responsive CSS tokens.
-- `src/components`: shared UI, marketing, overview, invoice table, invoice form, payment journey and application shell.
-- `src/lib/models.ts`: Invoice, Payment, PaymentQuote, RouteCandidate, RouteExecution, SettlementReceipt, Business and Wallet.
-- `src/lib/services.ts`: single composition root for the asynchronous invoice-service interface.
-- `src/lib/demo-service.ts`: browser-only persistence and simulation state machine, with locked-route validation and legacy receipt normalization.
-- `src/lib/quotes.ts`: deterministic **BigInt/rational** quote calculation, JSON-safe integer minor-unit strings, candidate-specific floored minimums and basis-point fees. Illustrative FX is **R$5.25 per USDG**. No executable quotes or market data. Legacy invoice/payment major-unit numbers stay behind an explicit adapter; new quote/receipt/execution interfaces do not use floating amounts. See [FINANCIAL_MODEL.md](docs/FINANCIAL_MODEL.md) for exact formulas, scales, rounding and future migration.
-- `src/lib/i18n`: Portuguese messages, locale provider and independent Intl display formatters.
-- Future real API adapter replaces the demo invoice service. Wallet, PSP, token, contract and routing integrations belong in separate adapters, not visual components.
+Next.js Route Handlers → Zod validation/authentication → lifecycle service → SQL repository/transaction → PostgreSQL. This is one modular application, not multiple microservices. Explicit `pg` SQL was selected over an ORM for this small locking-heavy schema; rationale and trade-offs are in [BACKEND_ARCHITECTURE.md](docs/BACKEND_ARCHITECTURE.md).
 
-The proposed platform is not an operational financial service. All businesses, invoices, addresses and amounts are illustrative. Arbitrum, USDG, Pix and Stylus references describe a proposed technology direction, not partnerships or completed integrations.
+- `src/app/api/v1/[...path]/route.ts`: HTTP envelopes, status codes, safe errors and correlation IDs.
+- `src/server/auth.ts`: development-only identity boundary, active membership/role checks and database-backed rate limits.
+- `src/server/service.ts`: validation, idempotency, authoritative state machine, exact quote/receipt generation.
+- `src/server/repository.ts`: parameterized tenant-scoped queries, pool and transaction unit-of-work.
+- `migrations/001_foundation.sql`: relational constraints, indexes and append-only events.
+- `src/lib/services.ts`: asynchronous API-backed InvoiceService. No localStorage persistence.
+- `src/lib/quotes.ts`: deterministic BigInt/rational simulation arithmetic, called by the server. The UI renders server-provided estimates; numbers in legacy visual models are display adapters only.
+- `src/lib/i18n`: pt-BR default, English option, locale cookie and Intl display boundaries.
 
-## Language and formatting
+See [financial units and rounding](docs/FINANCIAL_MODEL.md), [API examples](docs/API.md), [deployment preparation](docs/BACKEND_ARCHITECTURE.md#deployment-preparation), and [remaining Phase 2 work](docs/PHASE2.md).
 
-**Português (Brasil)** is the default; use the header language selector for **English**. The `ponte-locale` cookie preserves your preference across pages and reloads. The server renders the matching HTML `lang`; client switching also updates language and page metadata. Clear that cookie to return to Portuguese. If cookies are blocked, switching still works for the current session but will not persist on reload.
+## Verification
 
-All major pages, labels, validation, statuses, errors, toasts and developer information are translated without duplicating components. Business names, protocol names, token symbols, technical identifiers and your own invoice descriptions are not translated. Brazilian figures display as `R$ 25.000,00`, English as `R$25,000.00`; USDG amounts use localized decimal separators without mislabeling the token as ISO USD. Native number/date form controls use browser input conventions; displayed dates are `dd/mm/yyyy` in pt-BR and `mm/dd/yyyy` in en-US. Settlement timestamps explicitly use UTC.
-
-## Quality checks — Ubuntu and Windows 10
+Use a **disposable local database**. The browser suite resets simulation tables before each scenario.
 
 ```sh
-npm ci
-npm run test:install
+npm run db:seed
+npm run db:migrate
+npm run test:backend
 npm run lint
 npm run typecheck
 npm run build
+npm run test:install
 npm test
 ```
 
-`test:install` installs **standard Playwright Chromium** on your platform. On Ubuntu CI, `npx playwright install --with-deps chromium` also installs OS dependencies. On Windows 10, run the same commands in PowerShell or Command Prompt; there is no Bash requirement and no executable path to edit. The test runner spawns Node directly and forwards arguments, e.g. `npm test -- --grep "quote"`.
+Playwright starts the **development** server on port 3000, because development auth intentionally does not work in production builds. The production build is independently checked. Stop an unrelated server before testing; local tests may reuse an existing server. CI always starts a fresh one.
 
-Playwright starts the built frontend automatically on port 3000. Locally it may reuse an already-running server; ensure that server matches your build. In CI it always starts a fresh server. Run `npm run build` before testing if the build is missing or stale. Test screenshots/reports live in ignored `test-results/` and `playwright-report/`, not the approved screenshot baselines.
+The GitHub [Application quality workflow](.github/workflows/frontend.yml) runs on this branch and PRs to main: Ubuntu 24.04, Node 22, **PostgreSQL 18 service**, migrations twice (repeatability), backend integration tests, lint, TypeScript, production build and standard Playwright Chromium. Reports are uploaded. See [QA_PHASE2A.md](docs/QA_PHASE2A.md) for actual results and limitations, not just configured checks.
 
-### Restricted Linux fallback (optional, not CI default)
+In this restricted Arena Linux sandbox only, use `PONTE_BROWSER_FALLBACK=1 npm test` to use the existing registry-packaged Chromium fallback. Standard Chromium remains the CI/default browser; no executable path editing is needed. Reports/screenshots stay in ignored `test-results` and `playwright-report`.
 
-This Arena sandbox blocks the standard browser CDN. Only here, opt into the existing registry-packaged **Linux x64** fallback:
+Browser coverage includes Portuguese/English, full backend lifecycle and refresh persistence, alternate-route lock, dialogs/keyboard, JSON export, search/filter/sort/pagination, missing invoices, mobile navigation, console errors, selected Axe checks, reduced motion and overflow at **1440/1280/768/390/360px**. This is not full accessibility certification or physical-device testing.
 
-```sh
-# Bash in this restricted Linux sandbox only
-PONTE_BROWSER_FALLBACK=1 npm test
-```
+## Boundaries
 
-This explicit opt-in prepares bundled libraries in `.cache` and passes the executable/library environment to the browser process from Node. No `/tmp/chromium` path is hardcoded in the test configuration; the fallback package resolves its own executable. Windows/macOS do **not** use this fallback. Standard Playwright is the default, including Ubuntu GitHub Actions. There is still only one browser (Chromium), not another browser dependency.
+Only the simulations are implemented. No market/executable quotes, real Pix, actual USDG token precision, wallet, signing, chain transactions, contracts, Stylus, KYB/AML, refunds, queue/reconciliation, production authentication, PDF or production SLA is claimed. All sample businesses and metrics are illustrative; protocol names do not imply partnerships. USD accounting cents and the illustrative two-decimal USDG scale are distinct from unknown real token base units.
 
-### GitHub Actions
-
-[Frontend quality workflow](.github/workflows/frontend.yml) runs for PRs targeting `main` and pushes to `arena/8131b5f3-ponte`: Ubuntu 24.04, Node 22, `npm ci`, ESLint, TypeScript, production build, standard Chromium installation with dependencies, then the complete Playwright suite. Reports are uploaded even after failure. Actual observed run results and platform limitations are recorded in [QA.md](docs/QA.md); creating YAML is not itself a successful CI result.
-
-Tests cover Portuguese and English interfaces, cookie persistence, language switching, localized currency/dates, exact quote calculations, candidate-specific minimums, invoice validation, the complete simulation, alternate route selection, dialog cancel/confirm/Escape, receipt downloads, persistence, public checkout, search, status filters, sorting, pagination, missing invoices, mobile navigation, console errors, reduced motion, keyboard radio navigation and overflow checks at **1440, 1280, 768, 390 and 360px**. Axe checks selected default screens for WCAG 2 A/AA and 2.1 AA rules; this is not a full accessibility certification or physical-device performance assessment.
-
-See [QA.md](docs/QA.md), [DESIGN.md](DESIGN.md), and [screenshots](docs/screenshots).
-
-## Simulated now / later
-
-**Now:** local invoice CRUD creation/read flow, mocked Pix receipt, deterministic liquidity choices, frontend execution states, simulated receipt identifier, JSON export. No account authentication; “Sign in” opens a demo workspace. Data is browser-local, editable and not secure storage for sensitive records.
-
-**Later, only after frontend approval:** authenticated backend and database; authoritative invoice validation/idempotency; sandbox Pix PSP and signed webhooks; wallet network and recipient checks; USDG token integration; Arbitrum Solidity settlement contracts; separately benchmarked Rust/Stylus optimization; compliance/security review; reconciliation, observability and recovery. See [PHASE2.md](docs/PHASE2.md).
-
-## Design research and skills
-
-Research findings and access limitations are recorded in `DESIGN.md`. Local skill installations are intentionally excluded from Git; pinned installation sources are in `skills-lock.json`. Reinstall with `npx skills experimental_install -a claude-code`. Skill suggestions are reference material, not runtime dependencies. No external reference assets were copied into the product.
-
-## Current boundaries
-
-Portuguese/English interface with Brazilian funding terminology. No real-time rates, tax calculations, KYB, authentication, multi-user synchronization, PDF generation, wallet signing or onchain explorers. Receipt export is JSON. The accessible table scrolls horizontally on mobile. Real-world provider eligibility and USDG liquidity availability still require validation in Phase 2. All frontend checks passed as documented; manual screen-reader and physical low-powered-device testing remain recommended.
+The approved typography, custom responsive CSS, restrained Motion, bilingual interface and SVG visuals are retained. Phase 1 design research, skill sources and limitations remain in [DESIGN.md](DESIGN.md), `skills-lock.json`, [historical QA](docs/QA.md) and `docs/screenshots`. Local skill installations are not runtime dependencies or committed assets.
