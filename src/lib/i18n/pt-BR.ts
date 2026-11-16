@@ -1,5 +1,10 @@
 // English source strings are stable message keys; technical identifiers and user data are never translated.
 export const ptBR: Record<string, string> = {
+  "Could not load the workspace. Sign in locally or try again.":
+    "Não foi possível carregar o ambiente. Entre localmente ou tente novamente.",
+  "Local sign in": "Acesso local",
+  "Try again": "Tentar novamente",
+
   "PONTE — A better way across borders":
     "PONTE — Um caminho melhor entre fronteiras",
   "Explore a frontend demonstration of Pix-to-USDG business settlement. No real funds are moved.":
@@ -136,14 +141,14 @@ export const ptBR: Record<string, string> = {
     "Criada para o Arbitrum Open House São Paulo.",
   "Frontend concept · All payments are simulated.":
     "Conceito de frontend · Todos os pagamentos são simulados.",
-  "Developer overview · Phase 1": "Visão para desenvolvedores · Fase 1",
+  "Developer overview · Phase 2A": "Visão para desenvolvedores · Fase 2A",
   "One bridge.": "Uma ponte.",
   "Separate integration layers.": "Camadas de integração separadas.",
-  "The current application uses a browser-local demo invoice service. No endpoint, contract, wallet or payment provider is connected.":
-    "A aplicação atual usa um serviço demonstrativo de faturas no navegador. Nenhum endpoint, contrato, carteira ou provedor de pagamentos está conectado.",
+  "Invoices and simulated settlement are persisted through an authenticated PostgreSQL API. No contract, wallet or payment provider is connected.":
+    "Faturas e liquidações simuladas são persistidas por uma API autenticada com PostgreSQL. Nenhum contrato, carteira ou provedor de pagamento está conectado.",
   "Invoice API & persistence": "API de faturas e persistência",
-  "Replace InvoiceService with an authenticated API adapter; validate inputs server-side and reconcile invoice events.":
-    "Substituir InvoiceService por um adaptador de API autenticada, validar dados no servidor e reconciliar eventos das faturas.",
+  "The API validates inputs, enforces tenant isolation and records transactional lifecycle events. Production authentication remains a deployment gate.":
+    "A API valida entradas, isola empresas e registra eventos transacionais do ciclo da fatura. A autenticação de produção continua sendo um requisito antes da implantação.",
   "Pix payment provider": "Provedor de pagamentos Pix",
   "Integrate a sandbox PSP, verified webhook signatures, idempotent payment events and reconciliation.":
     "Integrar um PSP em sandbox, assinaturas verificadas de webhooks, eventos idempotentes e reconciliação.",
@@ -310,8 +315,10 @@ export const ptBR: Record<string, string> = {
   "Pix demo payment": "Pagamento Pix de demonstração",
   "Create a payment request to continue.":
     "Crie uma solicitação de pagamento para continuar.",
-  "The sample payment failed. Retry the demo request; no funds were moved.":
-    "O pagamento ilustrativo falhou. Tente novamente; nenhum valor foi movimentado.",
+  "Invoice failed": "Falha na fatura",
+  "This failed invoice cannot be retried. Its record and activity history are preserved.":
+    "Não é possível tentar novamente esta fatura com falha. Seu registro e histórico de atividades são preservados.",
+  "Create replacement invoice": "Criar fatura substituta",
   "A familiar local payment. A transparent global journey.":
     "Um pagamento local familiar. Uma jornada global transparente.",
   "Pix sandbox": "Ambiente de testes Pix",
@@ -321,7 +328,6 @@ export const ptBR: Record<string, string> = {
   "Confirming demo payment…": "Confirmando pagamento demonstrativo…",
   "Simulate Pix payment received": "Simular recebimento via Pix",
   "Preparing…": "Preparando…",
-  "Retry demo payment request": "Tentar solicitação novamente",
   "Create demo payment request": "Criar solicitação demonstrativa",
   "Pix confirmation simulated. Compare deterministic quote fixtures below.":
     "Confirmação Pix simulada. Compare abaixo as cotações ilustrativas determinísticas.",
@@ -348,9 +354,13 @@ export const ptBR: Record<string, string> = {
   Timestamp: "Data e hora",
   "Export demo receipt": "Exportar comprovante demonstrativo",
   Dismiss: "Fechar",
-  "Payment link": "Link de pagamento",
-  "Open the public-facing demo checkout. Only available in this browser’s local demo store.":
-    "Abra a página pública de pagamento demonstrativo. Disponível apenas nos dados locais deste navegador.",
+  "Workspace-restricted payment link": "Link de pagamento restrito ao ambiente",
+  "This link is restricted to this workspace and is for internal demonstrations only.":
+    "Este link é restrito a este ambiente e serve apenas para demonstrações internas.",
+  "Sign in with an account that already has access to this workspace to view this invoice.":
+    "Entre com uma conta que já tenha acesso a este ambiente para visualizar esta fatura.",
+  "External supplier access is not implemented yet.":
+    "O acesso de fornecedores externos ainda não foi implementado.",
   "Copy demo payment link": "Copiar link de pagamento demonstrativo",
   "Open demo payment page": "Abrir página de pagamento demonstrativo",
   "A safe space to explore.": "Um espaço seguro para explorar.",

@@ -1,7 +1,5 @@
 "use client";
 import { LanguageSelector, useLocale } from "@/lib/i18n/provider";
-import { Invoice } from "@/lib/models";
-import { demoInvoiceService as service } from "@/lib/demo-service";
 import { Logo, Cta } from "./ui";
 export function Developers() {
   const { t } = useLocale();
@@ -17,7 +15,7 @@ export function Developers() {
       </header>
       <main id="main" className="wrap section docs">
         <span className="section-label">
-          {t("Developer overview · Phase 1")}
+          {t("Developer overview · Phase 2A")}
         </span>
         <h1>
           {" "}
@@ -26,14 +24,14 @@ export function Developers() {
         <p>
           {" "}
           {t(
-            "The current application uses a browser-local demo invoice service. No endpoint, contract, wallet or payment provider is connected.",
+            "Invoices and simulated settlement are persisted through an authenticated PostgreSQL API. No contract, wallet or payment provider is connected.",
           )}{" "}
         </p>
         {[
           [
             t("Invoice API & persistence"),
             t(
-              "Replace InvoiceService with an authenticated API adapter; validate inputs server-side and reconcile invoice events.",
+              "The API validates inputs, enforces tenant isolation and records transactional lifecycle events. Production authentication remains a deployment gate.",
             ),
           ],
           [
@@ -69,9 +67,7 @@ export function Developers() {
             </div>
           </article>
         ))}
-        <Cta href="/app/invoices/demo-1">
-          {t("Try the simulated lifecycle")}
-        </Cta>
+        <Cta href="/app/invoices">{t("Try the simulated lifecycle")}</Cta>
       </main>
     </>
   );

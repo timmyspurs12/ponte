@@ -1,3 +1,5 @@
+import { resetFixtures } from "./setup-database";
+let seedId = "";
 import { test, expect } from "@playwright/test";
 import { demoQuote } from "../src/lib/quotes";
 import { formatNumber } from "../src/lib/i18n/format";
@@ -115,7 +117,7 @@ test("language selector and bilingual layouts at all five supported widths", asy
         "/app",
         "/app/invoices",
         "/app/invoices/new",
-        "/pay/demo-1",
+        `/pay/${seedId}`,
         "/developers",
       ]) {
         await page.goto(route);
@@ -159,11 +161,13 @@ test("Portuguese accessibility and stable translated status filters", async ({
 }) => {
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  for (const route of ["/", "/app", "/app/invoices/new", "/pay/demo-1"]) {
+  for (const route of ["/", "/app", "/app/invoices/new", `/pay/${seedId}`]) {
     await page.goto(route);
     await page.waitForTimeout(200);
     if (route === "/")
       await expect(page.locator(".hero-visual")).toHaveCSS("opacity", "1");
+    if (route.startsWith("/pay/"))
+      await expect(page.locator(".execution")).toHaveCSS("opacity", "1");
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
       .analyze();
@@ -188,4 +192,23 @@ test("Portuguese accessibility and stable translated status filters", async ({
   ).toHaveValue("Settled");
   await expect(page.locator("tbody tr")).toHaveCount(2);
   await expect(page.locator(".badge").first()).toHaveText("Settled");
+});
+
+test.beforeEach(async ({ context, request }) => {
+  await resetFixtures();
+  await context.addCookies([
+    {
+      name: "ponte-dev-session",
+      value: process.env.PONTE_DEV_TOKEN!,
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
+  const response = await request.get("/api/v1/invoices", {
+    headers: { authorization: `Bearer ${process.env.PONTE_DEV_TOKEN}` },
+  });
+  const { data } = await response.json();
+  seedId = data.find(
+    (i: { reference: string }) => i.reference === "PNT-2026-1048",
+  ).id;
 });

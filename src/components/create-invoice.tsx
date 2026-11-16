@@ -37,12 +37,6 @@ export function CreateInvoice({
       err.wallet = "Enter a 0x address with 40 hexadecimal characters.";
     if (!input.reference) err.reference = "Enter an invoice reference.";
     if (
-      (await service.list()).some(
-        (i) => i.reference.toLowerCase() === input.reference.toLowerCase(),
-      )
-    )
-      err.reference = "This reference is already in use.";
-    if (
       !Number.isFinite(input.amount) ||
       input.amount < 1 ||
       input.amount > 10000000 ||
@@ -57,16 +51,17 @@ export function CreateInvoice({
       return;
     }
     setBusy(true);
-    await new Promise((r) => setTimeout(r, 450));
     try {
       const i = await service.create(input);
       await refresh();
       notify("Demo invoice created. Your payment link is ready.");
       router.push(`/app/invoices/${i.id}`);
-    } catch {
-      setErrors({
-        form: "Could not save in browser storage. Check storage permissions and try again.",
-      });
+    } catch (error) {
+      setErrors(
+        error instanceof Error && error.message === "DUPLICATE_REFERENCE"
+          ? { reference: "This reference is already in use." }
+          : { form: "Could not save demo state. Please try again." },
+      );
       setBusy(false);
     }
   }

@@ -62,58 +62,6 @@ test("formatting is locale-aware and translation preserves identifiers", () => {
   expect(translate("pt-BR", "USDG")).toBe("USDG");
 });
 
-test("demo service settles only the locked route and normalizes old receipt precision", async () => {
-  const { demoInvoiceService: service } =
-    await import("../src/lib/demo-service");
-  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-  const store = new Map<string, string>();
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => store.set(k, v),
-    },
-  });
-  try {
-    const invoice = await service.create({
-      supplier: "Test supplier",
-      wallet: "0x" + "a".repeat(40),
-      reference: "QUOTE-TEST",
-      amount: 25000,
-      due: "2027-01-20",
-      description: "",
-    });
-    await service.transition(invoice.id, "Funded");
-    await service.transition(invoice.id, "Routing", "split");
-    await expect(
-      service.transition(invoice.id, "Settled", "direct"),
-    ).rejects.toThrow("The selected route is locked.");
-    const settled = await service.transition(invoice.id, "Settled", "split");
-    expect(settled.receipt?.amountMinor).toBe(
-      demoQuote(25000).routes[1].outputMinor,
-    );
-    expect(settled.receipt?.execution.routeId).toBe("split");
-    const timestamp = settled.receipt!.timestamp;
-    const items = JSON.parse(store.get("ponte-demo-v1")!);
-    const saved = items.find((i: { id: string }) => i.id === invoice.id);
-    saved.receipt = {
-      ...saved.receipt,
-      amount: 4739.04,
-      originalAmount: 25000,
-    };
-    delete saved.receipt.amountMinor;
-    delete saved.receipt.originalAmountMinor;
-    store.set("ponte-demo-v1", JSON.stringify(items));
-    const restored = (await service.list()).find((i) => i.id === invoice.id)!;
-    expect(restored.receipt?.amountMinor).toBe("473904");
-    expect(restored.receipt?.originalAmountMinor).toBe("2500000");
-    expect(restored.receipt?.timestamp).toBe(timestamp);
-  } finally {
-    if (original) Object.defineProperty(globalThis, "localStorage", original);
-    else Reflect.deleteProperty(globalThis, "localStorage");
-  }
-});
-
 test("all static interface translation keys have Portuguese messages", async () => {
   const ts = await import("typescript");
   const fs = await import("node:fs");

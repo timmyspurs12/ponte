@@ -57,6 +57,10 @@ export interface SettlementReceipt {
   timestamp: string;
 }
 export interface Invoice {
+  createdAt?: string;
+  updatedAt?: string;
+  fundingMinor?: MinorUnits;
+  quote?: PaymentQuote;
   id: string;
   reference: string;
   supplier: string;
@@ -77,7 +81,16 @@ export type InvoiceInput = Pick<
   Invoice,
   "reference" | "supplier" | "wallet" | "amount" | "due" | "description"
 >;
+export interface BusinessActivityEvent {
+  id: string;
+  invoice_id: string;
+  kind: string;
+  previous_state: Status | null;
+  new_state: Status;
+  created_at: string;
+}
 export interface InvoiceService {
+  activity(): Promise<BusinessActivityEvent[]>;
   list(): Promise<Invoice[]>;
   create(input: InvoiceInput): Promise<Invoice>;
   transition(id: string, status: Status, route?: string): Promise<Invoice>;

@@ -1,3 +1,5 @@
+import { loadEnvFile } from 'node:process';
+try { loadEnvFile('.env.local'); } catch {}
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { prepareBrowser } from './prepare-browser.mjs';

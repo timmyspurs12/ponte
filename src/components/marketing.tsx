@@ -353,9 +353,7 @@ export function Marketing() {
                   <Check /> {t("Track every step in one workspace")}{" "}
                 </li>
               </ul>
-              <Cta href="/app/invoices/demo-1">
-                {t("Explore a demo payment")}
-              </Cta>
+              <Cta href="/app/invoices">{t("Explore a demo payment")}</Cta>
             </div>
             <div className="routing-preview">
               <div className="row">

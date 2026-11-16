@@ -12,7 +12,7 @@ import {
   FileText,
   Building2,
 } from "lucide-react";
-import { Invoice } from "@/lib/models";
+import { Invoice, BusinessActivityEvent } from "@/lib/models";
 import { invoiceService as service } from "@/lib/services";
 import { Logo, Cta } from "./ui";
 import { Marketing } from "./marketing";
@@ -26,12 +26,27 @@ export default function Ponte() {
 
   const pathname = usePathname();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
+  const [activity, setActivity] = useState<BusinessActivityEvent[]>([]);
   const [toast, setToast] = useState("");
+  const [loadError, setLoadError] = useState(false);
   async function refresh() {
-    setInvoices(await service.list());
+    try {
+      const [records, events] = await Promise.all([
+        service.list(),
+        service.activity(),
+      ]);
+      setInvoices(records);
+      setActivity(events);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
+    }
   }
   useEffect(() => {
-    const timer = setTimeout(refresh, 0);
+    const timer = setTimeout(() => {
+      if (location.pathname !== "/" && location.pathname !== "/developers")
+        void refresh();
+    }, 0);
     return () => clearTimeout(timer);
   }, []);
   useEffect(() => {
@@ -111,7 +126,17 @@ export default function Ponte() {
             </span>
           </div>
           <main className="app-main wrap" id="main">
-            {!invoices ? (
+            {loadError ? (
+              <section className="empty" role="alert">
+                <p>
+                  {t(
+                    "Could not load the workspace. Sign in locally or try again.",
+                  )}
+                </p>
+                <Link href="/dev-login">{t("Local sign in")}</Link>
+                <button onClick={() => void refresh()}>{t("Try again")}</button>
+              </section>
+            ) : !invoices ? (
               <div className="loading" role="status">
                 <div className="skeleton" />
                 <p>{t("Loading demo workspace…")}</p>
@@ -179,7 +204,7 @@ export default function Ponte() {
                 <InvoiceTable invoices={invoices} />
               </>
             ) : (
-              <Overview invoices={invoices} />
+              <Overview invoices={invoices} activity={activity} />
             )}
           </main>
           <footer className="app-footer wrap">
