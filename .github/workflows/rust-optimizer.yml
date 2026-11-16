@@ -211,7 +211,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64, gzip, pathlib
-          for name in ['environment.log', 'fetch.log', 'fmt.log', 'clippy.log', 'test.log', 'native-build.log', 'wasm-build.log', 'legacy-parity.log', 'legacy-parity.json', 'differential.log', 'differential-summary.json', 'benchmark.log', 'benchmark.md']:
+          for name in ['benchmark.md', 'differential-summary.json', 'legacy-parity.json', 'environment.log', 'test.log', 'clippy.log', 'fetch.log']:
               file = pathlib.Path('rust/optimizer/ci-logs') / name
               if file.exists():
                   data = base64.b64encode(gzip.compress(file.read_bytes())).decode()
