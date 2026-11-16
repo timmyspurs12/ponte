@@ -26,7 +26,12 @@ The first Phase 1.1 source commit, `2f31bf1db13e860e3a00c5a53c8a6a5506e20931`, p
 - [PR event run 43872766548](https://github.com/timmyspurs12/ponte/actions/runs/43872766548)
 - [Push event run 43872766243](https://github.com/timmyspurs12/ponte/actions/runs/43872766243)
 
-The suite was subsequently expanded to eleven tests. Check the [current PR checks](https://github.com/timmyspurs12/ponte/pull/1/checks) and the Phase 1.1 PR handoff comment for the final head SHA and its observed run results. No success is inferred merely from creating workflow YAML.
+The expanded **eleven-test** suite also passed on source commit `040986644b3f3386c83ec44cdd31ebe6fb494239` in both real standard-Chromium runs:
+
+- [PR event run 43874234876](https://github.com/timmyspurs12/ponte/actions/runs/43874234876)
+- [Push event run 43874228121](https://github.com/timmyspurs12/ponte/actions/runs/43874228121)
+
+All recorded job steps succeeded, including the full test step and report upload. The first workflow revision emitted a non-blocking action-runtime deprecation annotation. The workflow now uses verified v5 tags of checkout/setup-node/upload-artifact (Node 24 action runtime, with Node 22 still used for the application). The final-head run link and SHA are recorded in the Phase 1.1 handoff comment on [PR #1](https://github.com/timmyspurs12/ponte/pull/1). No success is inferred merely from creating YAML.
 
 ## Actually tested
 
