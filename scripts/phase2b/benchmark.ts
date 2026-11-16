@@ -347,7 +347,12 @@ function computeStats(
 }
 
 function readCmdLineVersion(cmd: string, args: readonly string[]): string {
-  const res = spawnSync(cmd, args, { encoding: "utf8" });
+  // Resolve rustup's toolchain override in the crate directory, where the
+  // benchmark binary was built, rather than reporting the host default.
+  const res = spawnSync(cmd, args, {
+    encoding: "utf8",
+    cwd: path.resolve(process.cwd(), "rust/optimizer"),
+  });
   if (res.error || res.status !== 0) {
     return "unavailable";
   }

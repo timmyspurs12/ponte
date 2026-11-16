@@ -345,18 +345,8 @@ export function runDifferentialHarness(options: {
     const rustLine = rustLines[i];
     outcomes[tsEval.response.status] += 1;
 
-    let matches = tsEval.canonicalJson === rustLine;
-    if (!matches) {
-      try {
-        const rustParsed = JSON.parse(rustLine) as WireOptimizeResponseV1;
-        assert.deepStrictEqual(rustParsed, tsEval.response);
-        matches = true;
-      } catch {
-        matches = false;
-      }
-    }
-
-    if (matches) {
+    // Compare the canonical JSON line itself, including deterministic key order.
+    if (tsEval.canonicalJson === rustLine) {
       successfulComparisons += 1;
     } else {
       const minimized = minimizeFailingRequest(

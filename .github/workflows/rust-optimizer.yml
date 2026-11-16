@@ -9,6 +9,9 @@ on:
       - 'scripts/phase2b/**'
       - 'scripts/phase2b/fixtures/**'
       - 'src/lib/quotes.ts'
+      - 'src/lib/models.ts'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/rust-optimizer.yml'
   push:
     branches:
@@ -20,6 +23,9 @@ on:
       - 'scripts/phase2b/**'
       - 'scripts/phase2b/fixtures/**'
       - 'src/lib/quotes.ts'
+      - 'src/lib/models.ts'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/rust-optimizer.yml'
   workflow_dispatch:
 
@@ -209,15 +215,15 @@ jobs:
       - name: Publish concise CI results
         if: always()
         run: |
-          python3 - <<'PY'
-          import base64, gzip, pathlib
-          for name in ['benchmark.md', 'differential-summary.json', 'legacy-parity.json', 'environment.log', 'test.log', 'clippy.log', 'fetch.log']:
-              file = pathlib.Path('rust/optimizer/ci-logs') / name
-              if file.exists():
-                  data = base64.b64encode(gzip.compress(file.read_bytes())).decode()
-                  for i in range(0, len(data), 3800):
-                      print(f'::notice title=REPORT_{name}_{i // 3800}::{data[i:i+3800]}')
-          PY
+          if [[ -f rust/optimizer/ci-logs/differential.log ]]; then
+            echo '## Differential results' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat rust/optimizer/ci-logs/differential.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -f rust/optimizer/ci-logs/benchmark.md ]]; then
+            cat rust/optimizer/ci-logs/benchmark.md >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload concise optimizer verification logs and summaries
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
