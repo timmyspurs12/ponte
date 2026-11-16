@@ -31,7 +31,7 @@ The expanded **eleven-test** suite also passed on source commit `040986644b3f338
 - [PR event run 43874234876](https://github.com/timmyspurs12/ponte/actions/runs/43874234876)
 - [Push event run 43874228121](https://github.com/timmyspurs12/ponte/actions/runs/43874228121)
 
-All recorded job steps succeeded, including the full test step and report upload. The first workflow revision emitted a non-blocking action-runtime deprecation annotation. The workflow now uses verified v5 tags of checkout/setup-node/upload-artifact (Node 24 action runtime, with Node 22 still used for the application). The final-head run link and SHA are recorded in the Phase 1.1 handoff comment on [PR #1](https://github.com/timmyspurs12/ponte/pull/1). No success is inferred merely from creating YAML.
+All recorded job steps succeeded, including the full test step and report upload. The first workflow revision emitted a non-blocking action-runtime deprecation annotation. The workflow now uses verified v5 tags of checkout/setup-node and v6 of upload-artifact (their `action.yml` files declare Node 24, with Node 22 still used for the application). The final-head run link and SHA are recorded in the Phase 1.1 handoff comment on [PR #1](https://github.com/timmyspurs12/ponte/pull/1). No success is inferred merely from creating YAML.
 
 ## Actually tested
 
