@@ -149,8 +149,8 @@ jobs:
                   tar.add(file)
           for title, data in [('SOURCE', archive.getvalue()), ('LOGS', gzip.compress('\n'.join(logs).encode()))]:
               encoded = base64.b64encode(data).decode()
-              for i in range(0, len(encoded), 30000):
-                  print(f'::notice title={title}_{i // 30000}::{encoded[i:i+30000]}')
+              for i in range(0, len(encoded), 3800):
+                  print(f'::notice title={title}_{i // 3800}::{encoded[i:i+3800]}')
           PY
       - name: Download locked Rust dependencies
         working-directory: rust/optimizer
