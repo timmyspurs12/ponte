@@ -1,0 +1,87 @@
+name: Rust environment validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-optimizer.yml'
+  push:
+    branches: [arena/5b4a73d0-ponte]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-optimizer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-environment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # Standard GitHub-hosted runner only. No larger or self-hosted runners.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: rust/environment-check
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned Rust components
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          rustup toolchain install 1.91.0 --profile minimal --component rustfmt --target wasm32-unknown-unknown 2>&1 | tee ci-logs/install.log
+      - name: Record environment
+        run: |
+          set -euo pipefail
+          {
+            date -u +%FT%TZ
+            printf 'Commit: %s\n' "$GITHUB_SHA"
+            uname -a
+            cat /etc/os-release
+            rustc --version
+            cargo --version
+            echo "::notice title=Rust toolchain::$(rustc --version); $(cargo --version)"
+            rustup target list --installed
+            echo "::notice title=Installed targets::$(rustup target list --installed | paste -sd, -)"
+            sha256sum Cargo.lock
+          } 2>&1 | tee ci-logs/environment.log
+      - name: Download locked dependencies
+        run: |
+          set -euo pipefail
+          cargo fetch --locked 2>&1 | tee ci-logs/fetch.log
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          cargo fmt --check 2>&1 | tee ci-logs/fmt.log
+      - name: Run native tests
+        run: |
+          set -euo pipefail
+          cargo test --locked 2>&1 | tee ci-logs/test.log
+      - name: Compile native library
+        run: |
+          set -euo pipefail
+          cargo build --locked 2>&1 | tee ci-logs/native-build.log
+      - name: Compile WASM target library
+        run: |
+          set -euo pipefail
+          cargo build --locked --target wasm32-unknown-unknown 2>&1 | tee ci-logs/wasm-build.log
+      - name: Verify lockfile remains unchanged
+        run: git diff --exit-code -- Cargo.lock
+      - name: Upload small verification logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rust-environment-logs
+          path: rust/environment-check/ci-logs/*.log
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 9
