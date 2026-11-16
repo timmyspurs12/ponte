@@ -191,7 +191,7 @@ test("responsive layouts and navigation", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("keyboard, reduced motion, public demo payment and accessibility", async ({
+test("keyboard, reduced motion, workspace demo payment and accessibility", async ({
   page,
 }) => {
   const errors: string[] = [];

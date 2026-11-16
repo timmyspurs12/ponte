@@ -12,7 +12,7 @@ Date: 16 November 2026. This document records observed local checks; final-commi
 - `db:reset -- --confirm-local-reset`: executed successfully against the local loopback simulation DB; migrates/seeds again. Reset is destructive and must never target valuable data.
 - `test:backend`: **13/13 passed**. Real PG—not SQLite, a mocked driver or an in-memory approximation.
 - ESLint, TypeScript and production `next build`: passed.
-- Playwright: **11/11 passed** using the explicit restricted-Linux Chromium fallback. CI uses standard Chromium, separately verified through its actual run.
+- Playwright: **15/15 passed** using the explicit restricted-Linux Chromium fallback. CI uses standard Chromium, separately verified through its actual run.
 - `npm audit --omit=dev`: **0 production vulnerabilities** observed. Full audit reports 8 moderate development-only findings in the ESLint/TypeScript-ESLint/minimatch dependency chain; no unsafe forced major upgrade was applied.
 - Served the built production application locally on port 3001: a request with the valid dev bearer token returned **503 AUTH_NOT_CONFIGURED**; `/dev-login` returned **404**. Stopped that verification server afterward. No public deployment was made.
 
@@ -43,3 +43,11 @@ The Phase 1.1 screenshots and [historical QA](QA.md) remain the approved visual 
 ## Detailed-checklist follow-up
 
 The follow-up on the same open PR adds forward migration 002 rather than rewriting migration 001. Existing records remain intact. Newly introduced historical metadata uses migration time where no original timestamp existed; it is not claimed as original creation provenance. Business activity now comes from the persisted event endpoint and is displayed by the overview. Final-head Actions conclusions for this amendment are recorded in the PR handoff after the run, not inferred from the earlier commit's green checks.
+
+## Phase 2A.2 frontend/backend consistency
+
+- Failed-state retry removed; prominent localized replacement link opens the new invoice form. English and Portuguese tests assert no unsupported payment action, no API mutation on navigation, and unchanged original invoice plus activity history.
+- Payment-link copy now explains workspace-only access, existing authenticated membership, internal demonstrations and unimplemented external supplier access. No public-checkout or browser-store claims remain in the interface.
+- Four additional Playwright scenarios (two per language) verify the Failed replacement flow, all restriction messages, copied internal URL, authorized existing-invoice access, and anonymous API/UI rejection without invoice reference/wallet disclosure.
+- All 15 browser/unit scenarios, all 13 real-PG backend tests, clean/upgrade migration integration, lint, TypeScript and production build are executed for this amendment. Actual final-commit Actions links are recorded in the PR handoff. The first new-test run caught a test locator matching both the application alert and Next's route announcer; scoping the locator to the main region fixed the test ambiguity without weakening its access assertions.
+- No backend transition/authentication change, public deployment, merge or real financial operation is included.

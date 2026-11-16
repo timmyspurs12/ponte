@@ -109,3 +109,9 @@ Payments expose fixed `funding_currency: "BRL"`, `status: "Confirmed"`, creation
 Events expose `previous_state` (null for creation) and `new_state`. Quote and Draft-edit events keep the same state on both sides; only lifecycle events advance it. `/activity` returns only the authenticated business's events with the same no-store/error/rate-limit boundary as invoices. The overview uses this endpoint for real workspace activity rather than presenting invoice creation dates as an event feed.
 
 For pre-migration business/user/membership records that had no historical timestamps, added metadata reflects migration time, not a recovered original time. Existing invoice created time and all financial records are preserved. Event state history is backfilled in chronological order and the immutable-event trigger is restored in the same migration transaction.
+
+## Phase 2A.2 interface consistency
+
+Failed remains terminal. The invoice screen offers **Create replacement invoice** (`/app/invoices/new`) rather than an unsupported Failed → Pending payment retry. Merely opening the replacement form performs no financial mutation; the original invoice and audit events remain unchanged. Creating a replacement is a new invoice operation, not resetting or resuming the original.
+
+The copied `/pay/:id` URL is **workspace-restricted**, for internal demonstrations. Readers must already be authenticated with access to that invoice's workspace. External supplier access has not been implemented. The URL is not a public checkout capability, and its data is not a browser-local store. Anonymous invoice API reads return 401 without invoice data; authorized workspace reads return 200, while cross-tenant reads remain excluded. The HTML application shell can load without authentication, but it does not expose invoice details. No authentication or tenant enforcement was relaxed for these interface fixes. Both languages explain the restriction beside the copy-link action.

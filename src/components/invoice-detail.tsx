@@ -202,13 +202,15 @@ export function InvoiceDetail({
             >
               <div className="row">
                 <h2>
-                  {invoice.status === "Settled"
-                    ? t("Settlement receipt")
-                    : invoice.status === "Routing"
-                      ? t("Ready for settlement")
-                      : invoice.status === "Funded"
-                        ? t("Compare liquidity routes")
-                        : t("Pix demo payment")}
+                  {invoice.status === "Failed"
+                    ? t("Invoice failed")
+                    : invoice.status === "Settled"
+                      ? t("Settlement receipt")
+                      : invoice.status === "Routing"
+                        ? t("Ready for settlement")
+                        : invoice.status === "Funded"
+                          ? t("Compare liquidity routes")
+                          : t("Pix demo payment")}
                 </h2>
                 {invoice.status === "Settled" ? (
                   <CheckCircle2 size={22} />
@@ -216,20 +218,25 @@ export function InvoiceDetail({
                   <GitBranch size={20} />
                 )}
               </div>
-              {["Pending payment", "Draft", "Failed"].includes(
-                invoice.status,
-              ) ? (
+              {invoice.status === "Failed" ? (
+                <>
+                  <p>
+                    {t(
+                      "This failed invoice cannot be retried. Its record and activity history are preserved.",
+                    )}
+                  </p>
+                  <Link className="button full-button" href="/app/invoices/new">
+                    {t("Create replacement invoice")} <ArrowRight size={16} />
+                  </Link>
+                </>
+              ) : ["Pending payment", "Draft"].includes(invoice.status) ? (
                 <>
                   <p>
                     {invoice.status === "Draft"
                       ? t("Create a payment request to continue.")
-                      : invoice.status === "Failed"
-                        ? t(
-                            "The sample payment failed. Retry the demo request; no funds were moved.",
-                          )
-                        : t(
-                            "A familiar local payment. A transparent global journey.",
-                          )}
+                      : t(
+                          "A familiar local payment. A transparent global journey.",
+                        )}
                   </p>
                   <div className="pix-sandbox">
                     <div className="pix-demo-symbol">
@@ -263,9 +270,7 @@ export function InvoiceDetail({
                     >
                       {busy
                         ? t("Preparing…")
-                        : invoice.status === "Failed"
-                          ? t("Retry demo payment request")
-                          : t("Create demo payment request")}
+                        : t("Create demo payment request")}
                     </button>
                   )}
                 </>
@@ -464,13 +469,18 @@ export function InvoiceDetail({
         </div>
         <aside>
           <section className="panel">
-            <h2>{t("Payment link")}</h2>
+            <h2>{t("Workspace-restricted payment link")}</h2>
             <p>
-              {" "}
               {t(
-                "Open the public-facing demo checkout. Only available in this browser’s local demo store.",
-              )}{" "}
+                "This link is restricted to this workspace and is for internal demonstrations only.",
+              )}
             </p>
+            <p>
+              {t(
+                "Sign in with an account that already has access to this workspace to view this invoice.",
+              )}
+            </p>
+            <p>{t("External supplier access is not implemented yet.")}</p>
             <div className="link-box">
               <span>/pay/{invoice.id.slice(0, 16)}</span>
               <button

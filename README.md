@@ -37,6 +37,14 @@ The Node scripts load `.env.local`; existing environment variables take preceden
 
 Create an invoice with a future due date and an illustrative address such as `0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` (**never send funds**). Confirm simulated Pix, select a route, confirm simulated settlement, export JSON, and reload/open the saved invoice URL. The database—not cookies or browser storage—owns the invoice and financial lifecycle. Another browser must authenticate to the same local tenant before opening that URL. Old `ponte-demo-v1` browser records are intentionally not imported or trusted.
 
+### Failed invoices and replacement invoices
+
+Failed is a terminal state: it cannot return to Pending payment. The detail screen offers **Create replacement invoice** / **Criar fatura substituta**, linking to `/app/invoices/new`. This opens a new invoice form; it does not reset, delete, retry or alter the original failed invoice or its activity history.
+
+### Workspace-restricted payment links
+
+The copy-link action is for **internal demonstrations only**. `/pay/[id]` requires an account that already has access to the relevant authenticated workspace; possession of the URL does not grant access. External supplier access is **not implemented**. Invoice/payment authority is PostgreSQL, not a browser-local demo store. An anonymous visitor can load the generic application shell but receives 401 from the financial API and cannot view invoice data. Other tenants remain excluded by authorization. Production financial access remains closed until production authentication is integrated.
+
 ## Architecture
 
 Next.js Route Handlers → Zod validation/authentication → lifecycle service → SQL repository/transaction → PostgreSQL. This is one modular application, not multiple microservices. Explicit `pg` SQL was selected over an ORM for this small locking-heavy schema; rationale and trade-offs are in [BACKEND_ARCHITECTURE.md](docs/BACKEND_ARCHITECTURE.md).
