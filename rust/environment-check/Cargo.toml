@@ -1,0 +1,12 @@
+[package]
+name = "ponte-environment-check"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.91"
+publish = false
+
+# Isolated from any future optimizer workspace.
+[workspace]
+
+[dependencies]
+itoa = "=1.0.15"
