@@ -33,6 +33,7 @@ JSON bodies are strict; unknown fields (including caller-supplied status, receip
 
 | Method/path | Input | Result |
 |---|---|---|
+| GET `/activity?limit=50&offset=0&type=invoice.Funded` | limit 1–100, offset 0–100000, optional exact event type | Business-wide tenant-scoped event history, newest first |
 | POST `/invoices` | Invoice fields below | Draft invoice |
 | GET `/invoices?limit=100&offset=0&status=Funded` | limit 1–100, offset 0–100000, optional exact canonical status | Tenant invoices, created descending then UUID; next offset is offset+limit; a shorter page is the end |
 | GET `/invoices/:id` | UUID | Persisted invoice snapshot |
@@ -47,7 +48,7 @@ JSON bodies are strict; unknown fields (including caller-supplied status, receip
 | GET `/invoices/:id/settlements` | — | Array, zero/one locked simulation settlement |
 | GET `/invoices/:id/activity` | — | Append-only correlated event history |
 
-History endpoints return the invoice's complete history in this foundation. Pagination applies to the top-level invoice collection; a production history-retention/cursor strategy remains a scaling gate. Same-timestamp event ordering is not a sequence-number guarantee.
+Invoice-scoped history endpoints return that invoice's complete history in this foundation. Pagination applies to the top-level invoice collection and business-wide activity; a production history-retention/cursor strategy remains a scaling gate. Same-timestamp event ordering is not a sequence-number guarantee.
 
 ### Invoice fields
 
@@ -64,7 +65,7 @@ History endpoints return the invoice's complete history in this foundation. Pagi
 
 `fundingMinor` is canonical positive **BRL cents**, string, range 100–1000000000 (R$1–R$10,000,000). No decimals, exponents, leading zeros, numeric JSON values or negative signs. Due is a valid ISO calendar date, today or later at creation/update (server UTC). Reference is 1–100 characters, supplier 2–200, description up to 2000; strings are trimmed where appropriate. Wallet is a syntactically valid 0x/40-hex illustrative address: no network ownership, checksum, token availability or recipient identity verification is implied.
 
-Response includes `fundingMinor`, canonical `status`, UUID and server-created date, plus a persisted server-generated illustrative `quote` for display. `amount: 25000.01` and `payment.amount` remain backward-compatible **display-only** fields for approved visual components; they are never accepted as authority by the server. Funding currency is fixed BRL, illustrative settlement asset USDG. Actual token base units are unknown and not used.
+Response includes `fundingMinor`, canonical `status`, UUID, precise database `createdAt`/`updatedAt` timestamps and server-created date, plus a persisted server-generated illustrative `quote` for display. `amount: 25000.01` and `payment.amount` remain backward-compatible **display-only** fields for approved visual components; they are never accepted as authority by the server. Funding currency is fixed BRL, illustrative settlement asset USDG. Actual token base units are unknown and not used.
 
 Reference uniqueness is **case-insensitive within a tenant**. Different tenants may use the same reference. Draft edits do not affect funded or locked invoices.
 
@@ -98,3 +99,13 @@ A failed expired quote settlement does not partially update a receipt or append 
 Quote `fundingMinor`: BRL cents. Candidate `outputMinor`, `feeMinor`, `minimumOutputMinor`: **illustrative USDG two-decimal units**, not verified ERC-20 decimals. `executionCostMinor: "2"`: illustrative **USD accounting cents**, separate from token output. Rational rate `525/100` is fixed demonstration BRL per USDG. Financial arithmetic is BigInt with documented floors, not floating-point execution math.
 
 Settlement record exposes `expected_minor`, `minimum_minor`, `actual_minor`, locked `route_id`, `status`, timestamps and NULL `transaction_hash`. Receipt `execution.identifier` begins `SIM-`; it is not a transaction hash or proof of a blockchain transfer. See [FINANCIAL_MODEL.md](FINANCIAL_MODEL.md).
+
+## Relational audit metadata
+
+The forward `002_audit_metadata` migration adds created/updated timestamps to businesses, users and memberships, and a DB-maintained invoice update time. Invoice descriptive fields, currencies, asset and due date are generated relational columns from one snapshot, so they cannot be edited independently into inconsistent copies. A CHECK requires the snapshot's ID/reference/status/funding/display amount to agree with authoritative relational columns (including rejecting JSON null). API timestamp values are hydrated from columns, never accepted from clients or saved as stale snapshot timestamps.
+
+Payments expose fixed `funding_currency: "BRL"`, `status: "Confirmed"`, creation time and `received_at` as the authoritative confirmation time. Settlements expose fixed `settlement_asset: "USDG"` and update time; Settled requires non-null actual output and completion time.
+
+Events expose `previous_state` (null for creation) and `new_state`. Quote and Draft-edit events keep the same state on both sides; only lifecycle events advance it. `/activity` returns only the authenticated business's events with the same no-store/error/rate-limit boundary as invoices. The overview uses this endpoint for real workspace activity rather than presenting invoice creation dates as an event feed.
+
+For pre-migration business/user/membership records that had no historical timestamps, added metadata reflects migration time, not a recovered original time. Existing invoice created time and all financial records are preserved. Event state history is backfilled in chronological order and the immutable-event trigger is restored in the same migration transaction.

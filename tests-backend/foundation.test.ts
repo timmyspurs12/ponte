@@ -150,14 +150,14 @@ test("cross-tenant reads/mutations rejected even with a valid active membership"
   const i = await create(),
     other = randomUUID(),
     user = process.env.PONTE_DEV_USER_ID!;
-  await pool.query("INSERT INTO businesses VALUES($1,$2)", [
+  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     other,
     "Other tenant",
   ]);
-  await pool.query("INSERT INTO memberships VALUES($1,$2,'admin','active')", [
-    other,
-    user,
-  ]);
+  await pool.query(
+    "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
+    [other, user],
+  );
   process.env.PONTE_DEV_BUSINESS_ID = other;
   try {
     await assert.rejects(request(`/${i.id}`), error("NOT_FOUND"));
@@ -314,7 +314,10 @@ test("database constraints, real PostgreSQL UTF8 and rollback protect financial 
   );
   await assert.rejects(
     transaction(async (db) => {
-      await db.query("UPDATE invoices SET status='Failed' WHERE id=$1", [i.id]);
+      await db.query(
+        "UPDATE invoices SET status='Failed',data=jsonb_set(data,'{status}','\"Failed\"') WHERE id=$1",
+        [i.id],
+      );
       throw new Error("forced rollback");
     }),
     /forced rollback/,
@@ -327,7 +330,7 @@ test("database constraints, real PostgreSQL UTF8 and rollback protect financial 
   const wrongTenant = randomUUID();
   await assert.rejects(
     pool.query(
-      "INSERT INTO payments VALUES($1,$2,$3,'simulation',$4,100,now())",
+      "INSERT INTO payments(id,business_id,invoice_id,provider,provider_reference,funding_minor,received_at) VALUES($1,$2,$3,'simulation',$4,100,now())",
       [randomUUID(), wrongTenant, i.id, `SIM-${randomUUID()}`],
     ),
     (e) => (e as { code: string }).code === "23503",
@@ -366,4 +369,162 @@ test("same-origin checks accept the browser Host behind the Next bind address, n
     ),
     false,
   );
+});
+test("requested relational metadata stays consistent and timestamped through updates", async () => {
+  const i = await create();
+  assert.ok(i.createdAt);
+  assert.ok(i.updatedAt);
+  const updated = (await request(
+    `/${i.id}`,
+    { ...input(), reference: i.reference, supplier: "Metadata supplier" },
+    undefined,
+    "PATCH",
+  )) as Invoice;
+  assert.equal(updated.createdAt, i.createdAt);
+  assert.ok(
+    new Date(updated.updatedAt!).valueOf() >= new Date(i.updatedAt!).valueOf(),
+  );
+  const row = (
+    await pool.query(
+      "SELECT supplier_name,supplier_wallet_address,funding_currency,settlement_asset,due_date::text,description,data FROM invoices WHERE id=$1",
+      [i.id],
+    )
+  ).rows[0];
+  assert.equal(row.supplier_name, "Metadata supplier");
+  assert.equal(row.funding_currency, "BRL");
+  assert.equal(row.settlement_asset, "USDG");
+  assert.equal(row.due_date, "2027-12-20");
+  assert.equal(row.data.createdAt, undefined);
+  assert.equal(row.data.updatedAt, undefined);
+  await assert.rejects(
+    pool.query(
+      "UPDATE invoices SET data=jsonb_set(data,'{fundingMinor}','\"999\"') WHERE id=$1",
+      [i.id],
+    ),
+    (e) => (e as { code: string }).code === "23514",
+  );
+  await assert.rejects(
+    pool.query(
+      "UPDATE invoices SET data=jsonb_set(data,'{status}','\"Settled\"') WHERE id=$1",
+      [i.id],
+    ),
+    (e) => (e as { code: string }).code === "23514",
+  );
+  await assert.rejects(
+    pool.query(
+      "UPDATE invoices SET data=jsonb_set(data,'{fundingMinor}','null') WHERE id=$1",
+      [i.id],
+    ),
+    (e) => (e as { code: string }).code === "23514",
+  );
+  await transition(i.id, "Pending payment");
+  await transition(i.id, "Funded");
+  const payment = (
+    (await request(`/${i.id}/payments`)) as {
+      funding_currency: string;
+      status: string;
+      received_at: string;
+      created_at: string;
+    }[]
+  )[0];
+  assert.equal(payment.funding_currency, "BRL");
+  assert.equal(payment.status, "Confirmed");
+  assert.ok(payment.received_at);
+  assert.ok(payment.created_at);
+  const metadata = await pool.query(
+    "SELECT b.created_at,b.updated_at,u.created_at AS user_created,m.created_at AS membership_created FROM businesses b JOIN memberships m ON m.business_id=b.id JOIN users u ON u.id=m.user_id WHERE b.id=$1",
+    [business],
+  );
+  assert.ok(metadata.rows[0].created_at);
+  assert.ok(metadata.rows[0].user_created);
+  assert.ok(metadata.rows[0].membership_created);
+});
+test("business activity is paginated, filtered and tenant scoped with explicit state edges", async () => {
+  const i = await create();
+  await transition(i.id, "Pending payment");
+  await transition(i.id, "Funded");
+  const activity = async (query = "") =>
+    execute(
+      new Request(`http://localhost/api/v1/activity${query}`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      ["activity"],
+    ) as Promise<
+      {
+        id: string;
+        business_id: string;
+        invoice_id: string;
+        previous_state: string | null;
+        new_state: string;
+        kind: string;
+      }[]
+    >;
+  const events = (await request(`/${i.id}/activity`)) as {
+    previous_state: string | null;
+    new_state: string;
+  }[];
+  assert.deepEqual(
+    events.map((e) => [e.previous_state, e.new_state]),
+    [
+      [null, "Draft"],
+      ["Draft", "Pending payment"],
+      ["Pending payment", "Funded"],
+    ],
+  );
+  const page = await activity("?limit=2&offset=0&type=invoice.Funded");
+  assert.ok(page.length <= 2);
+  assert.ok(
+    page.every(
+      (e) => e.business_id === business && e.kind === "invoice.Funded",
+    ),
+  );
+  const all = await activity("?limit=100");
+  assert.ok(all.some((e) => e.invoice_id === i.id));
+  if (all.length > 1) {
+    const first = await activity("?limit=1");
+    const second = await activity("?limit=1&offset=1");
+    assert.notEqual(first[0].id, second[0].id);
+  }
+  await assert.rejects(activity("?limit=101"));
+  const other = randomUUID();
+  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+    other,
+    "Empty activity tenant",
+  ]);
+  await pool.query(
+    "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
+    [other, process.env.PONTE_DEV_USER_ID],
+  );
+  process.env.PONTE_DEV_BUSINESS_ID = other;
+  try {
+    assert.deepEqual(await activity(), []);
+  } finally {
+    process.env.PONTE_DEV_BUSINESS_ID = business;
+  }
+});
+test("malformed monetary values return validation errors, never BigInt conversion failures", async () => {
+  const { POST } = await import("../src/app/api/v1/[...path]/route");
+  for (const fundingMinor of [
+    "1.00",
+    "NaN",
+    "1e4",
+    "-100",
+    "000100",
+    "1000000000000000000000000000000000000",
+  ]) {
+    const response = await POST(
+      new Request("http://localhost/api/v1/invoices", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "idempotency-key": randomUUID(),
+        },
+        body: JSON.stringify({ ...input(), fundingMinor }),
+      }),
+      { params: Promise.resolve({ path: ["invoices"] }) },
+    );
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).error.code, "VALIDATION_ERROR");
+  }
 });

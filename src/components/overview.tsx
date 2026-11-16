@@ -10,11 +10,17 @@ import {
   FileText,
 } from "lucide-react";
 import { minorToDisplayNumber } from "@/lib/quotes";
-import { Invoice } from "@/lib/models";
+import { Invoice, BusinessActivityEvent } from "@/lib/models";
 
 import { Mark, Badge, Cta } from "./ui";
 import { InvoiceTable } from "./invoice-table";
-export function Overview({ invoices }: { invoices: Invoice[] }) {
+export function Overview({
+  invoices,
+  activity,
+}: {
+  invoices: Invoice[];
+  activity: BusinessActivityEvent[];
+}) {
   const { t, money, date } = useLocale();
 
   const total = invoices.reduce((s, i) => s + i.amount, 0);
@@ -168,24 +174,30 @@ export function Overview({ invoices }: { invoices: Invoice[] }) {
         </section>
         <section>
           <h2>{t("Workspace activity")}</h2>
-          {invoices.slice(0, 3).map((i) => (
-            <Link
-              className="activity-row"
-              key={i.id}
-              href={`/app/invoices/${i.id}`}
-            >
-              <span className="activity-icon">
-                <FileText size={17} />
-              </span>
-              <span>
-                <strong>{i.reference}</strong>
-                <small>
-                  {i.supplier} · {date(i.created)}
-                </small>
-              </span>
-              <Badge status={i.status} />
-            </Link>
-          ))}
+          {activity.map((event) => {
+            const i = invoices.find(
+              (invoice) => invoice.id === event.invoice_id,
+            );
+            if (!i) return null;
+            return (
+              <Link
+                className="activity-row"
+                key={event.id}
+                href={`/app/invoices/${event.invoice_id}`}
+              >
+                <span className="activity-icon">
+                  <FileText size={17} />
+                </span>
+                <span>
+                  <strong>{i.reference}</strong>
+                  <small>
+                    {i.supplier} · {date(event.created_at)}
+                  </small>
+                </span>
+                <Badge status={event.new_state} />
+              </Link>
+            );
+          })}
         </section>
       </div>
     </>

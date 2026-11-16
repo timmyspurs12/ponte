@@ -16,7 +16,8 @@
     "db:seed": "node --env-file-if-exists=.env.local --import tsx scripts/database.ts --seed",
     "db:fixtures": "node --env-file-if-exists=.env.local --import tsx scripts/seed-fixtures.ts",
     "test:backend": "node --env-file-if-exists=.env.local --import tsx --test tests-backend/*.test.ts",
-    "db:reset": "node --env-file-if-exists=.env.local --import tsx scripts/reset-database.ts"
+    "db:reset": "node --env-file-if-exists=.env.local --import tsx scripts/reset-database.ts",
+    "test:migrations": "node --env-file-if-exists=.env.local --import tsx scripts/test-migrations.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.0",

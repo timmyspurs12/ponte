@@ -18,7 +18,12 @@ const input = z
     fundingMinor: z
       .string()
       .regex(/^[1-9]\d{0,9}$/)
-      .refine((v) => BigInt(v) >= 100n && BigInt(v) <= 1000000000n),
+      .refine(
+        (v) =>
+          /^[1-9]\d{0,9}$/.test(v) &&
+          BigInt(v) >= 100n &&
+          BigInt(v) <= 1000000000n,
+      ),
     due: z.iso.date(),
     description: z.string().max(2000),
   })
@@ -54,6 +59,7 @@ async function event(
   i: Invoice,
   correlation: string,
   kind: string,
+  previousState: Status | null,
 ) {
   await repository.appendEvent(db, [
     randomUUID(),
@@ -68,12 +74,42 @@ async function event(
       fundingMinor: i.fundingMinor,
       simulated: true,
     }),
+    previousState,
+    i.status,
   ]);
 }
 export async function execute(request: Request, parts: string[]) {
   const ctx = await authenticate(request),
     url = new URL(request.url),
     method = request.method;
+  if (parts.length === 1 && parts[0] === "activity" && method === "GET") {
+    const limit = z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .parse(url.searchParams.get("limit") ?? 50);
+    const offset = z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(100000)
+      .parse(url.searchParams.get("offset") ?? 0);
+    const kind = url.searchParams.get("type");
+    if (kind !== null) z.string().min(1).max(100).parse(kind);
+    return transaction(
+      async (db) =>
+        (
+          await repository.businessActivity(
+            db,
+            ctx.business,
+            limit,
+            offset,
+            kind,
+          )
+        ).rows,
+    );
+  }
   if (parts[0] !== "invoices") fail(404, "NOT_FOUND");
   const id = parts[1] ? uuid.parse(parts[1]) : undefined,
     resource = parts[2];
@@ -210,8 +246,8 @@ export async function execute(request: Request, parts: string[]) {
         i.status,
         JSON.stringify(i),
       ]);
-      await event(db, ctx, i, randomUUID(), "invoice.created");
-      result = i;
+      await event(db, ctx, i, randomUUID(), "invoice.created", null);
+      result = await get(db, ctx, i.id);
     } else if (id) {
       const i = await get(db, ctx, id, true);
       if (resource === "quotes" && method === "POST") {
@@ -228,7 +264,7 @@ export async function execute(request: Request, parts: string[]) {
           JSON.stringify(q),
           expires,
         ]);
-        await event(db, ctx, i, qid, "quote.created");
+        await event(db, ctx, i, qid, "quote.created", i.status);
         result = { id: qid, data: q, expires_at: expires };
       } else if (
         (resource === "transitions" && method === "POST") ||
@@ -248,6 +284,7 @@ export async function execute(request: Request, parts: string[]) {
         };
         if (!allowed[i.status].includes(command.status))
           fail(409, "INVALID_TRANSITION");
+        const previousState = i.status;
         let correlation = randomUUID();
         if (command.status === "Funded") {
           const paymentId = randomUUID();
@@ -329,8 +366,15 @@ export async function execute(request: Request, parts: string[]) {
           i.status,
           JSON.stringify(i),
         ]);
-        await event(db, ctx, i, correlation, `invoice.${command.status}`);
-        result = i;
+        await event(
+          db,
+          ctx,
+          i,
+          correlation,
+          `invoice.${command.status}`,
+          previousState,
+        );
+        result = await get(db, ctx, id);
       } else if (!resource && method === "PATCH") {
         if (i.status !== "Draft") fail(409, "INVOICE_LOCKED");
         const parsed = input.parse(body);
@@ -347,8 +391,8 @@ export async function execute(request: Request, parts: string[]) {
           i.fundingMinor,
           JSON.stringify(i),
         ]);
-        await event(db, ctx, i, randomUUID(), "invoice.updated");
-        result = i;
+        await event(db, ctx, i, randomUUID(), "invoice.updated", "Draft");
+        result = await get(db, ctx, id);
       } else fail(404, "NOT_FOUND");
     } else fail(404, "NOT_FOUND");
     await repository.saveIdempotency(db, [

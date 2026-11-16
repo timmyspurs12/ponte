@@ -1,11 +1,18 @@
-import type { Invoice, InvoiceInput, InvoiceService, Status } from "./models";
+import type {
+  Invoice,
+  InvoiceInput,
+  InvoiceService,
+  BusinessActivityEvent,
+  Status,
+} from "./models";
 import { majorToMinor } from "./quotes";
 async function api<T>(
   path: string,
   body?: unknown,
   method = "POST",
+  resource = "invoices",
 ): Promise<T> {
-  const response = await fetch(`/api/v1/invoices${path}`, {
+  const response = await fetch(`/api/v1/${resource}${path}`, {
     method: body === undefined ? "GET" : method,
     headers:
       body === undefined
@@ -22,6 +29,14 @@ async function api<T>(
   return result.data;
 }
 export const invoiceService: InvoiceService = {
+  activity() {
+    return api<BusinessActivityEvent[]>(
+      "?limit=3",
+      undefined,
+      "GET",
+      "activity",
+    );
+  },
   async list() {
     const invoices: Invoice[] = [];
     for (let offset = 0; offset <= 100000; offset += 100) {

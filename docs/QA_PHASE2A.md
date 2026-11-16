@@ -6,10 +6,11 @@ Date: 16 November 2026. This document records observed local checks; final-commi
 
 - Linux x64 Arena, Node 22, Next.js 16.4.6, real PostgreSQL 18.6, UTF8.
 - `db:seed`: clean initial schema migration and business/user/admin creation passed.
-- Repeated `db:migrate`: passed without reapplying the initial migration.
+- Repeated `db:migrate`: passed without reapplying versioned migrations.
+- `test:migrations`: passed against isolated real-PG schemas: populated initial-schema upgrade preserves data/events; immutable events restored; clean multi-file migration runner and repeat execution verified.
 - `db:fixtures`: eight records created through the actual service/lifecycle, not browser financial fixtures.
 - `db:reset -- --confirm-local-reset`: executed successfully against the local loopback simulation DB; migrates/seeds again. Reset is destructive and must never target valuable data.
-- `test:backend`: **10/10 passed**. Real PG—not SQLite, a mocked driver or an in-memory approximation.
+- `test:backend`: **13/13 passed**. Real PG—not SQLite, a mocked driver or an in-memory approximation.
 - ESLint, TypeScript and production `next build`: passed.
 - Playwright: **11/11 passed** using the explicit restricted-Linux Chromium fallback. CI uses standard Chromium, separately verified through its actual run.
 - `npm audit --omit=dev`: **0 production vulnerabilities** observed. Full audit reports 8 moderate development-only findings in the ESLint/TypeScript-ESLint/minimatch dependency chain; no unsafe forced major upgrade was applied.
@@ -17,7 +18,7 @@ Date: 16 November 2026. This document records observed local checks; final-commi
 
 ## Backend coverage
 
-Active/disabled memberships, viewer read-only enforcement, unauthenticated rejection and production fail-closed; canonical amount ranges and forbidden fields; case-insensitive tenant reference uniqueness; Draft-only edits; same-key concurrent replay and different-payload conflict; concurrent duplicate payment protection; terminal/invalid transitions; missing/expired quote on routing and expiry recheck on settlement; locked alternate route; one exact persisted receipt/settlement; NULL hash and actual=expected output; append-only events; cross-tenant GET/mutation and same-reference independence; pagination bounds/rate counters; real UTF8 server/PG checks/FK/check constraints/transaction rollback; single quote retrieval only for its invoice; safe HTTP envelopes; same-origin Host comparison that does not trust Forwarded-Host.
+Active/disabled memberships, viewer read-only enforcement, unauthenticated rejection and production fail-closed; canonical amount ranges and forbidden fields; case-insensitive tenant reference uniqueness; Draft-only edits; same-key concurrent replay and different-payload conflict; concurrent duplicate payment protection; terminal/invalid transitions; missing/expired quote on routing and expiry recheck on settlement; locked alternate route; one exact persisted receipt/settlement; NULL hash and actual=expected output; append-only events; cross-tenant GET/mutation and same-reference independence; pagination bounds/rate counters; real UTF8 server/PG checks/FK/check constraints/transaction rollback; single quote retrieval only for its invoice; precise timestamp/update metadata; generated relational descriptors/currencies/assets; snapshot mismatch and JSON-null rejection; explicit previous/new event states; business activity pagination/filter/isolation; malformed monetary HTTP values return 422 (not BigInt conversion failures); safe HTTP envelopes; same-origin Host comparison that does not trust Forwarded-Host.
 
 ## UI coverage
 
@@ -38,3 +39,7 @@ Axe checks selected screens in both languages. Tests wait for final opacity befo
 No native Windows 10/macOS run, Safari/Firefox run, manual screen-reader certification, physical low-powered device test, hosted provider test or production-auth integration is claimed. No real PSP/webhook, token transfer, wallet signing, contract, Stylus, market quote, managed DB, cloud deployment or paid resource was exercised. Embedded PostgreSQL's prerelease packaging is not a production recommendation. Production authentication and operational/security readiness remain explicit gates, not hidden TODOs behind public writable endpoints.
 
 The Phase 1.1 screenshots and [historical QA](QA.md) remain the approved visual history; new automated run screenshots/reports are ignored artifacts, not silently substituted approved baselines.
+
+## Detailed-checklist follow-up
+
+The follow-up on the same open PR adds forward migration 002 rather than rewriting migration 001. Existing records remain intact. Newly introduced historical metadata uses migration time where no original timestamp existed; it is not claimed as original creation provenance. Business activity now comes from the persisted event endpoint and is displayed by the overview. Final-head Actions conclusions for this amendment are recorded in the PR handoff after the run, not inferred from the earlier commit's green checks.

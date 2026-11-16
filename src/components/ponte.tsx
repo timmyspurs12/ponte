@@ -12,7 +12,7 @@ import {
   FileText,
   Building2,
 } from "lucide-react";
-import { Invoice } from "@/lib/models";
+import { Invoice, BusinessActivityEvent } from "@/lib/models";
 import { invoiceService as service } from "@/lib/services";
 import { Logo, Cta } from "./ui";
 import { Marketing } from "./marketing";
@@ -26,11 +26,17 @@ export default function Ponte() {
 
   const pathname = usePathname();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
+  const [activity, setActivity] = useState<BusinessActivityEvent[]>([]);
   const [toast, setToast] = useState("");
   const [loadError, setLoadError] = useState(false);
   async function refresh() {
     try {
-      setInvoices(await service.list());
+      const [records, events] = await Promise.all([
+        service.list(),
+        service.activity(),
+      ]);
+      setInvoices(records);
+      setActivity(events);
       setLoadError(false);
     } catch {
       setLoadError(true);
@@ -198,7 +204,7 @@ export default function Ponte() {
                 <InvoiceTable invoices={invoices} />
               </>
             ) : (
-              <Overview invoices={invoices} />
+              <Overview invoices={invoices} activity={activity} />
             )}
           </main>
           <footer className="app-footer wrap">

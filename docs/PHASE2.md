@@ -5,7 +5,7 @@ Phase 1 + 1.1 frontend approval and merged PR #1 were verified before starting P
 ## Delivered in Phase 2A
 
 - Next.js Route Handler API, Zod server validation, service/repository boundaries and real PostgreSQL persistence.
-- Versioned SQL migration and seeded business/user/membership; reproducible local PG, guarded reset and CI PG service.
+- Versioned forward SQL migrations, database-managed timestamps, generated descriptive invoice columns, enforced snapshot consistency, explicit previous/new audit states and paginated business activity; seeded business/user/membership; reproducible local PG, guarded reset and CI PG service.
 - Tenant-scoped access, active roles, explicit local development login; **production API fails closed** until real authentication is implemented.
 - Exact integer BRL funding strings, server BigInt quote candidates/minima, persisted simulation source/expiry, locked route and expected/actual demo settlement output.
 - Draft → Pending payment → Funded → Routing → Settled/Failed server state machine; transactional payments/events/receipts; duplicate, replay, invalid-state and expired-quote protection.

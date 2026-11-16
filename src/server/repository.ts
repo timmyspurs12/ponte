@@ -26,12 +26,12 @@ export async function transaction<T>(
 
 export const appendEvent = (db: PoolClient, values: unknown[]) =>
   db.query(
-    "INSERT INTO payment_events(id,business_id,invoice_id,actor_id,correlation_id,kind,data) VALUES($1,$2,$3,$4,$5,$6,$7)",
+    "INSERT INTO payment_events(id,business_id,invoice_id,actor_id,correlation_id,kind,data,previous_state,new_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
     values,
   );
 export const listInvoices = (db: PoolClient, values: unknown[]) =>
   db.query(
-    "SELECT data FROM invoices WHERE business_id=$1 AND ($2::text IS NULL OR status=$2) ORDER BY created_at DESC,id LIMIT $3 OFFSET $4",
+    "SELECT data || jsonb_build_object('createdAt',created_at,'updatedAt',updated_at) AS data FROM invoices WHERE business_id=$1 AND ($2::text IS NULL OR status=$2) ORDER BY created_at DESC,id LIMIT $3 OFFSET $4",
     values,
   );
 export const listQuotes = (db: PoolClient, values: unknown[]) =>
@@ -45,17 +45,17 @@ export const findIdempotency = (db: PoolClient, values: unknown[]) =>
   db.query("SELECT * FROM idempotency WHERE business_id=$1 AND key=$2", values);
 export const insertInvoice = (db: PoolClient, values: unknown[]) =>
   db.query(
-    "INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,$4,$5,$6)",
+    "INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,$4,$5,($6::jsonb - ARRAY['createdAt','updatedAt']))",
     values,
   );
 export const insertQuote = (db: PoolClient, values: unknown[]) =>
   db.query(
-    "INSERT INTO quotes VALUES($1,$2,$3,'simulation-fixed-525',true,$4,$5,now())",
+    "INSERT INTO quotes(id,business_id,invoice_id,source,simulated,data,expires_at,created_at) VALUES($1,$2,$3,'simulation-fixed-525',true,$4,$5,now())",
     values,
   );
 export const insertPayment = (db: PoolClient, values: unknown[]) =>
   db.query(
-    "INSERT INTO payments VALUES($1,$2,$3,'simulation',$4,$5,now())",
+    "INSERT INTO payments(id,business_id,invoice_id,provider,provider_reference,funding_minor,received_at) VALUES($1,$2,$3,'simulation',$4,$5,now())",
     values,
   );
 export const findValidQuote = (db: PoolClient, values: unknown[]) =>
@@ -85,12 +85,12 @@ export const failSettlement = (db: PoolClient, values: unknown[]) =>
   );
 export const saveInvoiceState = (db: PoolClient, values: unknown[]) =>
   db.query(
-    "UPDATE invoices SET status=$3,data=$4 WHERE business_id=$1 AND id=$2",
+    "UPDATE invoices SET status=$3,data=($4::jsonb - ARRAY['createdAt','updatedAt']) WHERE business_id=$1 AND id=$2",
     values,
   );
 export const updateDraft = (db: PoolClient, values: unknown[]) =>
   db.query(
-    "UPDATE invoices SET reference=$3,funding_minor=$4,data=$5 WHERE business_id=$1 AND id=$2",
+    "UPDATE invoices SET reference=$3,funding_minor=$4,data=($5::jsonb - ARRAY['createdAt','updatedAt']) WHERE business_id=$1 AND id=$2",
     values,
   );
 export const saveIdempotency = (db: PoolClient, values: unknown[]) =>
@@ -106,7 +106,7 @@ export function findInvoice(
   lock: boolean,
 ) {
   return db.query(
-    `SELECT data FROM invoices WHERE business_id=$1 AND id=$2 ${lock ? "FOR UPDATE" : ""}`,
+    `SELECT data || jsonb_build_object('createdAt',created_at,'updatedAt',updated_at) AS data FROM invoices WHERE business_id=$1 AND id=$2 ${lock ? "FOR UPDATE" : ""}`,
     [business, id],
   );
 }
@@ -138,5 +138,18 @@ export function findResource(
   return db.query(
     `SELECT * FROM ${tables[resource]} WHERE business_id=$1 AND invoice_id=$2 AND id=$3`,
     [business, invoice, id],
+  );
+}
+
+export function businessActivity(
+  db: PoolClient,
+  business: string,
+  limit: number,
+  offset: number,
+  kind: string | null,
+) {
+  return db.query(
+    "SELECT * FROM payment_events WHERE business_id=$1 AND ($2::text IS NULL OR kind=$2) ORDER BY created_at DESC,id LIMIT $3 OFFSET $4",
+    [business, kind, limit, offset],
   );
 }
