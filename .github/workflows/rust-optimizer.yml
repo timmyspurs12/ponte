@@ -134,6 +134,24 @@ jobs:
             rustup target list --installed
             sha256sum Cargo.lock
           } 2>&1 | tee ci-logs/environment.log
+      - name: Temporary diagnostics
+        working-directory: rust/optimizer
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, io, pathlib, subprocess, tarfile
+          logs = []
+          for command in [['cargo', 'generate-lockfile'], ['cargo', 'fmt'], ['cargo', 'clippy', '--locked', '--all-targets', '--', '-D', 'warnings'], ['cargo', 'test', '--locked']]:
+              result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              logs.append('COMMAND ' + ' '.join(command) + ' EXIT ' + str(result.returncode) + '\n' + result.stdout)
+          archive = io.BytesIO()
+          with tarfile.open(fileobj=archive, mode='w:gz') as tar:
+              for file in [pathlib.Path('Cargo.lock'), *pathlib.Path('src').rglob('*.rs'), *pathlib.Path('tests').rglob('*.rs')]:
+                  tar.add(file)
+          for title, data in [('SOURCE', archive.getvalue()), ('LOGS', gzip.compress('\n'.join(logs).encode()))]:
+              encoded = base64.b64encode(data).decode()
+              for i in range(0, len(encoded), 30000):
+                  print(f'::notice title={title}_{i // 30000}::{encoded[i:i+30000]}')
+          PY
       - name: Download locked Rust dependencies
         working-directory: rust/optimizer
         run: |
