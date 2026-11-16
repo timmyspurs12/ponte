@@ -17,19 +17,17 @@ pub mod model;
 pub mod optimizer;
 
 pub use arithmetic::{
-    ComputedQuoteAmounts, compute_candidate_amounts, format_bytes32,
-    is_canonical_unsigned_int_str, parse_canonical_bytes32, parse_canonical_u128,
-    parse_canonical_u64,
+    compute_candidate_amounts, format_bytes32, is_canonical_unsigned_int_str,
+    parse_canonical_bytes32, parse_canonical_u128, parse_canonical_u64, ComputedQuoteAmounts,
 };
 pub use json::{
-    RawJsonValue, evaluate_json_line, format_result_v1_json, parse_raw_json,
-    parse_request_v1_json,
+    evaluate_json_line, format_result_v1_json, parse_raw_json, parse_request_v1_json, RawJsonValue,
 };
 pub use model::{
-    AssetIdV1, BPS_DENOMINATOR, CandidateRejectionReason, CandidateV1,
-    MAX_ASSET_DECIMALS, MAX_ASSET_FIELD_LEN, MAX_BPS, MAX_CANDIDATES, MIN_CANDIDATES,
-    NoRouteResultV1, OPTIMIZER_VERSION_V1, OptimizeOutcomeV1, OptimizeRequestV1,
-    OptimizerError, OptimizerMode, RejectedCandidateV1, SelectedRouteV1,
+    AssetIdV1, CandidateRejectionReason, CandidateV1, NoRouteResultV1, OptimizeOutcomeV1,
+    OptimizeRequestV1, OptimizerError, OptimizerMode, RejectedCandidateV1, SelectedRouteV1,
+    BPS_DENOMINATOR, MAX_ASSET_DECIMALS, MAX_ASSET_FIELD_LEN, MAX_BPS, MAX_CANDIDATES,
+    MIN_CANDIDATES, OPTIMIZER_VERSION_V1,
 };
 pub use optimizer::{optimize_v1, validate_request_v1};
 
@@ -110,17 +108,16 @@ mod tests {
             parse_canonical_u128("340282366920938463463374607431768211456"),
             Err(OptimizerError::IntegerOverflow),
         );
-        for bad in ["", "00", "01", "-1", "+1", "1.0", "1e2", " 1", "1 ", "1_000"] {
+        for bad in [
+            "", "00", "01", "-1", "+1", "1.0", "1e2", " 1", "1 ", "1_000",
+        ] {
             assert_eq!(
                 parse_canonical_u128(bad),
                 Err(OptimizerError::InvalidIntegerEncoding),
             );
         }
 
-        assert_eq!(
-            parse_canonical_u64("18446744073709551615"),
-            Ok(u64::MAX),
-        );
+        assert_eq!(parse_canonical_u64("18446744073709551615"), Ok(u64::MAX),);
         assert_eq!(
             parse_canonical_u64("18446744073709551616"),
             Err(OptimizerError::IntegerOverflow),
@@ -156,8 +153,24 @@ mod tests {
             (2_500_000, 48, 8, 476_190, 2_286, 473_904, 471_534),
             (2_500_000, 65, 12, 476_190, 3_095, 473_095, 470_729),
             // F = 1,000,000,000, G = 190,476,190
-            (1_000_000_000, 35, 5, 190_476_190, 666_667, 189_809_523, 188_860_475),
-            (1_000_000_000, 48, 8, 190_476_190, 914_286, 189_561_904, 188_614_094),
+            (
+                1_000_000_000,
+                35,
+                5,
+                190_476_190,
+                666_667,
+                189_809_523,
+                188_860_475,
+            ),
+            (
+                1_000_000_000,
+                48,
+                8,
+                190_476_190,
+                914_286,
+                189_561_904,
+                188_614_094,
+            ),
             (
                 1_000_000_000,
                 65,
@@ -379,14 +392,13 @@ mod tests {
 
     #[test]
     fn property_permutation_invariance_and_accounting_conservation() {
-        // Deterministic SplitMix64 PRNG in pure Rust
+        // Deterministic xorshift64 PRNG, used only to generate synthetic cases.
         let mut state: u64 = 0x504f_4e54_455f_3242;
         let mut next_u64 = || -> u64 {
-            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = state;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
         };
 
         for _ in 0..500 {
@@ -429,8 +441,8 @@ mod tests {
 
             let mut shuffled = cands;
             for i in (1..shuffled.len()).rev() {
-                let j = usize::try_from(next_u64() % u64::try_from(i + 1).unwrap_or(1))
-                    .unwrap_or(0);
+                let j =
+                    usize::try_from(next_u64() % u64::try_from(i + 1).unwrap_or(1)).unwrap_or(0);
                 shuffled.swap(i, j);
             }
             req.candidates = shuffled;
@@ -442,11 +454,15 @@ mod tests {
     fn property_arbitrary_malformed_json_never_panics() {
         let mut state: u64 = 0xdead_beef_cafe_babe;
         for _ in 0..400 {
-            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
             let len = usize::try_from(state % 80).unwrap_or(0);
             let mut s = alloc::string::String::with_capacity(len);
             for _ in 0..len {
-                state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
                 let byte = u8::try_from((state >> 32) % 128).unwrap_or(b' ');
                 s.push(char::from(byte));
             }

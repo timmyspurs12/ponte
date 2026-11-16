@@ -3,10 +3,10 @@
 use crate::{
     arithmetic::compute_candidate_amounts,
     model::{
-        AssetIdV1, CandidateRejectionReason, CandidateV1, MAX_ASSET_DECIMALS,
-        MAX_ASSET_FIELD_LEN, MAX_BPS, MAX_CANDIDATES, MIN_CANDIDATES,
-        NoRouteResultV1, OPTIMIZER_VERSION_V1, OptimizeOutcomeV1, OptimizeRequestV1,
-        OptimizerError, OptimizerMode, RejectedCandidateV1, SelectedRouteV1,
+        AssetIdV1, CandidateRejectionReason, CandidateV1, NoRouteResultV1, OptimizeOutcomeV1,
+        OptimizeRequestV1, OptimizerError, OptimizerMode, RejectedCandidateV1, SelectedRouteV1,
+        MAX_ASSET_DECIMALS, MAX_ASSET_FIELD_LEN, MAX_BPS, MAX_CANDIDATES, MIN_CANDIDATES,
+        OPTIMIZER_VERSION_V1,
     },
 };
 use alloc::vec::Vec;
@@ -33,8 +33,7 @@ fn is_valid_ascii_identifier(value: &str) -> bool {
 }
 
 fn validate_asset(asset: &AssetIdV1) -> Result<(), OptimizerError> {
-    if !is_valid_ascii_identifier(&asset.namespace)
-        || !is_valid_ascii_identifier(&asset.identifier)
+    if !is_valid_ascii_identifier(&asset.namespace) || !is_valid_ascii_identifier(&asset.identifier)
     {
         return Err(OptimizerError::InvalidAsset);
     }
@@ -46,9 +45,7 @@ fn validate_asset(asset: &AssetIdV1) -> Result<(), OptimizerError> {
 
 /// Validates structural request invariants and returns candidate indices sorted
 /// in canonical unsigned 32-byte `route_id` ascending order.
-pub fn validate_request_v1(
-    request: &OptimizeRequestV1,
-) -> Result<Vec<usize>, OptimizerError> {
+pub fn validate_request_v1(request: &OptimizeRequestV1) -> Result<Vec<usize>, OptimizerError> {
     if request.version != OPTIMIZER_VERSION_V1 {
         return Err(OptimizerError::UnsupportedVersion);
     }
@@ -129,9 +126,7 @@ fn compare_eligible(challenger: &EligibleCandidate, incumbent: &EligibleCandidat
 }
 
 /// Evaluates a normalized synthetic `OptimizeRequestV1` and selects the best feasible route.
-pub fn optimize_v1(
-    request: &OptimizeRequestV1,
-) -> Result<OptimizeOutcomeV1, OptimizerError> {
+pub fn optimize_v1(request: &OptimizeRequestV1) -> Result<OptimizeOutcomeV1, OptimizerError> {
     let sorted_indices = validate_request_v1(request)?;
     let evaluated_count = sorted_indices.len();
     let mut rejected: Vec<RejectedCandidateV1> = Vec::with_capacity(evaluated_count);

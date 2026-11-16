@@ -6,8 +6,7 @@
 #![deny(clippy::float_arithmetic)]
 
 use ponte_optimizer::{
-    OptimizeOutcomeV1, OptimizeRequestV1, evaluate_json_line, optimize_v1,
-    parse_request_v1_json,
+    evaluate_json_line, optimize_v1, parse_request_v1_json, OptimizeOutcomeV1, OptimizeRequestV1,
 };
 use std::{
     env, fs,
@@ -71,10 +70,10 @@ fn run_benchmark(
             match out {
                 Ok(OptimizeOutcomeV1::Selected(sel)) => {
                     let low = u64::try_from(sel.expected_out & 0xffff).unwrap_or(0);
-                    sink = sink.wrapping_add(low);
+                    sink ^= low;
                 }
                 _ => {
-                    sink = sink.wrapping_add(1);
+                    sink ^= 1;
                 }
             }
         }
@@ -89,10 +88,10 @@ fn run_benchmark(
             match out {
                 Ok(OptimizeOutcomeV1::Selected(sel)) => {
                     let low = u64::try_from(sel.expected_out & 0xffff).unwrap_or(0);
-                    sink = sink.wrapping_add(low);
+                    sink ^= low;
                 }
                 _ => {
-                    sink = sink.wrapping_add(1);
+                    sink ^= 1;
                 }
             }
         }
@@ -105,7 +104,7 @@ fn run_benchmark(
     for _ in 0..json_warmups {
         for &line in &lines {
             let out = black_box(evaluate_json_line(black_box(line)));
-            sink = sink.wrapping_add(u64::try_from(out.len()).unwrap_or(0));
+            sink ^= u64::try_from(out.len()).unwrap_or(0);
         }
     }
 
@@ -114,7 +113,7 @@ fn run_benchmark(
         let start = Instant::now();
         for &line in &lines {
             let out = black_box(evaluate_json_line(black_box(line)));
-            sink = sink.wrapping_add(u64::try_from(out.len()).unwrap_or(0));
+            sink ^= u64::try_from(out.len()).unwrap_or(0);
         }
         json_batch_ns.push(start.elapsed().as_nanos());
     }

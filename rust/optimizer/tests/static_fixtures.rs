@@ -3,10 +3,9 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::float_arithmetic)]
 
-use ponte_optimizer::{RawJsonValue, evaluate_json_line, parse_raw_json};
+use ponte_optimizer::{evaluate_json_line, parse_raw_json, RawJsonValue};
 
-const EDGE_CASES_JSON: &str =
-    include_str!("../../../scripts/phase2b/fixtures/v1/edge-cases.json");
+const EDGE_CASES_JSON: &str = include_str!("../../../scripts/phase2b/fixtures/v1/edge-cases.json");
 const LEGACY_PARITY_JSON: &str =
     include_str!("../../../scripts/phase2b/fixtures/v1/legacy-parity.json");
 const REGRESSION_MINIMIZED_JSON: &str =

@@ -1,8 +1,6 @@
 //! Checked integer conversions, canonical parsing, and U256 quote arithmetic.
 
-use crate::model::{
-    BPS_DENOMINATOR, CandidateRejectionReason, MAX_BPS, OptimizerError,
-};
+use crate::model::{CandidateRejectionReason, OptimizerError, BPS_DENOMINATOR, MAX_BPS};
 use alloc::string::String;
 use alloy_primitives::{B256, U256};
 
@@ -74,8 +72,8 @@ pub fn parse_canonical_bytes32(raw: &str) -> Result<B256, OptimizerError> {
     }
     let mut out = [0u8; 32];
     for (idx, slot) in out.iter_mut().enumerate() {
-        let hi = decode_lower_hex_nibble(bytes[2 + idx * 2])
-            .ok_or(OptimizerError::InvalidBytes32)?;
+        let hi =
+            decode_lower_hex_nibble(bytes[2 + idx * 2]).ok_or(OptimizerError::InvalidBytes32)?;
         let lo = decode_lower_hex_nibble(bytes[2 + idx * 2 + 1])
             .ok_or(OptimizerError::InvalidBytes32)?;
         *slot = (hi << 4) | lo;
@@ -111,10 +109,7 @@ pub fn compute_candidate_amounts(
     tolerance_bps: u16,
     user_min_out: u128,
 ) -> Result<ComputedQuoteAmounts, CandidateRejectionReason> {
-    if fee_bps > MAX_BPS
-        || tolerance_bps > MAX_BPS
-        || rate_numerator == 0
-        || rate_denominator == 0
+    if fee_bps > MAX_BPS || tolerance_bps > MAX_BPS || rate_numerator == 0 || rate_denominator == 0
     {
         return Err(CandidateRejectionReason::ArithmeticRange);
     }
@@ -131,8 +126,8 @@ pub fn compute_candidate_amounts(
     let gross_256 = fn_prod
         .checked_div(d_256)
         .ok_or(CandidateRejectionReason::ArithmeticRange)?;
-    let gross_out = u128::try_from(gross_256)
-        .map_err(|_| CandidateRejectionReason::ArithmeticRange)?;
+    let gross_out =
+        u128::try_from(gross_256).map_err(|_| CandidateRejectionReason::ArithmeticRange)?;
 
     // 2. Expected output: O = floor((F * N * (10000 - f)) / (D * 10000))
     // Explicitly reject U256 overflow before division even when cancellation would fit.
@@ -148,8 +143,8 @@ pub fn compute_candidate_amounts(
     let expected_256 = expected_num
         .checked_div(expected_den)
         .ok_or(CandidateRejectionReason::ArithmeticRange)?;
-    let expected_out = u128::try_from(expected_256)
-        .map_err(|_| CandidateRejectionReason::ArithmeticRange)?;
+    let expected_out =
+        u128::try_from(expected_256).map_err(|_| CandidateRejectionReason::ArithmeticRange)?;
 
     // 3. Fee output: feeOut = G - O
     let fee_out = gross_out
@@ -166,8 +161,8 @@ pub fn compute_candidate_amounts(
     let tol_256 = tol_num
         .checked_div(bps_denom_256)
         .ok_or(CandidateRejectionReason::ArithmeticRange)?;
-    let tolerance_min_out = u128::try_from(tol_256)
-        .map_err(|_| CandidateRejectionReason::ArithmeticRange)?;
+    let tolerance_min_out =
+        u128::try_from(tol_256).map_err(|_| CandidateRejectionReason::ArithmeticRange)?;
 
     // 5. Required minimum: M = max(T, userMinOut)
     let required_min_out = tolerance_min_out.max(user_min_out);

@@ -8,9 +8,9 @@ use crate::{
         format_bytes32, parse_canonical_bytes32, parse_canonical_u128, parse_canonical_u64,
     },
     model::{
-        AssetIdV1, CandidateV1, MAX_ASSET_DECIMALS, MAX_ASSET_FIELD_LEN, MAX_BPS,
-        MAX_CANDIDATES, MIN_CANDIDATES, OPTIMIZER_VERSION_V1, OptimizeOutcomeV1,
-        OptimizeRequestV1, OptimizerError, OptimizerMode, RejectedCandidateV1,
+        AssetIdV1, CandidateV1, OptimizeOutcomeV1, OptimizeRequestV1, OptimizerError,
+        OptimizerMode, RejectedCandidateV1, MAX_ASSET_DECIMALS, MAX_ASSET_FIELD_LEN, MAX_BPS,
+        MAX_CANDIDATES, MIN_CANDIDATES, OPTIMIZER_VERSION_V1,
     },
     optimizer::optimize_v1,
 };
@@ -246,17 +246,15 @@ impl<'a> JsonCursor<'a> {
                         if !(0xdc00..=0xdfff).contains(&low) {
                             return Err(OptimizerError::MalformedJson);
                         }
-                        let cp = 0x1_0000
-                            + ((u32::from(high - 0xd800)) << 10)
-                            + u32::from(low - 0xdc00);
-                        let ch =
-                            char::from_u32(cp).ok_or(OptimizerError::MalformedJson)?;
+                        let cp =
+                            0x1_0000 + ((u32::from(high - 0xd800)) << 10) + u32::from(low - 0xdc00);
+                        let ch = char::from_u32(cp).ok_or(OptimizerError::MalformedJson)?;
                         out.push(ch);
                     } else if (0xdc00..=0xdfff).contains(&high) {
                         return Err(OptimizerError::MalformedJson);
                     } else {
-                        let ch = char::from_u32(u32::from(high))
-                            .ok_or(OptimizerError::MalformedJson)?;
+                        let ch =
+                            char::from_u32(u32::from(high)).ok_or(OptimizerError::MalformedJson)?;
                         out.push(ch);
                     }
                 }
@@ -297,9 +295,7 @@ impl<'a> JsonCursor<'a> {
             b'0' => self.pos += 1,
             b'1'..=b'9' => {
                 self.pos += 1;
-                while self.pos < self.bytes.len()
-                    && self.bytes[self.pos].is_ascii_digit()
-                {
+                while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_digit() {
                     self.pos += 1;
                 }
             }
@@ -320,14 +316,10 @@ impl<'a> JsonCursor<'a> {
             }
         }
 
-        if self.pos < self.bytes.len()
-            && matches!(self.bytes[self.pos], b'e' | b'E')
-        {
+        if self.pos < self.bytes.len() && matches!(self.bytes[self.pos], b'e' | b'E') {
             is_float = true;
             self.pos += 1;
-            if self.pos < self.bytes.len()
-                && matches!(self.bytes[self.pos], b'+' | b'-')
-            {
+            if self.pos < self.bytes.len() && matches!(self.bytes[self.pos], b'+' | b'-') {
                 self.pos += 1;
             }
             let mut exp_digits = 0usize;
@@ -423,8 +415,7 @@ fn parse_asset_json(val: &RawJsonValue) -> Result<AssetIdV1, OptimizerError> {
 
     let decimals_u16 = parse_bounded_u16(dec_val, u16::from(MAX_ASSET_DECIMALS))
         .ok_or(OptimizerError::InvalidAssetDecimals)?;
-    let decimals =
-        u8::try_from(decimals_u16).map_err(|_| OptimizerError::InvalidAssetDecimals)?;
+    let decimals = u8::try_from(decimals_u16).map_err(|_| OptimizerError::InvalidAssetDecimals)?;
 
     Ok(AssetIdV1 {
         namespace: ns.clone(),
@@ -447,9 +438,7 @@ fn parse_u64_field(val: &RawJsonValue) -> Result<u64, OptimizerError> {
     parse_canonical_u64(s)
 }
 
-fn parse_bytes32_field(
-    val: &RawJsonValue,
-) -> Result<alloy_primitives::B256, OptimizerError> {
+fn parse_bytes32_field(val: &RawJsonValue) -> Result<alloy_primitives::B256, OptimizerError> {
     let RawJsonValue::String(s) = val else {
         return Err(OptimizerError::InvalidBytes32);
     };
@@ -592,9 +581,7 @@ fn push_rejected_json(buf: &mut String, rejected: &[RejectedCandidateV1]) {
 }
 
 /// Formats an `OptimizeOutcomeV1` or `OptimizerError` as a single canonical JSON line.
-pub fn format_result_v1_json(
-    result: &Result<OptimizeOutcomeV1, OptimizerError>,
-) -> String {
+pub fn format_result_v1_json(result: &Result<OptimizeOutcomeV1, OptimizerError>) -> String {
     let mut out = String::with_capacity(256);
     match result {
         Err(err) => {

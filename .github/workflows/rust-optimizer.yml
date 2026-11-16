@@ -134,24 +134,6 @@ jobs:
             rustup target list --installed
             sha256sum Cargo.lock
           } 2>&1 | tee ci-logs/environment.log
-      - name: Temporary diagnostics
-        working-directory: rust/optimizer
-        run: |
-          python3 - <<'PY'
-          import base64, gzip, io, pathlib, subprocess, tarfile
-          logs = []
-          for command in [['cargo', 'generate-lockfile'], ['cargo', 'fmt'], ['cargo', 'clippy', '--locked', '--all-targets', '--', '-D', 'warnings'], ['cargo', 'test', '--locked']]:
-              result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-              logs.append('COMMAND ' + ' '.join(command) + ' EXIT ' + str(result.returncode) + '\n' + result.stdout)
-          archive = io.BytesIO()
-          with tarfile.open(fileobj=archive, mode='w:gz') as tar:
-              for file in [pathlib.Path('Cargo.lock'), *pathlib.Path('src').rglob('*.rs'), *pathlib.Path('tests').rglob('*.rs')]:
-                  tar.add(file)
-          for title, data in [('SOURCE', archive.getvalue()), ('LOGS', gzip.compress('\n'.join(logs).encode()))]:
-              encoded = base64.b64encode(data).decode()
-              for i in range(0, len(encoded), 3800):
-                  print(f'::notice title={title}_{i // 3800}::{encoded[i:i+3800]}')
-          PY
       - name: Download locked Rust dependencies
         working-directory: rust/optimizer
         run: |
@@ -224,6 +206,18 @@ jobs:
             --dataset-size 100 \
             --json-out rust/optimizer/ci-logs/benchmark.json \
             --markdown-out rust/optimizer/ci-logs/benchmark.md 2>&1 | tee rust/optimizer/ci-logs/benchmark.log
+      - name: Publish concise CI results
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, pathlib
+          for name in ['environment.log', 'fetch.log', 'fmt.log', 'clippy.log', 'test.log', 'native-build.log', 'wasm-build.log', 'legacy-parity.log', 'legacy-parity.json', 'differential.log', 'differential-summary.json', 'benchmark.log', 'benchmark.md']:
+              file = pathlib.Path('rust/optimizer/ci-logs') / name
+              if file.exists():
+                  data = base64.b64encode(gzip.compress(file.read_bytes())).decode()
+                  for i in range(0, len(data), 3800):
+                      print(f'::notice title=REPORT_{name}_{i // 3800}::{data[i:i+3800]}')
+          PY
       - name: Upload concise optimizer verification logs and summaries
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
