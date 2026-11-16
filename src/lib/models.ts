@@ -1,3 +1,4 @@
+import type { MinorUnits } from "./quotes";
 export type Status =
   "Draft" | "Pending payment" | "Funded" | "Routing" | "Settled" | "Failed";
 export interface Wallet {
@@ -19,18 +20,26 @@ export interface Payment {
 export interface RouteCandidate {
   id: string;
   name: string;
-  fee: number;
-  output: number;
-  slippage: number;
+  feeBps: number;
+  feeMinor: MinorUnits;
+  outputMinor: MinorUnits;
+  /** Estimated price impact, not the user protection tolerance. */
+  slippageBps: number;
+  toleranceBps: number;
+  minimumOutputMinor: MinorUnits;
 }
 export interface PaymentQuote {
-  rate: number;
+  fundingMinor: MinorUnits;
+  asset: "USDG";
+  demoAssetDecimals: 2;
+  rate: { numerator: string; denominator: string };
+  executionCostMinor: MinorUnits;
+  simulated: true;
   routes: RouteCandidate[];
-  minimumOutput: number;
 }
 export interface RouteExecution {
   routeId: string;
-  cost: number;
+  costMinor: MinorUnits;
   identifier: string;
   simulated: true;
 }
@@ -38,9 +47,9 @@ export interface SettlementReceipt {
   invoiceId: string;
   sender: string;
   recipient: string;
-  originalAmount: number;
+  originalAmountMinor: MinorUnits;
   asset: "USDG";
-  amount: number;
+  amountMinor: MinorUnits;
   route: string;
   execution: RouteExecution;
   timestamp: string;

@@ -1,4 +1,5 @@
 "use client";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -13,6 +14,8 @@ export function CreateInvoice({
   refresh: () => void;
   notify: (s: string) => void;
 }) {
+  const { t, number, date, locale } = useLocale();
+
   const router = useRouter();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -42,7 +45,8 @@ export function CreateInvoice({
     if (
       !Number.isFinite(input.amount) ||
       input.amount < 1 ||
-      input.amount > 10000000
+      input.amount > 10000000 ||
+      Number(input.amount.toFixed(2)) !== input.amount
     )
       err.amount = "Enter an amount between R$1 and R$10,000,000.";
     if (!input.due || input.due < new Date().toISOString().slice(0, 10))
@@ -74,7 +78,7 @@ export function CreateInvoice({
     extra = {},
   ) => (
     <label className="field">
-      {label}
+      {t(label)}
       <input
         id={name}
         name={name}
@@ -88,7 +92,7 @@ export function CreateInvoice({
       />
       {errors[name] && (
         <span className="field-error" id={`${name}-error`}>
-          {errors[name]}
+          {t(errors[name])}
         </span>
       )}
     </label>
@@ -96,14 +100,16 @@ export function CreateInvoice({
   return (
     <>
       <Link className="back-link" href="/app/invoices">
-        <ArrowLeft size={15} /> All invoices
+        <ArrowLeft size={15} /> {t("All invoices")}{" "}
       </Link>
       <div className="page-title">
         <div>
-          <h1>Create an invoice</h1>
-          <p>Local funding. A clear path to your international supplier.</p>
+          <h1>{t("Create an invoice")}</h1>
+          <p>
+            {t("Local funding. A clear path to your international supplier.")}
+          </p>
         </div>
-        <span className="badge draft">Demo invoice</span>
+        <span className="badge draft">{t("Demo invoice")}</span>
       </div>
       <div className="form-layout">
         <form className="invoice-form" onSubmit={submit} noValidate>
@@ -111,65 +117,77 @@ export function CreateInvoice({
             <div className="form-section-title">
               <span>01</span>
               <div>
-                <h2>Who are you paying?</h2>
-                <p>Supplier details for this demo invoice.</p>
+                <h2>{t("Who are you paying?")}</h2>
+                <p>{t("Supplier details for this demo invoice.")}</p>
               </div>
             </div>
             {field(
               "supplier",
-              "Supplier / business name",
+              t("Supplier / business name"),
               "text",
-              "e.g. Meridian Supply Co.",
+              t("e.g. Meridian Supply Co."),
               { maxLength: 100 },
             )}
-            {field("wallet", "Supplier wallet address", "text", "0x…", {
+            {field("wallet", t("Supplier wallet address"), "text", "0x…", {
               maxLength: 42,
             })}
             <small className="helper">
-              Arbitrum-format address. No wallet connection or transfer occurs.
+              {" "}
+              {t(
+                "Arbitrum-format address. No wallet connection or transfer occurs.",
+              )}{" "}
             </small>
           </section>
           <section>
             <div className="form-section-title">
               <span>02</span>
               <div>
-                <h2>Invoice details</h2>
-                <p>Set the funding amount and payment terms.</p>
+                <h2>{t("Invoice details")}</h2>
+                <p>{t("Set the funding amount and payment terms.")}</p>
               </div>
             </div>
             <div className="form-grid">
               {field(
                 "reference",
-                "Invoice reference",
+                t("Invoice reference"),
                 "text",
-                "e.g. PNT-2026-1049",
+                t("e.g. PNT-2026-1049"),
                 { maxLength: 60 },
               )}
-              {field("due", "Due date", "date", "", {
+              {field("due", t("Due date"), "date", "", {
                 min: new Date().toISOString().slice(0, 10),
               })}
-              {field("amount", "Invoice amount (BRL)", "number", "25,000.00", {
-                min: 1,
-                max: 10000000,
-                step: ".01",
-              })}
+              {field(
+                "amount",
+                t("Invoice amount (BRL)"),
+                "number",
+                locale === "pt-BR" ? "25000,00" : "25000.00",
+                {
+                  min: 1,
+                  max: 10000000,
+                  step: ".01",
+                },
+              )}
               <label className="field">
-                Funding currency
+                {" "}
+                {t("Funding currency")}{" "}
                 <select name="currency">
-                  <option>BRL — Brazilian real</option>
+                  <option>{t("BRL — Brazilian real")}</option>
                 </select>
               </label>
               <label className="field full">
-                Settlement asset
+                {" "}
+                {t("Settlement asset")}{" "}
                 <select name="asset">
-                  <option>USDG — Digital dollar</option>
+                  <option>{t("USDG — Digital dollar")}</option>
                 </select>
               </label>
               <label className="field full">
-                Description <small>(optional)</small>
+                {" "}
+                {t("Description")} <small>{t("(optional)")}</small>
                 <textarea
                   name="description"
-                  placeholder="What is this payment for?"
+                  placeholder={t("What is this payment for?")}
                   rows={3}
                   maxLength={500}
                 />
@@ -178,15 +196,16 @@ export function CreateInvoice({
           </section>
           {errors.form && (
             <p role="alert" className="field-error">
-              {errors.form}
+              {t(errors.form)}
             </p>
           )}
           <div className="form-actions">
             <Link className="button secondary" href="/app/invoices">
-              Cancel
+              {" "}
+              {t("Cancel")}{" "}
             </Link>
             <button className="button" disabled={busy}>
-              {busy ? "Creating invoice…" : "Create demo invoice"}
+              {busy ? t("Creating invoice…") : t("Create demo invoice")}
               <ArrowRight size={16} />
             </button>
           </div>
@@ -195,19 +214,21 @@ export function CreateInvoice({
           <div className="flow-logo">
             <Mark />
           </div>
-          <h2>A clearer connection.</h2>
-          <p>Your invoice brings the entire payment journey together.</p>
+          <h2>{t("A clearer connection.")}</h2>
+          <p>{t("Your invoice brings the entire payment journey together.")}</p>
           <ol>
-            <li>Share a demo payment link</li>
-            <li>Simulate Pix confirmation</li>
-            <li>Compare liquidity routes</li>
-            <li>Generate a settlement receipt</li>
+            <li>{t("Share a demo payment link")}</li>
+            <li>{t("Simulate Pix confirmation")}</li>
+            <li>{t("Compare liquidity routes")}</li>
+            <li>{t("Generate a settlement receipt")}</li>
           </ol>
           <div className="notice">
             <ShieldCheck size={19} />
             <p>
-              This is a frontend demonstration. Never send real funds to a demo
-              address.
+              {" "}
+              {t(
+                "This is a frontend demonstration. Never send real funds to a demo address.",
+              )}{" "}
             </p>
           </div>
         </aside>

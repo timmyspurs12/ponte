@@ -3168,3 +3168,161 @@ dialog {
   padding: 0;
   white-space: nowrap;
 }
+/* Phase 1.1: same design tokens, compact native language control. */
+.language-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--slate);
+}
+.language-selector select {
+  border: 0;
+  background: transparent;
+  padding: 8px 16px 8px 4px;
+  min-height: 44px;
+  font-size: 10px;
+  max-width: 150px;
+  cursor: pointer;
+}
+.app-header > .wrap {
+  gap: 28px;
+}
+.app-header .language-selector {
+  margin-left: auto;
+}
+.app-header .workspace {
+  margin-left: 0;
+}
+.marketing-header nav {
+  gap: 22px;
+}
+.header-actions {
+  gap: 16px;
+}
+@media (max-width: 1150px) {
+  .marketing-header {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 98px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+    row-gap: 8px;
+  }
+  .marketing-header nav {
+    gap: 16px;
+  }
+  .header-actions {
+    gap: 10px;
+  }
+  .language-selector select {
+    max-width: 130px;
+  }
+  .app-header > .wrap {
+    gap: 18px;
+  }
+}
+@media (max-width: 850px) {
+  .marketing-header .sign-in {
+    display: none;
+  }
+  .marketing-header nav {
+    gap: 12px;
+  }
+  .language-selector select {
+    font-size: 9px;
+    max-width: 126px;
+  }
+  .app-header > .wrap {
+    gap: 13px;
+  }
+  .app-header .workspace {
+    font-size: 9px;
+  }
+  .app-header .workspace .avatar {
+    display: none;
+  }
+  .app-header nav {
+    gap: 15px;
+  }
+  .marketing-header .header-actions > .button {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .marketing-header {
+    min-height: 76px;
+    padding-top: 0;
+    padding-bottom: 0;
+    flex-wrap: nowrap;
+  }
+  .marketing-header .header-actions {
+    gap: 1px;
+  }
+  .language-selector select {
+    max-width: 122px;
+    font-size: 9px;
+    padding-right: 10px;
+  }
+  .language-selector > svg {
+    width: 12px;
+  }
+  .app-header > .wrap {
+    position: relative;
+    gap: 0;
+  }
+  .app-header > .wrap > .language-selector {
+    order: 1;
+    margin-left: auto;
+  }
+  .app-header > .wrap > .workspace {
+    display: none;
+  }
+  .app-header nav {
+    margin-top: 4px;
+  }
+  .hero h1 {
+    font-size: clamp(39px, 10.8vw, 49px);
+  }
+  .hero-actions {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .hero-actions .button {
+    white-space: normal;
+  }
+  .button {
+    white-space: normal;
+    text-align: center;
+  }
+  .page-title > .button {
+    max-width: 100%;
+  }
+  .route-note {
+    font-size: 7px;
+  }
+  .atlas-bottom {
+    font-size: 7px;
+  }
+  .metrics article > strong {
+    font-size: clamp(16px, 4.5vw, 21px);
+  }
+  .form-actions .button {
+    font-size: 10px;
+  }
+  .journey small {
+    font-size: 7px;
+  }
+  .marketing-header nav.open {
+    top: 76px;
+  }
+  .final-cta .button {
+    max-width: 100%;
+  }
+  .docs > h1 {
+    font-size: 37px;
+  }
+  .route-ticket.destination {
+    right: -9px;
+  }
+}

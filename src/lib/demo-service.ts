@@ -1,10 +1,5 @@
-import {
-  Invoice,
-  InvoiceInput,
-  InvoiceService,
-  PaymentQuote,
-  Status,
-} from "./models";
+import { demoQuote, majorToMinor } from "./quotes";
+import { Invoice, InvoiceInput, InvoiceService, Status } from "./models";
 const key = "ponte-demo-v1";
 const names = [
   "Meridian Supply Co.",
@@ -39,50 +34,19 @@ const fixture: Invoice[] = names.map((supplier, i) => ({
   description: "International supplier invoice • illustrative demo record",
   status: statuses[i],
 }));
-export function quote(amount: number): PaymentQuote {
-  const base = amount / 5.25;
-  const routes = [
-    {
-      id: "direct",
-      name: "Direct liquidity",
-      fee: 0.0035,
-      output: Math.floor(base * 0.9965 * 100) / 100,
-      slippage: 0.05,
-    },
-    {
-      id: "split",
-      name: "Split liquidity",
-      fee: 0.0048,
-      output: Math.floor(base * 0.9952 * 100) / 100,
-      slippage: 0.08,
-    },
-    {
-      id: "multi",
-      name: "Multi-hop route",
-      fee: 0.0065,
-      output: Math.floor(base * 0.9935 * 100) / 100,
-      slippage: 0.12,
-    },
-  ];
-  return {
-    rate: 5.25,
-    routes,
-    minimumOutput: Math.floor(routes[0].output * 0.995 * 100) / 100,
-  };
-}
 function receipt(invoice: Invoice, routeId = "direct") {
-  const r = quote(invoice.amount).routes.find((r) => r.id === routeId)!;
+  const r = demoQuote(invoice.amount).routes.find((r) => r.id === routeId)!;
   return {
     invoiceId: invoice.id,
     sender: "Aurora Comércio Ltda.",
     recipient: invoice.wallet,
-    originalAmount: invoice.amount,
+    originalAmountMinor: majorToMinor(invoice.amount),
     asset: "USDG" as const,
-    amount: r.output,
+    amountMinor: r.outputMinor,
     route: r.name,
     execution: {
       routeId: r.id,
-      cost: 0.02,
+      costMinor: "2",
       identifier: `DEMO-${invoice.id}-SETTLED`,
       simulated: true as const,
     },
@@ -102,7 +66,17 @@ export const demoInvoiceService: InvoiceService = {
               i.id && Number.isFinite(i.amount) && statuses.includes(i.status),
           )
         )
-          return parsed;
+          return parsed.map((invoice: Invoice) =>
+            invoice.receipt
+              ? {
+                  ...invoice,
+                  receipt: {
+                    ...receipt(invoice, invoice.receipt.execution.routeId),
+                    timestamp: invoice.receipt.timestamp,
+                  },
+                }
+              : invoice,
+          );
       }
     } catch {
       /* Corrupt storage falls back to safe fixtures. */
@@ -143,8 +117,15 @@ export const demoInvoiceService: InvoiceService = {
     };
     if (!allowed[i.status].includes(status))
       throw new Error("This payment state has changed. Refresh and try again.");
+    const candidateId = route || i.selectedRoute || "direct";
+    if (!demoQuote(i.amount).routes.some((r) => r.id === candidateId))
+      throw new Error("Invalid demo route.");
+    if (i.status === "Routing" && candidateId !== (i.selectedRoute || "direct"))
+      throw new Error(
+        "The selected route is locked. Start a new demo invoice to choose another route.",
+      );
     i.status = status;
-    if (route) i.selectedRoute = route;
+    if (status === "Routing") i.selectedRoute = candidateId;
     if (status === "Funded")
       i.payment = {
         invoiceId: id,
@@ -158,8 +139,3 @@ export const demoInvoiceService: InvoiceService = {
     return i;
   },
 };
-export const money = (n: number, currency = "BRL") =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency === "USDG" ? "USD" : currency,
-  }).format(n);

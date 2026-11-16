@@ -1,4 +1,5 @@
 "use client";
+import { LanguageSelector, useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
@@ -17,24 +18,28 @@ import {
   FileText,
 } from "lucide-react";
 import { Invoice } from "@/lib/models";
-import { quote } from "@/lib/demo-service";
+import { demoQuote, minorToDisplayNumber } from "@/lib/quotes";
 import { Mark, Logo, Cta } from "./ui";
 import { Developers } from "./developers";
 function RouteAtlas() {
+  const { t, number } = useLocale();
+
   const reduced = useReducedMotion();
   return (
     <div className="atlas">
       <div className="atlas-top">
         <span>
-          <span className="live-dot" /> The Brazil → global corridor
+          <span className="live-dot" /> {t("The Brazil → global corridor")}{" "}
         </span>
-        <span className="mono">DEMO ROUTE</span>
+        <span className="mono">{t("DEMO ROUTE")}</span>
       </div>
       <svg
         className="atlas-svg"
         viewBox="0 0 600 350"
         role="img"
-        aria-label="Brazilian Pix payment flows through PONTE and optimized liquidity to an international supplier"
+        aria-label={t(
+          "Brazilian Pix payment flows through PONTE and optimized liquidity to an international supplier",
+        )}
       >
         <defs>
           <pattern
@@ -88,38 +93,39 @@ function RouteAtlas() {
           fill="#49625a"
           fontFamily="monospace"
         >
-          PONTE ENGINE
+          {" "}
+          {t("PONTE ENGINE")}{" "}
         </text>
       </svg>
       <div className="route-ticket origin">
         <div className="currency-symbol brazil">R$</div>
         <div>
-          <small>You pay locally</small>
+          <small>{t("You pay locally")}</small>
           <strong>
-            25,000.00 <em>BRL</em>
+            {number(25000)} <em>BRL</em>
           </strong>
-          <span>Pix · Brazil</span>
+          <span>{t("Pix · Brazil")}</span>
         </div>
         <CheckCircle2 size={17} />
       </div>
       <div className="route-ticket destination">
         <div className="currency-symbol">$</div>
         <div>
-          <small>Your supplier receives</small>
+          <small>{t("Your supplier receives")}</small>
           <strong>
-            4,745.23 <em>USDG</em>
+            {number(4745.23)} <em>USDG</em>
           </strong>
-          <span>Digital dollars · Arbitrum</span>
+          <span>{t("Digital dollars · Arbitrum")}</span>
         </div>
         <ArrowUpRight size={18} />
       </div>
       <div className="route-note">
-        <GitBranch size={13} /> Optimised liquidity{" "}
-        <span>3 routes compared</span>
+        <GitBranch size={13} /> {t("Optimised liquidity")}{" "}
+        <span>{t("3 routes compared")}</span>
       </div>
       <div className="atlas-bottom">
         <ShieldCheck size={14} />
-        <span>Local in. Global out. Every step visible.</span>
+        <span>{t("Local in. Global out. Every step visible.")}</span>
         <span className="mono">01 → 04</span>
       </div>
     </div>
@@ -149,33 +155,41 @@ function Reveal({
   );
 }
 export function Marketing() {
+  const { t, money, number } = useLocale();
+
   const [open, setOpen] = useState(false);
   return (
     <>
       <header className="marketing-header wrap">
         <Logo />
-        <nav className={open ? "open" : ""} aria-label="Main navigation">
+        <nav className={open ? "open" : ""} aria-label={t("Main navigation")}>
           <a href="#product" onClick={() => setOpen(false)}>
-            Product
+            {" "}
+            {t("Product")}{" "}
           </a>
           <a href="#how-it-works" onClick={() => setOpen(false)}>
-            How it works
+            {" "}
+            {t("How it works")}{" "}
           </a>
           <a href="#developers" onClick={() => setOpen(false)}>
-            Developers
+            {" "}
+            {t("Developers")}{" "}
           </a>
           <a href="#security" onClick={() => setOpen(false)}>
-            Security
+            {" "}
+            {t("Security")}{" "}
           </a>
         </nav>
         <div className="header-actions">
+          <LanguageSelector />
           <Link href="/app" className="sign-in">
-            Sign in <ArrowUpRight size={14} />
+            {" "}
+            {t("Sign in")} <ArrowUpRight size={14} />
           </Link>
-          <Cta href="/app">Get started</Cta>
+          <Cta href="/app">{t("Get started")}</Cta>
           <button
             className="icon-button mobile-menu"
-            aria-label={open ? "Close navigation" : "Open navigation"}
+            aria-label={open ? t("Close navigation") : t("Open navigation")}
             aria-expanded={open}
             onClick={() => setOpen(!open)}
           >
@@ -201,28 +215,29 @@ export function Marketing() {
             }}
           >
             <div className="eyebrow">
-              <span className="tiny-bridge">↗</span> Built for business beyond
-              borders
+              <span className="tiny-bridge">↗</span>{" "}
+              {t("Built for business beyond borders")}{" "}
             </div>
             <h1>
-              Local payments.
-              <br />
-              Global possibility.
+              {" "}
+              {t("Local payments.")} <br /> {t("Global possibility.")}{" "}
             </h1>
             <p>
-              A clearer way from Brazilian reais to digital dollars. Connect Pix
-              payments with intelligent USDG settlement, and keep your business
-              moving.
+              {" "}
+              {t(
+                "A clearer way from Brazilian reais to digital dollars. Connect Pix payments with intelligent USDG settlement, and keep your business moving.",
+              )}{" "}
             </p>
             <div className="hero-actions">
-              <Cta href="/app/invoices/new">Create an invoice</Cta>
+              <Cta href="/app/invoices/new">{t("Create an invoice")}</Cta>
               <a className="text-link" href="#how-it-works">
-                See how it works <ArrowRight size={16} />
+                {" "}
+                {t("See how it works")} <ArrowRight size={16} />
               </a>
             </div>
             <div className="hero-disclaimer">
-              <span className="live-dot" /> Interactive prototype{" "}
-              <span className="divider">/</span> No real funds moved
+              <span className="live-dot" /> {t("Interactive prototype")}{" "}
+              <span className="divider">/</span> {t("No real funds moved")}{" "}
             </div>
           </motion.div>
           <motion.div
@@ -237,7 +252,7 @@ export function Marketing() {
         </motion.section>
         <div className="corridor-strip">
           <div className="wrap">
-            <span>One connected payment journey.</span>
+            <span>{t("One connected payment journey.")}</span>
             <div>
               <span className="pix-mark">◇</span> Pix <ArrowRight />
               <strong>
@@ -245,47 +260,55 @@ export function Marketing() {
               </strong>
               <ArrowRight />
               <span>
-                USDG <small>on Arbitrum</small>
+                USDG <small>{t("on Arbitrum")}</small>
               </span>
             </div>
-            <span>Designed for the next generation of trade.</span>
+            <span>{t("Designed for the next generation of trade.")}</span>
           </div>
         </div>
         <Reveal className="section wrap" id="how-it-works">
           <div className="section-heading">
             <div>
-              <span className="section-label">From local to global</span>
+              <span className="section-label">{t("From local to global")}</span>
               <h2>
-                Cross borders.
-                <br />
-                Not your fingers.
+                {" "}
+                {t("Cross borders.")} <br /> {t("Not your fingers.")}{" "}
               </h2>
             </div>
             <p>
-              One invoice. A familiar way to pay.
-              <br />A transparent path to your supplier.
+              {" "}
+              {t("One invoice. A familiar way to pay.")} <br />
+              {t("A transparent path to your supplier.")}{" "}
             </p>
           </div>
           <div className="process">
             {[
               {
-                title: "Create your invoice",
-                text: "Set the amount in reais, add your supplier and choose digital dollar settlement.",
+                title: t("Create your invoice"),
+                text: t(
+                  "Set the amount in reais, add your supplier and choose digital dollar settlement.",
+                ),
                 icon: FileText,
               },
               {
-                title: "Pay the local way",
-                text: "Share a payment link and follow a familiar Pix payment experience.",
+                title: t("Pay the local way"),
+                text: t(
+                  "Share a payment link and follow a familiar Pix payment experience.",
+                ),
                 icon: Zap,
               },
               {
-                title: "Find a clearer route",
-                text: "Compare sample liquidity routes, fees and expected output before execution.",
+                title: t("Find a clearer route"),
+                text: t(
+                  "Compare sample liquidity routes, fees and expected output before execution.",
+                ),
                 icon: GitBranch,
               },
               {
-                title: "Close the loop",
-                text: "Follow settlement from start to finish, with a clear receipt for your records.",
+                title: t("Close the loop"),
+                text: t(
+                  "Follow settlement from start to finish, with a clear receipt for your records.",
+                ),
                 icon: CheckCircle2,
               },
             ].map((item, i) => (
@@ -303,42 +326,47 @@ export function Marketing() {
         <section className="product-section" id="product">
           <div className="wrap product-split">
             <div>
-              <span className="section-label">Intelligence, not guesswork</span>
+              <span className="section-label">
+                {t("Intelligence, not guesswork")}
+              </span>
               <h2>
-                A better route.
-                <br />
-                In plain sight.
+                {" "}
+                {t("A better route.")} <br /> {t("In plain sight.")}{" "}
               </h2>
               <p>
-                Payments shouldn’t disappear into a black box. PONTE makes the
-                journey visible—from the first real to the final digital dollar.
+                {" "}
+                {t(
+                  "Payments shouldn’t disappear into a black box. PONTE makes the journey visible—from the first real to the final digital dollar.",
+                )}{" "}
               </p>
               <ul className="check-list">
                 <li>
-                  <Check /> Compare liquidity before you commit
+                  <Check /> {t("Compare liquidity before you commit")}{" "}
                 </li>
                 <li>
-                  <Check /> See fees and minimum output upfront
+                  <Check /> {t("See fees and minimum output upfront")}{" "}
                 </li>
                 <li>
-                  <Check /> Track every step in one workspace
+                  <Check /> {t("Track every step in one workspace")}{" "}
                 </li>
               </ul>
-              <Cta href="/app/invoices/demo-1">Explore a demo payment</Cta>
+              <Cta href="/app/invoices/demo-1">
+                {t("Explore a demo payment")}
+              </Cta>
             </div>
             <div className="routing-preview">
               <div className="row">
                 <span>
-                  <GitBranch size={18} /> Route comparison
+                  <GitBranch size={18} /> {t("Route comparison")}{" "}
                 </span>
-                <span className="dark-pill">Sample quote</span>
+                <span className="dark-pill">{t("Sample quote")}</span>
               </div>
               <div className="quote-summary">
-                <small>Funding amount</small>
-                <strong className="mono">R$ 25,000.00</strong>
+                <small>{t("Funding amount")}</small>
+                <strong className="mono">{money(25000)}</strong>
                 <span>BRL → USDG</span>
               </div>
-              {quote(25000).routes.map((r, i) => (
+              {demoQuote(25000).routes.map((r, i) => (
                 <div
                   className={`preview-route ${i === 0 ? "selected" : ""}`}
                   key={r.id}
@@ -350,22 +378,26 @@ export function Marketing() {
                       <GitBranch size={18} />
                     )}
                     <span>
-                      {r.name}
+                      {t(r.name)}
                       <small>
-                        {(r.fee * 100).toFixed(2)}% fee · {r.slippage}% slippage
+                        {t("{fee}% fee · {slippage}% slippage", {
+                          fee: number(r.feeBps / 100),
+                          slippage: number(r.slippageBps / 100),
+                        })}{" "}
                       </small>
                     </span>
                   </span>
                   <strong className="mono">
-                    {r.output.toLocaleString("en-US", {
-                      minimumFractionDigits: 2,
-                    })}
-                    <small>USDG {i === 0 ? "· Best output" : ""}</small>
+                    {number(minorToDisplayNumber(r.outputMinor))}
+                    <small>USDG {i === 0 ? t("· Best output") : ""}</small>
                   </strong>
                 </div>
               ))}
               <p>
-                Illustrative fixtures. No live liquidity or contract execution.
+                {" "}
+                {t(
+                  "Illustrative fixtures. No live liquidity or contract execution.",
+                )}{" "}
               </p>
             </div>
           </div>
@@ -375,40 +407,46 @@ export function Marketing() {
             <div className="success-symbol">
               <Check size={25} />
             </div>
-            <span className="section-label">Simulated settlement complete</span>
+            <span className="section-label">
+              {t("Simulated settlement complete")}
+            </span>
             <strong className="big-number">
-              4,745.23 <small>USDG</small>
+              {number(4745.23)} <small>USDG</small>
             </strong>
             <div className="receipt-line">
-              <span>Invoice</span>
+              <span>{t("Invoice")}</span>
               <b>PNT-2026-1048</b>
             </div>
             <div className="receipt-line">
-              <span>Recipient</span>
+              <span>{t("Recipient")}</span>
               <b>Meridian Supply Co.</b>
             </div>
             <div className="receipt-line">
-              <span>Route</span>
-              <b>Direct liquidity</b>
+              <span>{t("Route")}</span>
+              <b>{t("Direct liquidity")}</b>
             </div>
             <div className="receipt-stamp">
-              <ShieldCheck size={15} /> Clear records. Complete visibility.
+              <ShieldCheck size={15} />{" "}
+              {t("Clear records. Complete visibility.")}{" "}
             </div>
           </div>
           <div>
-            <span className="section-label">Nothing lost in translation</span>
+            <span className="section-label">
+              {t("Nothing lost in translation")}
+            </span>
             <h2>
-              From payment
-              <br />
-              to peace of mind.
+              {" "}
+              {t("From payment")} <br /> {t("to peace of mind.")}{" "}
             </h2>
             <p>
-              Know what was paid, how it was routed, and what your supplier
-              receives. Every demo settlement ends with a detailed, exportable
-              receipt.
+              {" "}
+              {t(
+                "Know what was paid, how it was routed, and what your supplier receives. Every demo settlement ends with a detailed, exportable receipt.",
+              )}{" "}
             </p>
             <Link href="/app" className="text-link">
-              Step inside the workspace <ArrowRight size={16} />
+              {" "}
+              {t("Step inside the workspace")} <ArrowRight size={16} />
             </Link>
           </div>
         </Reveal>
@@ -416,31 +454,33 @@ export function Marketing() {
           <div className="wrap infrastructure-grid">
             <div>
               <span className="section-label">
-                Local experience. Programmable foundations.
+                {" "}
+                {t("Local experience. Programmable foundations.")}{" "}
               </span>
               <h2>
-                Built to bridge
-                <br />
-                two financial worlds.
+                {" "}
+                {t("Built to bridge")} <br /> {t("two financial worlds.")}{" "}
               </h2>
               <p>
-                A frontend vision for Pix funding, USDG settlement and efficient
-                execution on Arbitrum. Open interfaces. Clear integration
-                boundaries.
+                {" "}
+                {t(
+                  "A frontend vision for Pix funding, USDG settlement and efficient execution on Arbitrum. Open interfaces. Clear integration boundaries.",
+                )}{" "}
               </p>
               <Link className="text-link" href="/developers">
-                Explore the architecture <ArrowUpRight size={16} />
+                {" "}
+                {t("Explore the architecture")} <ArrowUpRight size={16} />
               </Link>
               <div className="tech-tags">
                 <span>Arbitrum</span>
                 <span>USDG</span>
-                <span>Stylus-ready design</span>
+                <span>{t("Stylus-ready design")}</span>
               </div>
             </div>
             <div className="code-window">
               <div>
                 <Code2 size={16} /> ponte / settlement.ts{" "}
-                <span>Phase 2 interface</span>
+                <span>{t("Phase 2 interface")}</span>
               </div>
               <pre>
                 <code>
@@ -460,38 +500,46 @@ export function Marketing() {
         <Reveal className="section wrap" id="security">
           <div className="section-heading">
             <div>
-              <span className="section-label">Trust is in the details</span>
-              <h2>Clarity at every layer.</h2>
+              <span className="section-label">
+                {t("Trust is in the details")}
+              </span>
+              <h2>{t("Clarity at every layer.")}</h2>
             </div>
             <p>
-              Designed with responsible financial
-              <br />
-              infrastructure in mind.
+              {" "}
+              {t("Designed with responsible financial")} <br />{" "}
+              {t("infrastructure in mind.")}{" "}
             </p>
           </div>
           <div className="security-grid">
             <article>
               <ShieldCheck />
-              <h3>Control before execution</h3>
+              <h3>{t("Control before execution")}</h3>
               <p>
-                Review recipients, fees and minimum output before advancing the
-                simulated payment.
+                {" "}
+                {t(
+                  "Review recipients, fees and minimum output before advancing the simulated payment.",
+                )}{" "}
               </p>
             </article>
             <article>
               <Globe2 />
-              <h3>Transparent by design</h3>
+              <h3>{t("Transparent by design")}</h3>
               <p>
-                Visible lifecycle states and detailed receipts keep every
-                payment understandable.
+                {" "}
+                {t(
+                  "Visible lifecycle states and detailed receipts keep every payment understandable.",
+                )}{" "}
               </p>
             </article>
             <article>
               <Code2 />
-              <h3>Honest about what’s next</h3>
+              <h3>{t("Honest about what’s next")}</h3>
               <p>
-                No live wallets or funds. Compliance, provider controls and
-                contract security belong to Phase 2.
+                {" "}
+                {t(
+                  "No live wallets or funds. Compliance, provider controls and contract security belong to Phase 2.",
+                )}{" "}
               </p>
             </article>
           </div>
@@ -499,26 +547,29 @@ export function Marketing() {
         <section className="final-cta wrap">
           <div>
             <span className="section-label">
-              Your next market is closer than you think.
+              {" "}
+              {t("Your next market is closer than you think.")}{" "}
             </span>
-            <h2>Make the connection.</h2>
+            <h2>{t("Make the connection.")}</h2>
           </div>
-          <Cta href="/app/invoices/new">Create your first demo invoice</Cta>
+          <Cta href="/app/invoices/new">
+            {t("Create your first demo invoice")}
+          </Cta>
         </section>
       </main>
       <footer className="wrap footer">
         <div>
           <Logo />
-          <p>A better way across borders.</p>
+          <p>{t("A better way across borders.")}</p>
         </div>
         <div>
-          <Link href="/app">Explore the demo</Link>
-          <Link href="/developers">Developer overview</Link>
-          <a href="#security">Security approach</a>
+          <Link href="/app">{t("Explore the demo")}</Link>
+          <Link href="/developers">{t("Developer overview")}</Link>
+          <a href="#security">{t("Security approach")}</a>
         </div>
         <div>
-          <small>Built for Arbitrum Open House São Paulo.</small>
-          <small>Frontend concept · All payments are simulated.</small>
+          <small>{t("Built for Arbitrum Open House São Paulo.")}</small>
+          <small>{t("Frontend concept · All payments are simulated.")}</small>
           <small>© 2026 PONTE</small>
         </div>
       </footer>

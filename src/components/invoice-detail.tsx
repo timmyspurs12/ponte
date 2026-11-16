@@ -1,4 +1,5 @@
 "use client";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -15,7 +16,7 @@ import {
   CircleHelp,
 } from "lucide-react";
 import { Invoice, Status } from "@/lib/models";
-import { money, quote } from "@/lib/demo-service";
+import { demoQuote, minorToDisplayNumber } from "@/lib/quotes";
 import { invoiceService as service } from "@/lib/services";
 import { Badge } from "./ui";
 export function InvoiceDetail({
@@ -29,6 +30,8 @@ export function InvoiceDetail({
   notify: (s: string) => void;
   publicPage?: boolean;
 }) {
+  const { t, money, number, date } = useLocale();
+
   const [busy, setBusy] = useState(false);
   const [route, setRoute] = useState(invoice.selectedRoute || "direct");
   const [error, setError] = useState("");
@@ -43,7 +46,7 @@ export function InvoiceDetail({
   const dialogRef = (node: HTMLDialogElement | null) => {
     if (node && !node.open) node.showModal();
   };
-  const q = quote(invoice.amount);
+  const q = demoQuote(invoice.amount);
   const selected = q.routes.find((r) => r.id === route)!;
   const active =
     invoice.status === "Settled"
@@ -96,7 +99,7 @@ export function InvoiceDetail({
       [
         JSON.stringify(
           {
-            notice: "SIMULATED SETTLEMENT — NO REAL FUNDS MOVED",
+            notice: t("SIMULATED SETTLEMENT — NO REAL FUNDS MOVED"),
             ...invoice.receipt,
           },
           null,
@@ -117,30 +120,30 @@ export function InvoiceDetail({
     <>
       <Link className="back-link" href={publicPage ? "/" : "/app/invoices"}>
         <ArrowLeft size={15} />
-        {publicPage ? "PONTE home" : "All invoices"}
+        {publicPage ? t("PONTE home") : t("All invoices")}
       </Link>
       <div className="page-title">
         <div>
           <span className="section-label">
-            {publicPage ? "Demo payment request" : invoice.reference}
+            {publicPage ? t("Demo payment request") : invoice.reference}
           </span>
           <h1>{invoice.supplier}</h1>
           <p>
             {publicPage
-              ? "Requested by Aurora Comércio Ltda."
-              : "International supplier payment"}{" "}
-            · Created {invoice.created}
+              ? t("Requested by Aurora Comércio Ltda.")
+              : t("International supplier payment")}{" "}
+            {t("· Created")} {date(invoice.created)}
           </p>
         </div>
         <Badge status={invoice.status} />
       </div>
       <div className="journey">
         {[
-          "Invoice created",
-          "Payment requested",
-          "Pix confirmed",
-          "Route selected",
-          "Receipt generated",
+          t("Invoice created"),
+          t("Payment requested"),
+          t("Pix confirmed"),
+          t("Route selected"),
+          t("Receipt generated"),
         ].map((s, i) => (
           <div className={i <= active ? "done" : ""} key={s}>
             <span>{i < active ? <Check size={13} /> : i + 1}</span>
@@ -152,34 +155,38 @@ export function InvoiceDetail({
         <div>
           <section className="payment-summary panel">
             <div className="row">
-              <h2>Payment details</h2>
-              <span className="subtle">Demo invoice</span>
+              <h2>{t("Payment details")}</h2>
+              <span className="subtle">{t("Demo invoice")}</span>
             </div>
             <div className="payment-amount">
               {money(invoice.amount)}
-              <span>BRL funding → USDG settlement</span>
+              <span>{t("BRL funding → USDG settlement")}</span>
             </div>
             <dl>
               <div>
-                <dt>Invoice reference</dt>
+                <dt>{t("Invoice reference")}</dt>
                 <dd>{invoice.reference}</dd>
               </div>
               <div>
-                <dt>Supplier</dt>
+                <dt>{t("Supplier")}</dt>
                 <dd>{invoice.supplier}</dd>
               </div>
               <div>
-                <dt>Due date</dt>
-                <dd>{invoice.due}</dd>
+                <dt>{t("Due date")}</dt>
+                <dd>{date(invoice.due)}</dd>
               </div>
               <div>
-                <dt>Recipient · Arbitrum format</dt>
+                <dt>{t("Recipient · Arbitrum format")}</dt>
                 <dd className="mono wallet">{invoice.wallet}</dd>
               </div>
               {invoice.description && (
                 <div>
-                  <dt>Description</dt>
-                  <dd>{invoice.description}</dd>
+                  <dt>{t("Description")}</dt>
+                  <dd>
+                    {invoice.id.startsWith("demo-")
+                      ? t(invoice.description)
+                      : invoice.description}
+                  </dd>
                 </div>
               )}
             </dl>
@@ -196,12 +203,12 @@ export function InvoiceDetail({
               <div className="row">
                 <h2>
                   {invoice.status === "Settled"
-                    ? "Settlement receipt"
+                    ? t("Settlement receipt")
                     : invoice.status === "Routing"
-                      ? "Ready for settlement"
+                      ? t("Ready for settlement")
                       : invoice.status === "Funded"
-                        ? "Compare liquidity routes"
-                        : "Pix demo payment"}
+                        ? t("Compare liquidity routes")
+                        : t("Pix demo payment")}
                 </h2>
                 {invoice.status === "Settled" ? (
                   <CheckCircle2 size={22} />
@@ -215,21 +222,25 @@ export function InvoiceDetail({
                 <>
                   <p>
                     {invoice.status === "Draft"
-                      ? "Create a payment request to continue."
+                      ? t("Create a payment request to continue.")
                       : invoice.status === "Failed"
-                        ? "The sample payment failed. Retry the demo request; no funds were moved."
-                        : "A familiar local payment. A transparent global journey."}
+                        ? t(
+                            "The sample payment failed. Retry the demo request; no funds were moved.",
+                          )
+                        : t(
+                            "A familiar local payment. A transparent global journey.",
+                          )}
                   </p>
                   <div className="pix-sandbox">
                     <div className="pix-demo-symbol">
                       ◇<small>DEMO</small>
                     </div>
                     <div>
-                      <strong>Pix sandbox</strong>
+                      <strong>{t("Pix sandbox")}</strong>
                       <p>
-                        No bank QR code is generated.
-                        <br />
-                        No real payment will be requested.
+                        {" "}
+                        {t("No bank QR code is generated.")} <br />{" "}
+                        {t("No real payment will be requested.")}{" "}
                       </p>
                     </div>
                   </div>
@@ -240,8 +251,8 @@ export function InvoiceDetail({
                       onClick={() => transition("Funded")}
                     >
                       {busy
-                        ? "Confirming demo payment…"
-                        : "Simulate Pix payment received"}
+                        ? t("Confirming demo payment…")
+                        : t("Simulate Pix payment received")}
                       <ArrowRight size={16} />
                     </button>
                   ) : (
@@ -251,10 +262,10 @@ export function InvoiceDetail({
                       onClick={() => transition("Pending payment")}
                     >
                       {busy
-                        ? "Preparing…"
+                        ? t("Preparing…")
                         : invoice.status === "Failed"
-                          ? "Retry demo payment request"
-                          : "Create demo payment request"}
+                          ? t("Retry demo payment request")
+                          : t("Create demo payment request")}
                     </button>
                   )}
                 </>
@@ -262,17 +273,21 @@ export function InvoiceDetail({
                 <>
                   <p>
                     {invoice.status === "Funded"
-                      ? "Pix confirmation simulated. Compare deterministic quote fixtures below."
-                      : "Route locked for this demo. Review the output before simulating settlement."}
+                      ? t(
+                          "Pix confirmation simulated. Compare deterministic quote fixtures below.",
+                        )
+                      : t(
+                          "Route locked for this demo. Review the output before simulating settlement.",
+                        )}
                   </p>
                   <div className="quote-meta">
-                    <span>Sample FX: 1 USDG = R$5.25</span>
-                    <span>No live market data</span>
+                    <span>{t("Sample FX: 1 USDG = R$5.25")}</span>
+                    <span>{t("No live market data")}</span>
                   </div>
                   <div
                     className="route-options"
                     role="radiogroup"
-                    aria-label="Liquidity routes"
+                    aria-label={t("Liquidity routes")}
                   >
                     {q.routes.map((r) => (
                       <button
@@ -312,14 +327,16 @@ export function InvoiceDetail({
                           {route === r.id && <span />}
                         </span>
                         <span>
-                          <strong>{r.name}</strong>
+                          <strong>{t(r.name)}</strong>
                           <small>
-                            {(r.fee * 100).toFixed(2)}% fee · {r.slippage}%
-                            slippage
+                            {t("{fee}% fee · {slippage}% slippage", {
+                              fee: number(r.feeBps / 100),
+                              slippage: number(r.slippageBps / 100),
+                            })}{" "}
                           </small>
                         </span>
                         <span className="mono">
-                          {r.output.toFixed(2)}
+                          {number(minorToDisplayNumber(r.outputMinor))}
                           <small>USDG</small>
                         </span>
                       </button>
@@ -327,14 +344,17 @@ export function InvoiceDetail({
                   </div>
                   <dl className="execution-stats">
                     <div>
-                      <dt>Minimum acceptable output</dt>
+                      <dt>{t("Minimum acceptable output")}</dt>
                       <dd className="mono">
-                        {(selected.output * 0.995).toFixed(2)} USDG
+                        {number(
+                          minorToDisplayNumber(selected.minimumOutputMinor),
+                        )}{" "}
+                        USDG
                       </dd>
                     </div>
                     <div>
-                      <dt>Sample execution cost</dt>
-                      <dd className="mono">$0.02 (illustrative)</dd>
+                      <dt>{t("Sample execution cost")}</dt>
+                      <dd className="mono">{t("$0.02 (illustrative)")}</dd>
                     </div>
                   </dl>
                   <button
@@ -348,10 +368,10 @@ export function InvoiceDetail({
                     }
                   >
                     {busy
-                      ? "Updating demo payment…"
+                      ? t("Updating demo payment…")
                       : invoice.status === "Funded"
-                        ? "Select route & continue"
-                        : "Simulate settlement"}
+                        ? t("Select route & continue")
+                        : t("Simulate settlement")}
                     <ArrowRight size={16} />
                   </button>
                 </>
@@ -360,43 +380,39 @@ export function InvoiceDetail({
                   <div className="success-symbol">
                     <Check size={26} />
                   </div>
-                  <p>Simulated settlement complete</p>
+                  <p>{t("Simulated settlement complete")}</p>
                   <strong className="big-number">
-                    {invoice.receipt.amount.toLocaleString("en-US", {
-                      minimumFractionDigits: 2,
-                    })}
+                    {number(minorToDisplayNumber(invoice.receipt.amountMinor))}
                     <small> USDG</small>
                   </strong>
-                  <p>No blockchain transaction occurred.</p>
+                  <p>{t("No blockchain transaction occurred.")}</p>
                   <dl>
                     {[
-                      ["Invoice ID", invoice.id],
-                      ["Sender", invoice.receipt.sender],
-                      ["Recipient", invoice.receipt.recipient],
+                      [t("Invoice ID"), invoice.id],
+                      [t("Sender"), invoice.receipt.sender],
+                      [t("Recipient"), invoice.receipt.recipient],
                       [
-                        "Original amount",
-                        money(invoice.receipt.originalAmount),
+                        t("Original amount"),
+                        money(
+                          minorToDisplayNumber(
+                            invoice.receipt.originalAmountMinor,
+                          ),
+                        ),
                       ],
-                      ["Settlement asset", "USDG"],
-                      ["Selected route", invoice.receipt.route],
-                      ["Execution cost", "$0.02 · illustrative"],
+                      [t("Settlement asset"), "USDG"],
+                      [t("Selected route"), t(invoice.receipt.route)],
+                      [t("Execution cost"), t("$0.02 · illustrative")],
                       [
-                        "Demo transaction ID",
+                        t("Demo transaction ID"),
                         invoice.receipt.execution.identifier,
                       ],
-                      [
-                        "Timestamp",
-                        new Date(invoice.receipt.timestamp).toLocaleString(
-                          "en-GB",
-                          { timeZone: "UTC" },
-                        ) + " UTC",
-                      ],
+                      [t("Timestamp"), date(invoice.receipt.timestamp, true)],
                     ].map(([k, v]) => (
                       <div key={k}>
                         <dt>{k}</dt>
                         <dd
                           className={
-                            k.includes("ID") || k === "Recipient"
+                            k.includes("ID") || k === t("Recipient")
                               ? "mono wallet"
                               : ""
                           }
@@ -410,7 +426,7 @@ export function InvoiceDetail({
                     className="button secondary full-button"
                     onClick={download}
                   >
-                    <Download size={16} /> Export demo receipt
+                    <Download size={16} /> {t("Export demo receipt")}{" "}
                   </button>
                 </div>
               ) : null}
@@ -418,48 +434,53 @@ export function InvoiceDetail({
           </AnimatePresence>
           {error && (
             <div role="alert" className="notice error">
-              {error}
-              <button onClick={() => setError("")}>Dismiss</button>
+              {t(error)}
+              <button onClick={() => setError("")}>{t("Dismiss")}</button>
             </div>
           )}
         </div>
         <aside>
           <section className="panel">
-            <h2>Payment link</h2>
+            <h2>{t("Payment link")}</h2>
             <p>
-              Open the public-facing demo checkout. Only available in this
-              browser’s local demo store.
+              {" "}
+              {t(
+                "Open the public-facing demo checkout. Only available in this browser’s local demo store.",
+              )}{" "}
             </p>
             <div className="link-box">
               <span>/pay/{invoice.id.slice(0, 16)}</span>
               <button
                 className="icon-button"
-                aria-label="Copy demo payment link"
+                aria-label={t("Copy demo payment link")}
                 onClick={copy}
               >
                 <Copy size={16} />
               </button>
             </div>
             <Link className="text-link" href={`/pay/${invoice.id}`}>
-              Open demo payment page <ArrowUpRight size={15} />
+              {" "}
+              {t("Open demo payment page")} <ArrowUpRight size={15} />
             </Link>
           </section>
           <section className="notice">
             <ShieldCheck size={22} />
             <div>
-              <strong>A safe space to explore.</strong>
+              <strong>{t("A safe space to explore.")}</strong>
               <p>
-                All payment confirmations, liquidity routes and settlements are
-                simulated. Never transfer real funds to this prototype.
+                {" "}
+                {t(
+                  "All payment confirmations, liquidity routes and settlements are simulated. Never transfer real funds to this prototype.",
+                )}{" "}
               </p>
             </div>
           </section>
           <div className="help-note">
             <CircleHelp size={17} />
             <p>
-              Want to understand the foundations?
-              <br />
-              <Link href="/developers">See the integration roadmap</Link>
+              {" "}
+              {t("Want to understand the foundations?")} <br />
+              <Link href="/developers">{t("See the integration roadmap")}</Link>
             </p>
           </div>
         </aside>
@@ -476,11 +497,15 @@ export function InvoiceDetail({
             if (e.target === e.currentTarget) closeConfirmation();
           }}
         >
-          <h2 id="confirmation-title">Simulate this settlement?</h2>
+          <h2 id="confirmation-title">{t("Simulate this settlement?")}</h2>
           <p>
-            {selected.output.toFixed(2)} USDG will be recorded as a demo
-            settlement to {invoice.supplier}. No funds move and no wallet
-            signature is requested.
+            {t(
+              "{amount} USDG will be recorded as a demo settlement to {supplier}. No funds move and no wallet signature is requested.",
+              {
+                amount: number(minorToDisplayNumber(selected.outputMinor)),
+                supplier: invoice.supplier,
+              },
+            )}{" "}
           </p>
           <div className="form-actions">
             <button
@@ -488,7 +513,8 @@ export function InvoiceDetail({
               autoFocus
               onClick={closeConfirmation}
             >
-              Cancel
+              {" "}
+              {t("Cancel")}{" "}
             </button>
             <button
               className="button"
@@ -497,7 +523,8 @@ export function InvoiceDetail({
                 transition("Settled");
               }}
             >
-              Confirm simulation
+              {" "}
+              {t("Confirm simulation")}{" "}
             </button>
           </div>
         </dialog>

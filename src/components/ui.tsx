@@ -1,4 +1,5 @@
 "use client";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { Status } from "@/lib/models";
@@ -21,8 +22,10 @@ export function Mark() {
   );
 }
 export function Logo() {
+  const { t } = useLocale();
+
   return (
-    <Link className="logo" href="/" aria-label="PONTE home">
+    <Link className="logo" href="/" aria-label={t("PONTE home")}>
       <Mark />
       PONTE<span className="logo-dot">.</span>
     </Link>
@@ -37,10 +40,11 @@ export const statuses: Status[] = [
   "Failed",
 ];
 export function Badge({ status }: { status: Status }) {
+  const { t } = useLocale();
   return (
     <span className={`badge ${status.toLowerCase().replace(" ", "-")}`}>
       <span />
-      {status}
+      {t(status)}
     </span>
   );
 }

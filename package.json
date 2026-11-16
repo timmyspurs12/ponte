@@ -1,6 +1,6 @@
 {
   "name": "ponte",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
@@ -8,9 +8,9 @@
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "npm run test:prepare && LD_LIBRARY_PATH=\"$PWD/.cache/chromium-libs/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\" playwright test",
-    "test:prepare": "node scripts/prepare-browser.mjs",
-    "format": "prettier --write src tests playwright.config.ts"
+    "test": "node scripts/run-tests.mjs",
+    "format": "prettier --write src tests playwright.config.ts",
+    "test:install": "playwright install chromium"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.0",

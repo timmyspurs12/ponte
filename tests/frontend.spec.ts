@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
+test.beforeEach(async ({ context }) => {
+  await context.addCookies([
+    { name: "ponte-locale", value: "en-US", domain: "localhost", path: "/" },
+  ]);
+});
 test("complete invoice lifecycle, validation, filters and persistence", async ({
   page,
 }) => {
@@ -13,7 +18,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
     page.getByRole("heading", { name: "A clear view of what’s moving." }),
   ).toBeVisible();
   await page.screenshot({
-    path: "docs/screenshots/overview-desktop.png",
+    path: "test-results/screenshots/overview-desktop.png",
     fullPage: true,
   });
   await page.getByRole("link", { name: "Create invoice", exact: true }).click();
@@ -69,7 +74,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await expect(page.locator(".toast")).toHaveCount(0);
   await page.screenshot({
-    path: "docs/screenshots/receipt-desktop.png",
+    path: "test-results/screenshots/receipt-desktop.png",
     fullPage: true,
   });
   await page.getByRole("link", { name: "Open demo payment page" }).click();
@@ -105,7 +110,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   expect(errors).toEqual([]);
 });
 test("responsive layouts and navigation", async ({ page }) => {
-  fs.mkdirSync("docs/screenshots", { recursive: true });
+  fs.mkdirSync("test-results/screenshots", { recursive: true });
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
@@ -131,12 +136,12 @@ test("responsive layouts and navigation", async ({ page }) => {
       ).toBeTruthy();
       if (route === "/app" && width === 390)
         await page.screenshot({
-          path: "docs/screenshots/overview-mobile.png",
+          path: "test-results/screenshots/overview-mobile.png",
           fullPage: true,
         });
       if (route === "/" && (width === 1440 || width === 390))
         await page.screenshot({
-          path: `docs/screenshots/home-${width}.png`,
+          path: `test-results/screenshots/home-${width}.png`,
           fullPage: true,
         });
     }
@@ -209,7 +214,7 @@ test("keyboard, reduced motion, public demo payment and accessibility", async ({
   await expect(page.locator(".toast")).toHaveCount(0);
   expect(errors).toEqual([]);
   await page.screenshot({
-    path: "docs/screenshots/receipt-mobile.png",
+    path: "test-results/screenshots/receipt-mobile.png",
     fullPage: true,
   });
 });

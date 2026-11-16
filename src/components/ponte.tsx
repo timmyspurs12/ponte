@@ -1,4 +1,5 @@
 "use client";
+import { LanguageSelector, useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -21,6 +22,8 @@ import { Overview } from "./overview";
 import { CreateInvoice } from "./create-invoice";
 import { InvoiceDetail } from "./invoice-detail";
 export default function Ponte() {
+  const { t } = useLocale();
+
   const pathname = usePathname();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [toast, setToast] = useState("");
@@ -64,30 +67,34 @@ export default function Ponte() {
             <div className="wrap">
               <Logo />
               {!publicPage && (
-                <nav aria-label="Workspace navigation">
+                <nav aria-label={t("Workspace navigation")}>
                   <Link
                     className={pathname === "/app" ? "active" : ""}
                     href="/app"
                   >
-                    Overview
+                    {" "}
+                    {t("Overview")}{" "}
                   </Link>
                   <Link
                     className={pathname.includes("/invoices") ? "active" : ""}
                     href="/app/invoices"
                   >
-                    Invoices
+                    {" "}
+                    {t("Invoices")}{" "}
                   </Link>
                   <Link href="/developers">
-                    Developers <ArrowUpRight size={12} />
+                    {" "}
+                    {t("Developers")} <ArrowUpRight size={12} />
                   </Link>
                 </nav>
               )}
+              <LanguageSelector />
               <div className="workspace">
                 <span className="workspace-icon">
                   <Building2 size={17} />
                 </span>
                 <span>
-                  Aurora Comércio<small>Demo workspace</small>
+                  Aurora Comércio<small>{t("Demo workspace")}</small>
                 </span>
                 <span className="avatar">AC</span>
               </div>
@@ -95,17 +102,19 @@ export default function Ponte() {
           </header>
           <div className="demo-banner">
             <span className="live-dot" />
-            <strong>Demo mode</strong>
+            <strong>{t("Demo mode")}</strong>
             <span>
-              Explore freely. No real funds, wallets or payment services are
-              connected.
+              {" "}
+              {t(
+                "Explore freely. No real funds, wallets or payment services are connected.",
+              )}{" "}
             </span>
           </div>
           <main className="app-main wrap" id="main">
             {!invoices ? (
               <div className="loading" role="status">
                 <div className="skeleton" />
-                <p>Loading demo workspace…</p>
+                <p>{t("Loading demo workspace…")}</p>
               </div>
             ) : detail ? (
               invoice ? (
@@ -119,12 +128,14 @@ export default function Ponte() {
               ) : (
                 <div className="empty">
                   <FileText />
-                  <h1>Invoice not found</h1>
+                  <h1>{t("Invoice not found")}</h1>
                   <p>
-                    This demo link may belong to another browser. Demo records
-                    are stored locally.
+                    {" "}
+                    {t(
+                      "This demo link may belong to another browser. Demo records are stored locally.",
+                    )}{" "}
                   </p>
-                  <Cta href="/app/invoices">Back to invoices</Cta>
+                  <Cta href="/app/invoices">{t("Back to invoices")}</Cta>
                 </div>
               )
             ) : pathname === "/app/invoices/new" ? (
@@ -134,18 +145,19 @@ export default function Ponte() {
                 <div className="page-title">
                   <div>
                     <span className="section-label">
-                      Payments, without the paperwork
+                      {" "}
+                      {t("Payments, without the paperwork")}{" "}
                     </span>
-                    <h1>Invoices</h1>
-                    <p>Every supplier. Every payment. One clear view.</p>
+                    <h1>{t("Invoices")}</h1>
+                    <p>{t("Every supplier. Every payment. One clear view.")}</p>
                   </div>
                   <Cta href="/app/invoices/new">
-                    <Plus size={16} /> Create invoice
+                    <Plus size={16} /> {t("Create invoice")}{" "}
                   </Cta>
                 </div>
                 <div className="list-summary">
                   <span>
-                    <b>{invoices.length}</b> Total invoices
+                    <b>{invoices.length}</b> {t("Total invoices")}{" "}
                   </span>
                   <span>
                     <b>
@@ -154,15 +166,15 @@ export default function Ponte() {
                           .length
                       }
                     </b>{" "}
-                    Awaiting payment
+                    {t("Awaiting payment")}{" "}
                   </span>
                   <span>
                     <b>
                       {invoices.filter((i) => i.status === "Settled").length}
                     </b>{" "}
-                    Settled
+                    {t("Settled")}{" "}
                   </span>
-                  <span>All figures are demo data</span>
+                  <span>{t("All figures are demo data")}</span>
                 </div>
                 <InvoiceTable invoices={invoices} />
               </>
@@ -171,14 +183,16 @@ export default function Ponte() {
             )}
           </main>
           <footer className="app-footer wrap">
-            <span>PONTE · A better way across borders.</span>
-            <span>Frontend prototype · Arbitrum Open House São Paulo</span>
+            <span>{t("PONTE · A better way across borders.")}</span>
+            <span>
+              {t("Frontend prototype · Arbitrum Open House São Paulo")}
+            </span>
           </footer>
         </>
       ) : (
         <main id="main" className="empty">
-          <h1>Page not found</h1>
-          <Cta href="/">Return home</Cta>
+          <h1>{t("Page not found")}</h1>
+          <Cta href="/">{t("Return home")}</Cta>
         </main>
       )}
       <AnimatePresence>
@@ -191,10 +205,10 @@ export default function Ponte() {
             exit={{ opacity: 0, y: 16 }}
           >
             <CheckCircle2 size={19} />
-            {toast}
+            {t(toast)}
             <button
               className="icon-button"
-              aria-label="Dismiss notification"
+              aria-label={t("Dismiss notification")}
               onClick={() => setToast("")}
             >
               <X size={16} />

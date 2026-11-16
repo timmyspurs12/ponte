@@ -1,3 +1,5 @@
+import { cookies } from "next/headers";
+import { LocaleProvider, SkipLink } from "@/lib/i18n/provider";
 import type { Metadata } from "next";
 import "@fontsource/manrope/400.css";
 import "@fontsource/manrope/500.css";
@@ -6,18 +8,26 @@ import "@fontsource/manrope/700.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: "PONTE — A better way across borders",
+  title: "PONTE — Um caminho melhor entre fronteiras",
   description:
-    "Explore a frontend demonstration of Pix-to-USDG business settlement. No real funds are moved.",
+    "Demonstração de liquidação empresarial de Pix para USDG. Sem movimentação de dinheiro real.",
 };
-export default function Layout({ children }: { children: React.ReactNode }) {
+export default async function Layout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const locale =
+    (await cookies()).get("ponte-locale")?.value === "en-US"
+      ? "en-US"
+      : "pt-BR";
   return (
-    <html lang="en" data-scroll-behavior="smooth">
+    <html lang={locale} data-scroll-behavior="smooth">
       <body>
-        <a className="skip" href="#main">
-          Skip to content
-        </a>
-        {children}
+        <LocaleProvider initialLocale={locale}>
+          <SkipLink />
+          {children}
+        </LocaleProvider>
       </body>
     </html>
   );

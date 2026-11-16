@@ -1,4 +1,5 @@
 "use client";
+import { useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { useState } from "react";
 import {
@@ -9,7 +10,7 @@ import {
   FileText,
 } from "lucide-react";
 import { Invoice, Status } from "@/lib/models";
-import { money } from "@/lib/demo-service";
+
 import { Badge, statuses } from "./ui";
 export function InvoiceTable({
   invoices,
@@ -18,6 +19,8 @@ export function InvoiceTable({
   invoices: Invoice[];
   compact?: boolean;
 }) {
+  const { t, money, number, date } = useLocale();
+
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All statuses");
   const [sort, setSort] = useState("newest");
@@ -47,8 +50,8 @@ export function InvoiceTable({
           <label className="search">
             <Search size={17} />
             <input
-              aria-label="Search invoices"
-              placeholder="Search supplier or invoice…"
+              aria-label={t("Search invoices")}
+              placeholder={t("Search supplier or invoice…")}
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -59,26 +62,28 @@ export function InvoiceTable({
           <div className="filters">
             <SlidersHorizontal size={16} />
             <select
-              aria-label="Filter by status"
+              aria-label={t("Filter by status")}
               value={status}
               onChange={(e) => {
                 setStatus(e.target.value);
                 setPage(0);
               }}
             >
-              <option>All statuses</option>
+              <option value="All statuses">{t("All statuses")}</option>
               {statuses.map((s) => (
-                <option key={s}>{s}</option>
+                <option key={s} value={s}>
+                  {t(s)}
+                </option>
               ))}
             </select>
             <select
-              aria-label="Sort invoices"
+              aria-label={t("Sort invoices")}
               value={sort}
               onChange={(e) => setSort(e.target.value)}
             >
-              <option value="newest">Newest first</option>
-              <option value="amount">Highest amount</option>
-              <option value="due">Due date</option>
+              <option value="newest">{t("Newest first")}</option>
+              <option value="amount">{t("Highest amount")}</option>
+              <option value="due">{t("Due date")}</option>
             </select>
           </div>
         </div>
@@ -86,20 +91,20 @@ export function InvoiceTable({
       <div
         className="table-scroll"
         role="region"
-        aria-label="Invoices"
+        aria-label={t("Invoices")}
         tabIndex={0}
       >
         <table>
           <thead>
             <tr>
-              <th>Invoice / Supplier</th>
-              <th className="number">Amount</th>
-              <th>Corridor</th>
+              <th>{t("Invoice / Supplier")}</th>
+              <th className="number">{t("Amount")}</th>
+              <th>{t("Corridor")}</th>
               <th>Status</th>
-              {!compact && <th>Created</th>}
-              <th>Due date</th>
+              {!compact && <th>{t("Created")}</th>}
+              <th>{t("Due date")}</th>
               <th>
-                <span className="sr-only">Open invoice</span>
+                <span className="sr-only">{t("Open invoice")}</span>
               </th>
             </tr>
           </thead>
@@ -132,13 +137,15 @@ export function InvoiceTable({
                 <td>
                   <Badge status={i.status} />
                 </td>
-                {!compact && <td className="date">{i.created}</td>}
-                <td className="date">{i.due}</td>
+                {!compact && <td className="date">{date(i.created)}</td>}
+                <td className="date">{date(i.due)}</td>
                 <td>
                   <Link
                     className="icon-button"
                     href={`/app/invoices/${i.id}`}
-                    aria-label={`Open ${i.reference}`}
+                    aria-label={t("Open {reference}", {
+                      reference: i.reference,
+                    })}
                   >
                     <ArrowUpRight size={16} />
                   </Link>
@@ -151,8 +158,8 @@ export function InvoiceTable({
       {visible.length === 0 && (
         <div className="empty">
           <FileText />
-          <h3>No invoices found</h3>
-          <p>Try another supplier, reference or status.</p>
+          <h3>{t("No invoices found")}</h3>
+          <p>{t("Try another supplier, reference or status.")}</p>
           <button
             className="button secondary"
             onClick={() => {
@@ -160,25 +167,31 @@ export function InvoiceTable({
               setStatus("All statuses");
             }}
           >
-            Clear filters
+            {" "}
+            {t("Clear filters")}{" "}
           </button>
         </div>
       )}
       {!compact && (
         <div className="pagination">
           <small>
-            {rows.length} demo invoices · Page {page + 1} of{" "}
-            {Math.max(1, Math.ceil(rows.length / 6))}
+            {t("{count} demo invoices · Page {page} of {pages}", {
+              count: number(rows.length, 0),
+              page: number(page + 1, 0),
+              pages: number(Math.max(1, Math.ceil(rows.length / 6)), 0),
+            })}
           </small>
           <div>
             <button disabled={page === 0} onClick={() => setPage(page - 1)}>
-              Previous
+              {" "}
+              {t("Previous")}{" "}
             </button>
             <button
               disabled={(page + 1) * 6 >= rows.length}
               onClick={() => setPage(page + 1)}
             >
-              Next
+              {" "}
+              {t("Next")}{" "}
             </button>
           </div>
         </div>
