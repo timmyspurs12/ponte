@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "suite": "phase2b-v1-regression-minimized",
+  "syntheticOnly": true,
+  "vectors": [
+    {
+      "id": "reg-001-u256-exact-ceiling-passes",
+      "category": "minimized_u256_ceiling",
+      "description": "Minimized boundary: largest N with U128_MAX * N * 10000 <= U256_MAX succeeds without overflow.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"340282366920938463463374607431768211455\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"34028236692093846346337460743176821\",\"rateDenominator\":\"340282366920938463463374607431768211455\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "340282366920938463463374607431768211455",
+        "grossOut": "34028236692093846346337460743176821",
+        "feeOut": "0",
+        "expectedOut": "34028236692093846346337460743176821",
+        "minimumOut": "34028236692093846346337460743176821",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "reg-002-u256-exact-ceiling-plus-one-rejected",
+      "category": "minimized_u256_ceiling",
+      "description": "Minimized boundary: incrementing rateNumerator by 1 past U256_MAX / (U128_MAX * 10000) triggers ARITHMETIC_RANGE.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"340282366920938463463374607431768211455\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"34028236692093846346337460743176822\",\"rateDenominator\":\"340282366920938463463374607431768211455\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "NO_ROUTE",
+        "amountIn": "340282366920938463463374607431768211455",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "ARITHMETIC_RANGE"
+          }
+        ]
+      }
+    },
+    {
+      "id": "reg-003-gross-overflow-precedes-zero-output-at-100pct-fee",
+      "category": "minimized_precedence",
+      "description": "When G overflows U128 even at feeBps=10000, candidate is rejected with ARITHMETIC_RANGE (step 5) rather than ZERO_OUTPUT (step 6).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"340282366920938463463374607431768211455\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":10000,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "NO_ROUTE",
+        "amountIn": "340282366920938463463374607431768211455",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "ARITHMETIC_RANGE"
+          }
+        ]
+      }
+    },
+    {
+      "id": "reg-004-raw-json-float-bps-rejected",
+      "category": "minimized_wire_float_rejection",
+      "description": "Raw JSON float token 50.0 for toleranceBps is rejected as INVALID_BPS rather than coerced to integer 50.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50.0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_BPS",
+          "message": "Basis-point value must be an integer between 0 and 10000."
+        }
+      }
+    },
+    {
+      "id": "reg-005-raw-json-duplicate-key-rejected",
+      "category": "minimized_wire_duplicate_key",
+      "description": "Duplicate JSON object keys are rejected as MALFORMED_JSON.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"version\":1}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "MALFORMED_JSON",
+          "message": "Request payload is not valid JSON."
+        }
+      }
+    },
+    {
+      "id": "reg-006-multi-structural-error-order-forward",
+      "category": "minimized_structural_permutation",
+      "description": "Permuted candidates (forward) with distinct structural errors produce identical SNAPSHOT_MISMATCH because validation runs in canonical routeId order.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"0\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "SNAPSHOT_MISMATCH",
+          "message": "Candidate snapshotId must match request snapshotId."
+        }
+      }
+    },
+    {
+      "id": "reg-006-multi-structural-error-order-reversed",
+      "category": "minimized_structural_permutation",
+      "description": "Permuted candidates (reversed) with distinct structural errors produce identical SNAPSHOT_MISMATCH because validation runs in canonical routeId order.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"0\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "SNAPSHOT_MISMATCH",
+          "message": "Candidate snapshotId must match request snapshotId."
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,790 @@
+{
+  "schemaVersion": 1,
+  "suite": "phase2b-v1-edge-cases",
+  "syntheticOnly": true,
+  "vectors": [
+    {
+      "id": "edge-001-normal-two-candidate-selection",
+      "category": "normal_amounts",
+      "description": "Synthetic two-candidate evaluation from readiness report: route 2 wins with expectedOut=1990 over route 1 expectedOut=1980 despite 1c higher execution cost.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"3\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 2,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-002-smallest-supported-amount",
+      "category": "smallest_and_largest_amounts",
+      "description": "Smallest supported input amountIn=1 with rate 3/1 and 0 fee.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"3\",\"rateDenominator\":\"1\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"1\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "1",
+        "grossOut": "3",
+        "feeOut": "0",
+        "expectedOut": "3",
+        "minimumOut": "3",
+        "executionCostUsdCents": "1",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-003-largest-supported-amount-u128-max",
+      "category": "smallest_and_largest_amounts",
+      "description": "Largest supported amountIn=U128_MAX with 1:1 rate and zero fee produces expectedOut=U128_MAX without U256 overflow.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"340282366920938463463374607431768211455\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"1\",\"rateDenominator\":\"1\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"0\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "340282366920938463463374607431768211455",
+        "grossOut": "340282366920938463463374607431768211455",
+        "feeOut": "0",
+        "expectedOut": "340282366920938463463374607431768211455",
+        "minimumOut": "338580955086333771146057734394609370397",
+        "executionCostUsdCents": "0",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-004-fee-rounding-single-floor",
+      "category": "fee_rounding_boundaries",
+      "description": "Preserves single floor division O=floor(F*N*(10000-f)/(D*10000))=474523 and feeOut=G-O=1667 instead of double-rounded fee deduction.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"2500000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":35,\"estimatedImpactBps\":5,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "2500000",
+        "grossOut": "476190",
+        "feeOut": "1667",
+        "expectedOut": "474523",
+        "minimumOut": "472150",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-005-tolerance-max-bps-zero-user-min",
+      "category": "tolerance_boundaries",
+      "description": "At toleranceBps=10000 and userMinOut=0, T=0 and required minimum M=0 <= O.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":10000,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "0",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-006-user-min-exact-and-unmet",
+      "category": "tolerance_boundaries",
+      "description": "Route 1 (O=1980 < userMinOut=1990) is rejected with USER_MIN_UNMET while Route 2 (O=1990 == userMinOut=1990) is selected with M=1990.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"1990\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1990",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 2,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "USER_MIN_UNMET"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-007-zero-and-max-fee-bps",
+      "category": "zero_and_max_bps",
+      "description": "Candidate with feeBps=10000 produces O=0 and is rejected with ZERO_OUTPUT; candidate with feeBps=0 and toleranceBps=0 yields G=O=M=2000.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":10000,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "0",
+        "expectedOut": "2000",
+        "minimumOut": "2000",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 2,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "ZERO_OUTPUT"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-008-input-liquidity-boundary",
+      "category": "insufficient_input_liquidity",
+      "description": "Route 1 with availableInput=999 (< F=1000) is rejected with INPUT_LIQUIDITY; Route 2 with availableInput=1000 is selected.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":10,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"999\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"1000\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 2,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "INPUT_LIQUIDITY"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-009-output-liquidity-boundary",
+      "category": "insufficient_output_liquidity",
+      "description": "Route 1 with O=1990 and availableOutput=1989 is rejected with OUTPUT_LIQUIDITY; Route 2 with O=1990 and availableOutput=1990 is selected.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"1989\",\"executionCostUsdCents\":\"1\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"1990\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 2,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "OUTPUT_LIQUIDITY"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-010-min-max-input-boundaries",
+      "category": "min_max_input_boundaries",
+      "description": "Route 1 (minInput=1001) fails BELOW_MIN; Route 2 (maxInput=999) fails CAPACITY; Route 3 (minInput=1000, maxInput=1000) succeeds.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1001\",\"maxInput\":\"2000\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"999\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1000\",\"maxInput\":\"1000\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 3,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "BELOW_MIN"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+            "reason": "CAPACITY"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-011-candidate-and-request-expiry",
+      "category": "expiry_boundaries",
+      "description": "Route 1 (expiresAt == asOf) and Route 2 (expiresAt < asOf) fail EXPIRED; Route 3 (expiresAt < request.expiresAt) sets effectiveExpiry to candidate expiry.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763323200\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763323199\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763323201\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763323201",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 3,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "EXPIRED"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+            "reason": "EXPIRED"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-012-effective-expiry-capped-by-request-and-u64-max",
+      "category": "expiry_boundaries",
+      "description": "When candidate expiresAt=U64_MAX exceeds request expiresAt=U64_MAX-10, effectiveExpiry equals request expiresAt.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"18446744073709551595\",\"expiresAtUnixSeconds\":\"18446744073709551605\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"18446744073709551615\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "18446744073709551605",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-013-equal-expected-output-cost-tiebreaker",
+      "category": "equal_expected_output",
+      "description": "Routes 1, 2, 3 produce identical expectedOut=1990; Route 2 wins on lowest executionCostUsdCents=2 (never subtracted from token output).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"5\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"20\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 3,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-014-equal-output-equal-cost-route-id-tiebreaker-permuted",
+      "category": "deterministic_tie_breaking_and_permutation",
+      "description": "Candidates supplied in descending routeId order with identical output and cost still select smallest canonical bytes32 routeId and sort rejected deterministically.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"3\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000009\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763323100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000005\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"3\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"5000\",\"maxInput\":\"6000\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000004\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"3\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000004",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "10",
+        "expectedOut": "1990",
+        "minimumOut": "1980",
+        "executionCostUsdCents": "3",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 5,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+            "reason": "BELOW_MIN"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000009",
+            "reason": "EXPIRED"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-015-asset-decimals-metadata-no-rescaling",
+      "category": "asset_decimals_metadata",
+      "description": "Mixed asset decimals (6 and 18) are metadata only; optimizer does not rescale amountIn or rate.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_IN_6\",\"decimals\":6},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_OUT_18\",\"decimals\":18},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"3\",\"rateDenominator\":\"2\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"1\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "1000",
+        "grossOut": "1500",
+        "feeOut": "0",
+        "expectedOut": "1500",
+        "minimumOut": "1500",
+        "executionCostUsdCents": "1",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-016-gross-output-u128-overflow-rejected",
+      "category": "u128_overflow",
+      "description": "Candidate whose gross output G = U128_MAX * 2 / 1 exceeds U128_MAX is rejected with ARITHMETIC_RANGE while fallback route wins.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"340282366920938463463374607431768211455\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"1\",\"rateDenominator\":\"2\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "340282366920938463463374607431768211455",
+        "grossOut": "170141183460469231731687303715884105727",
+        "feeOut": "0",
+        "expectedOut": "170141183460469231731687303715884105727",
+        "minimumOut": "170141183460469231731687303715884105727",
+        "executionCostUsdCents": "4",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 2,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "ARITHMETIC_RANGE"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-017-u256-intermediate-overflow-no-cancellation",
+      "category": "u256_intermediate_overflow",
+      "description": "Explicitly rejects U256 overflow in F * N * (10000 - f) even though algebraic cancellation with D * 10000 would equal U128_MAX.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"340282366920938463463374607431768211455\",\"userMinOut\":\"0\",\"toleranceBps\":0,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"340282366920938463463374607431768211455\",\"rateDenominator\":\"340282366920938463463374607431768211455\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "NO_ROUTE",
+        "amountIn": "340282366920938463463374607431768211455",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "ARITHMETIC_RANGE"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-018-no-feasible-route-all-eight-reasons",
+      "category": "no_feasible_route",
+      "description": "Evaluates 8 infeasible candidates covering all 8 deterministic rejection reasons and returns NO_ROUTE sorted by canonical routeId.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"2500\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000008\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000004\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"999\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763323200\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000006\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"1\",\"rateDenominator\":\"5000\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1001\",\"maxInput\":\"2000\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000007\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"3\",\"rateDenominator\":\"1\",\"feeBps\":0,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"2999\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000005\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"340282366920938463463374607431768211455\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"999\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "NO_ROUTE",
+        "amountIn": "1000",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 8,
+        "rejected": [
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "reason": "EXPIRED"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+            "reason": "BELOW_MIN"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+            "reason": "CAPACITY"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000004",
+            "reason": "INPUT_LIQUIDITY"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000005",
+            "reason": "ARITHMETIC_RANGE"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000006",
+            "reason": "ZERO_OUTPUT"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000007",
+            "reason": "OUTPUT_LIQUIDITY"
+          },
+          {
+            "routeId": "0x0000000000000000000000000000000000000000000000000000000000000008",
+            "reason": "USER_MIN_UNMET"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edge-019-max-candidate-count-64",
+      "category": "candidate_count_limits",
+      "description": "Accepts maximum 64 candidates supplied in reverse order and selects route 1 (lowest cost=1).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000040\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"64\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"63\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"62\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"61\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"60\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"59\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"58\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000039\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"57\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000038\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"56\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000037\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"55\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000036\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"54\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000035\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"53\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000034\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"52\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000033\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"51\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000032\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"50\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000031\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"49\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000030\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"48\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"47\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"46\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"45\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"44\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"43\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"42\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000029\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"41\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000028\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"40\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000027\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"39\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000026\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"38\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000025\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"37\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000024\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"36\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000023\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"35\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000022\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"34\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000021\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"33\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000020\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"32\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"31\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"30\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"29\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"28\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"27\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"26\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000019\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"25\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000018\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"24\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000017\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"23\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000016\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"22\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000015\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"21\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000014\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"20\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000013\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"19\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000012\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"18\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000011\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"17\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000010\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"16\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"15\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"14\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"13\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"12\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"11\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"10\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000009\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"9\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000008\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"8\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000007\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"7\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000006\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"6\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000005\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"5\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000004\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"3\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":100,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"1\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "1000",
+        "grossOut": "2000",
+        "feeOut": "20",
+        "expectedOut": "1980",
+        "minimumOut": "1970",
+        "executionCostUsdCents": "1",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 64,
+        "rejected": []
+      }
+    },
+    {
+      "id": "edge-020-candidate-count-65-rejected",
+      "category": "candidate_count_limits",
+      "description": "Rejects 65 candidates (one above maximum 64).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000004\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000005\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000006\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000007\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000008\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000009\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000000f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000010\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000011\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000012\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000013\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000014\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000015\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000016\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000017\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000018\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000019\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000001f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000020\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000021\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000022\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000023\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000024\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000025\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000026\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000027\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000028\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000029\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000002f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000030\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000031\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000032\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000033\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000034\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000035\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000036\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000037\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000038\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000039\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003a\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003b\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003c\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003d\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003e\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x000000000000000000000000000000000000000000000000000000000000003f\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000040\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000041\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_CANDIDATE_COUNT",
+          "message": "Candidate count must be between 1 and 64."
+        }
+      }
+    },
+    {
+      "id": "edge-021-candidate-count-0-rejected",
+      "category": "candidate_count_limits",
+      "description": "Rejects empty candidate array.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_CANDIDATE_COUNT",
+          "message": "Candidate count must be between 1 and 64."
+        }
+      }
+    },
+    {
+      "id": "edge-022-duplicate-route-ids",
+      "category": "duplicate_route_ids",
+      "description": "Rejects duplicate candidate routeId values.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000007\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":10,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000007\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":20,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "DUPLICATE_ROUTE_ID",
+          "message": "Candidate routeId values must be unique."
+        }
+      }
+    },
+    {
+      "id": "edge-023-snapshot-mismatch",
+      "category": "invalid_snapshots",
+      "description": "Rejects request when any candidate snapshotId differs from request snapshotId.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "SNAPSHOT_MISMATCH",
+          "message": "Candidate snapshotId must match request snapshotId."
+        }
+      }
+    },
+    {
+      "id": "edge-024-invalid-bytes32-uppercase-and-short",
+      "category": "invalid_bytes32",
+      "description": "Rejects non-canonical uppercase bytes32 identifier.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_BYTES32",
+          "message": "Identifier must be a canonical lowercase 0x-prefixed 32-byte hex string."
+        }
+      }
+    },
+    {
+      "id": "edge-025-zero-rate-numerator",
+      "category": "zero_rate",
+      "description": "Rejects candidate with zero rateNumerator.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"0\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "ZERO_RATE",
+          "message": "Candidate rateNumerator and rateDenominator must be positive."
+        }
+      }
+    },
+    {
+      "id": "edge-026-zero-rate-denominator",
+      "category": "zero_rate",
+      "description": "Rejects candidate with zero rateDenominator.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"0\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "ZERO_RATE",
+          "message": "Candidate rateNumerator and rateDenominator must be positive."
+        }
+      }
+    },
+    {
+      "id": "edge-027-invalid-int-encoding-leading-zero",
+      "category": "invalid_integer_encodings",
+      "description": "Rejects non-canonical integer string \"0100\" for amountIn.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"0100\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_INTEGER_ENCODING",
+          "message": "Monetary and timestamp fields must be canonical unsigned base-10 integer strings."
+        }
+      }
+    },
+    {
+      "id": "edge-027-invalid-int-encoding-negative",
+      "category": "invalid_integer_encodings",
+      "description": "Rejects non-canonical integer string \"-100\" for amountIn.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"-100\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_INTEGER_ENCODING",
+          "message": "Monetary and timestamp fields must be canonical unsigned base-10 integer strings."
+        }
+      }
+    },
+    {
+      "id": "edge-027-invalid-int-encoding-decimal-point",
+      "category": "invalid_integer_encodings",
+      "description": "Rejects non-canonical integer string \"100.50\" for amountIn.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"100.50\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_INTEGER_ENCODING",
+          "message": "Monetary and timestamp fields must be canonical unsigned base-10 integer strings."
+        }
+      }
+    },
+    {
+      "id": "edge-027-invalid-int-encoding-scientific",
+      "category": "invalid_integer_encodings",
+      "description": "Rejects non-canonical integer string \"1e3\" for amountIn.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1e3\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_INTEGER_ENCODING",
+          "message": "Monetary and timestamp fields must be canonical unsigned base-10 integer strings."
+        }
+      }
+    },
+    {
+      "id": "edge-027-invalid-int-encoding-whitespace",
+      "category": "invalid_integer_encodings",
+      "description": "Rejects non-canonical integer string \" 100\" for amountIn.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\" 100\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_INTEGER_ENCODING",
+          "message": "Monetary and timestamp fields must be canonical unsigned base-10 integer strings."
+        }
+      }
+    },
+    {
+      "id": "edge-027-invalid-int-encoding-empty",
+      "category": "invalid_integer_encodings",
+      "description": "Rejects non-canonical integer string \"\" for amountIn.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_INTEGER_ENCODING",
+          "message": "Monetary and timestamp fields must be canonical unsigned base-10 integer strings."
+        }
+      }
+    },
+    {
+      "id": "edge-028-invalid-int-json-number-for-amount",
+      "category": "invalid_integer_encodings",
+      "description": "Rejects JSON numeric literal for amountIn; monetary values must be canonical strings.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":1000,\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_INTEGER_ENCODING",
+          "message": "Monetary and timestamp fields must be canonical unsigned base-10 integer strings."
+        }
+      }
+    },
+    {
+      "id": "edge-029-u128-parse-overflow",
+      "category": "u128_overflow",
+      "description": "Rejects canonical integer string U128_MAX + 1 with INTEGER_OVERFLOW.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"340282366920938463463374607431768211456\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INTEGER_OVERFLOW",
+          "message": "Integer value exceeds bounded width."
+        }
+      }
+    },
+    {
+      "id": "edge-030-unsupported-version",
+      "category": "structural_validation",
+      "description": "Rejects unsupported version=2.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":2,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "UNSUPPORTED_VERSION",
+          "message": "Unsupported optimizer request version; expected 1."
+        }
+      }
+    },
+    {
+      "id": "edge-031-unsupported-mode",
+      "category": "structural_validation",
+      "description": "Rejects unsupported mode=LIVE.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"LIVE\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "UNSUPPORTED_MODE",
+          "message": "Unsupported optimizer mode; expected SYNTHETIC."
+        }
+      }
+    },
+    {
+      "id": "edge-032-invalid-asset-decimals-39",
+      "category": "structural_validation",
+      "description": "Rejects asset decimals=39 (above max 38).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":39},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_ASSET_DECIMALS",
+          "message": "Asset decimals must be an integer between 0 and 38."
+        }
+      }
+    },
+    {
+      "id": "edge-033-invalid-bps-above-10000",
+      "category": "structural_validation",
+      "description": "Rejects toleranceBps=10001.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":10001,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_BPS",
+          "message": "Basis-point value must be an integer between 0 and 10000."
+        }
+      }
+    },
+    {
+      "id": "edge-034-invalid-request-expiry",
+      "category": "structural_validation",
+      "description": "Rejects request where asOfUnixSeconds == expiresAtUnixSeconds.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763324100\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_REQUEST_EXPIRY",
+          "message": "Evaluation timestamp must be strictly earlier than request expiry."
+        }
+      }
+    },
+    {
+      "id": "edge-035-min-input-greater-than-max-input",
+      "category": "structural_validation",
+      "description": "Rejects candidate where minInput > maxInput.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"500\",\"maxInput\":\"499\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_CANDIDATE_BOUNDS",
+          "message": "Candidate minInput must not exceed maxInput."
+        }
+      }
+    },
+    {
+      "id": "edge-036-zero-amount-in",
+      "category": "structural_validation",
+      "description": "Rejects zero amountIn in core optimizer.",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"0\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"2\",\"rateDenominator\":\"1\",\"feeBps\":50,\"estimatedImpactBps\":10,\"minInput\":\"1\",\"maxInput\":\"340282366920938463463374607431768211455\",\"availableInput\":\"340282366920938463463374607431768211455\",\"availableOutput\":\"340282366920938463463374607431768211455\",\"executionCostUsdCents\":\"4\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "ERROR",
+        "error": {
+          "code": "INVALID_AMOUNT_IN",
+          "message": "Input amount must be a positive integer."
+        }
+      }
+    }
+  ]
+}

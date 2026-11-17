@@ -1,0 +1,259 @@
+{
+  "schemaVersion": 1,
+  "suite": "phase2b-v1-legacy-parity",
+  "syntheticOnly": true,
+  "vectors": [
+    {
+      "id": "legacy-100-direct",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=100 on synthetic direct route (35 bps fee, 5 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"100\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":35,\"estimatedImpactBps\":5,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "100",
+        "grossOut": "19",
+        "feeOut": "1",
+        "expectedOut": "18",
+        "minimumOut": "17",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-100-split",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=100 on synthetic split route (48 bps fee, 8 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"100\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":48,\"estimatedImpactBps\":8,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "100",
+        "grossOut": "19",
+        "feeOut": "1",
+        "expectedOut": "18",
+        "minimumOut": "17",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-100-multi",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=100 on synthetic multi route (65 bps fee, 12 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"100\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":65,\"estimatedImpactBps\":12,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+        "amountIn": "100",
+        "grossOut": "19",
+        "feeOut": "1",
+        "expectedOut": "18",
+        "minimumOut": "17",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-100-combined-selection",
+      "category": "legacy_three_route_selection",
+      "description": "Combined 3-candidate evaluation for F=100; synthetic direct route wins (by highest output, or canonical routeId tie-breaker at F=100).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"100\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":35,\"estimatedImpactBps\":5,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":48,\"estimatedImpactBps\":8,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":65,\"estimatedImpactBps\":12,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "100",
+        "grossOut": "19",
+        "feeOut": "1",
+        "expectedOut": "18",
+        "minimumOut": "17",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 3,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-2500000-direct",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=2500000 on synthetic direct route (35 bps fee, 5 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"2500000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":35,\"estimatedImpactBps\":5,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "2500000",
+        "grossOut": "476190",
+        "feeOut": "1667",
+        "expectedOut": "474523",
+        "minimumOut": "472150",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-2500000-split",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=2500000 on synthetic split route (48 bps fee, 8 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"2500000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":48,\"estimatedImpactBps\":8,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "2500000",
+        "grossOut": "476190",
+        "feeOut": "2286",
+        "expectedOut": "473904",
+        "minimumOut": "471534",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-2500000-multi",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=2500000 on synthetic multi route (65 bps fee, 12 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"2500000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":65,\"estimatedImpactBps\":12,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+        "amountIn": "2500000",
+        "grossOut": "476190",
+        "feeOut": "3095",
+        "expectedOut": "473095",
+        "minimumOut": "470729",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-2500000-combined-selection",
+      "category": "legacy_three_route_selection",
+      "description": "Combined 3-candidate evaluation for F=2500000; synthetic direct route wins (by highest output, or canonical routeId tie-breaker at F=100).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"2500000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":35,\"estimatedImpactBps\":5,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":48,\"estimatedImpactBps\":8,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":65,\"estimatedImpactBps\":12,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "2500000",
+        "grossOut": "476190",
+        "feeOut": "1667",
+        "expectedOut": "474523",
+        "minimumOut": "472150",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 3,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-1000000000-direct",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=1000000000 on synthetic direct route (35 bps fee, 5 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000000000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":35,\"estimatedImpactBps\":5,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "1000000000",
+        "grossOut": "190476190",
+        "feeOut": "666667",
+        "expectedOut": "189809523",
+        "minimumOut": "188860475",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-1000000000-split",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=1000000000 on synthetic split route (48 bps fee, 8 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000000000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":48,\"estimatedImpactBps\":8,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000002",
+        "amountIn": "1000000000",
+        "grossOut": "190476190",
+        "feeOut": "914286",
+        "expectedOut": "189561904",
+        "minimumOut": "188614094",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-1000000000-multi",
+      "category": "legacy_single_route_parity",
+      "description": "Exact legacy quote() parity for F=1000000000 on synthetic multi route (65 bps fee, 12 bps descriptive impact).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000000000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":65,\"estimatedImpactBps\":12,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000003",
+        "amountIn": "1000000000",
+        "grossOut": "190476190",
+        "feeOut": "1238095",
+        "expectedOut": "189238095",
+        "minimumOut": "188291904",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 1,
+        "rejected": []
+      }
+    },
+    {
+      "id": "legacy-1000000000-combined-selection",
+      "category": "legacy_three_route_selection",
+      "description": "Combined 3-candidate evaluation for F=1000000000; synthetic direct route wins (by highest output, or canonical routeId tie-breaker at F=100).",
+      "synthetic": true,
+      "rawRequestJson": "{\"version\":1,\"mode\":\"SYNTHETIC\",\"inputAsset\":{\"namespace\":\"SYNTHETIC_FIAT\",\"identifier\":\"SYNTH_BRL\",\"decimals\":2},\"outputAsset\":{\"namespace\":\"SYNTHETIC_TOKEN\",\"identifier\":\"SYNTH_USDG\",\"decimals\":2},\"amountIn\":\"1000000000\",\"userMinOut\":\"0\",\"toleranceBps\":50,\"asOfUnixSeconds\":\"1763323200\",\"expiresAtUnixSeconds\":\"1763324100\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"candidates\":[{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000001\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":35,\"estimatedImpactBps\":5,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000002\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":48,\"estimatedImpactBps\":8,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"},{\"routeId\":\"0x0000000000000000000000000000000000000000000000000000000000000003\",\"snapshotId\":\"0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"rateNumerator\":\"100\",\"rateDenominator\":\"525\",\"feeBps\":65,\"estimatedImpactBps\":12,\"minInput\":\"100\",\"maxInput\":\"1000000000\",\"availableInput\":\"10000000000\",\"availableOutput\":\"10000000000\",\"executionCostUsdCents\":\"2\",\"expiresAtUnixSeconds\":\"1763324100\"}]}",
+      "expectedResponse": {
+        "status": "SELECTED",
+        "selectedRouteId": "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "amountIn": "1000000000",
+        "grossOut": "190476190",
+        "feeOut": "666667",
+        "expectedOut": "189809523",
+        "minimumOut": "188860475",
+        "executionCostUsdCents": "2",
+        "effectiveExpiry": "1763324100",
+        "snapshotId": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "evaluatedCount": 3,
+        "rejected": []
+      }
+    }
+  ]
+}

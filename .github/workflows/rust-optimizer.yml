@@ -1,15 +1,31 @@
-name: Rust environment validation
+name: Rust optimizer validation
 
 on:
   pull_request:
     branches: [main]
     paths:
       - 'rust/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/**'
+      - 'scripts/phase2b/fixtures/**'
+      - 'src/lib/quotes.ts'
+      - 'src/lib/models.ts'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/rust-optimizer.yml'
   push:
-    branches: [arena/5b4a73d0-ponte]
+    branches:
+      - arena/5b4a73d0-ponte
+      - arena/f3b4611b-ponte
     paths:
       - 'rust/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/**'
+      - 'scripts/phase2b/fixtures/**'
+      - 'src/lib/quotes.ts'
+      - 'src/lib/models.ts'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/rust-optimizer.yml'
   workflow_dispatch:
 
@@ -17,12 +33,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-environment-${{ github.ref }}
+  group: rust-optimizer-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate:
-    # Standard GitHub-hosted runner only. No larger or self-hosted runners.
+  environment-check:
+    # Standard GitHub-hosted runner only. Preserves Phase 2B.0.2 smoke test.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -82,6 +98,141 @@ jobs:
         with:
           name: rust-environment-logs
           path: rust/environment-check/ci-logs/*.log
+          if-no-files-found: warn
+          retention-days: 3
+          compression-level: 9
+
+  optimizer:
+    # Standard GitHub-hosted runner only. Validates Phase 2B.1 offline optimizer.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install pinned Rust 1.91.0 toolchain and targets
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown 2>&1 | tee ci-logs/install.log
+      - name: Record toolchain and runner metadata
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          {
+            date -u +%FT%TZ
+            printf 'Commit: %s\n' "$GITHUB_SHA"
+            uname -a
+            cat /etc/os-release
+            lscpu | grep -E 'Model name|CPU\(s\)|Architecture' || true
+            free -m || true
+            rustc --version
+            cargo --version
+            cargo clippy --version
+            node --version
+            npm --version
+            rustup target list --installed
+            sha256sum Cargo.lock
+          } 2>&1 | tee ci-logs/environment.log
+      - name: Download locked Rust dependencies
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          cargo fetch --locked 2>&1 | tee ci-logs/fetch.log
+      - name: Check Rust formatting
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          cargo fmt --check 2>&1 | tee ci-logs/fmt.log
+      - name: Run Clippy lints
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee ci-logs/clippy.log
+      - name: Run Rust unit, property, and static-fixture tests
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          cargo test --locked 2>&1 | tee ci-logs/test.log
+      - name: Compile native debug and release targets
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          {
+            cargo build --locked
+            cargo build --locked --release
+            ls -lh target/release/optimizer-v1
+            sha256sum target/release/optimizer-v1
+          } 2>&1 | tee ci-logs/native-build.log
+      - name: Compile WASM target library
+        working-directory: rust/optimizer
+        run: |
+          set -euo pipefail
+          {
+            cargo build --locked --lib --target wasm32-unknown-unknown
+            cargo build --locked --lib --release --target wasm32-unknown-unknown
+            ls -lh target/wasm32-unknown-unknown/release/*.rlib
+            sha256sum target/wasm32-unknown-unknown/release/*.rlib
+          } 2>&1 | tee ci-logs/wasm-build.log
+      - name: Verify Cargo.lock remains unchanged
+        run: git diff --exit-code -- rust/optimizer/Cargo.lock
+      - name: Install locked Node dependencies
+        run: npm ci
+      - name: Run TypeScript reference unit and property tests
+        run: |
+          set -euo pipefail
+          node --import tsx --test scripts/phase2b/property.test.ts 2>&1 | tee rust/optimizer/ci-logs/ts-property-tests.log
+      - name: Run legacy quote parity verification
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/phase2b/legacy-parity.ts \
+            --rust-bin rust/optimizer/target/release/optimizer-v1 \
+            --summary-out rust/optimizer/ci-logs/legacy-parity.json 2>&1 | tee rust/optimizer/ci-logs/legacy-parity.log
+      - name: Run shared TypeScript-vs-Rust differential test harness
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/phase2b/differential-harness.ts \
+            --rust-bin rust/optimizer/target/release/optimizer-v1 \
+            --count 10000 \
+            --summary-out rust/optimizer/ci-logs/differential-summary.json 2>&1 | tee rust/optimizer/ci-logs/differential.log
+      - name: Run native host benchmark comparison
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/phase2b/benchmark.ts \
+            --rust-bin rust/optimizer/target/release/optimizer-v1 \
+            --runs 5 \
+            --warmup-passes 20 \
+            --measure-passes 100 \
+            --dataset-size 100 \
+            --json-out rust/optimizer/ci-logs/benchmark.json \
+            --markdown-out rust/optimizer/ci-logs/benchmark.md 2>&1 | tee rust/optimizer/ci-logs/benchmark.log
+      - name: Publish concise CI results
+        if: always()
+        run: |
+          if [[ -f rust/optimizer/ci-logs/differential.log ]]; then
+            echo '## Differential results' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat rust/optimizer/ci-logs/differential.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -f rust/optimizer/ci-logs/benchmark.md ]]; then
+            cat rust/optimizer/ci-logs/benchmark.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload concise optimizer verification logs and summaries
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rust-optimizer-logs
+          path: |
+            rust/optimizer/ci-logs/*.log
+            rust/optimizer/ci-logs/*.json
+            rust/optimizer/ci-logs/*.md
           if-no-files-found: warn
           retention-days: 3
           compression-level: 9

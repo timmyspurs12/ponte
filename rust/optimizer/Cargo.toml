@@ -1,0 +1,16 @@
+[package]
+name = "ponte-optimizer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91.0"
+publish = false
+
+# Isolated from rust/environment-check and any parent workspace.
+[workspace]
+
+[dependencies]
+alloy-primitives = { version = "=1.5.7", default-features = false }
+
+[[bin]]
+name = "optimizer-v1"
+path = "src/bin/optimizer-v1.rs"
