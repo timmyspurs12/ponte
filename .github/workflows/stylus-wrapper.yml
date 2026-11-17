@@ -37,6 +37,23 @@ jobs:
               for f in [pathlib.Path('Cargo.lock'), *pathlib.Path('src').rglob('*.rs')]:
                   if f.exists(): archive.add(f)
           for title,data in [('SOURCE',out.getvalue()),('LOG',gzip.compress('\n'.join(log).encode()))]:
-              text=base64.b64encode(data).decode()
-              for i in range(0,len(text),3800): print(f'::notice title={title}_{i//3800}::{text[i:i+3800]}')
+              pathlib.Path('/tmp/stylus-'+title+'.b64').write_text(base64.b64encode(data).decode())
+          text=pathlib.Path('/tmp/stylus-LOG.b64').read_text()
+          for i in range(0,len(text),3800): print(f'::notice title=LOG_{i//3800}::{text[i:i+3800]}')
+          PY
+      - name: Extract source part one
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/stylus-SOURCE.b64').read_text()
+          for n in range(10):
+              if 3800*n < len(s): print(f'::notice title=SOURCE_{n}::{s[3800*n:3800*(n+1)]}')
+          PY
+      - name: Extract source part two
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/stylus-SOURCE.b64').read_text()
+          for n in range(10,20):
+              if 3800*n < len(s): print(f'::notice title=SOURCE_{n}::{s[3800*n:3800*(n+1)]}')
           PY
