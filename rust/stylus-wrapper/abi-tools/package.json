@@ -1,0 +1,16 @@
+{
+  "name": "ponte-synthetic-abi-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned, isolated compiler and independent client for the synthetic Stylus ABI",
+  "scripts": {
+    "generate": "node generate.cjs",
+    "check": "node generate.cjs --check",
+    "test": "node test.cjs",
+    "test:wasm": "node test-wasm.cjs"
+  },
+  "devDependencies": {
+    "ethers": "6.16.0",
+    "solc": "0.8.30"
+  }
+}

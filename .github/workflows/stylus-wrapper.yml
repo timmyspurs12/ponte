@@ -26,6 +26,15 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install locked ABI tooling
+        run: npm --prefix abi-tools ci --ignore-scripts --no-audit --no-fund
+      - name: Verify complete generated client ABI
+        run: |
+          npm --prefix abi-tools run check
+          npm --prefix abi-tools test
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
       - name: Check formatting
@@ -52,3 +61,5 @@ jobs:
         run: |
           node --version
           node scripts/test_wasm_entrypoint.cjs target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
+      - name: Verify client ABI against fixture calls through release WASM
+        run: node abi-tools/test-wasm.cjs target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm

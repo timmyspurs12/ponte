@@ -1,0 +1,253 @@
+[
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint16",
+            "name": "version",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint8",
+            "name": "mode",
+            "type": "uint8"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "namespace",
+                "type": "string"
+              },
+              {
+                "internalType": "string",
+                "name": "identifier",
+                "type": "string"
+              },
+              {
+                "internalType": "uint8",
+                "name": "decimals",
+                "type": "uint8"
+              }
+            ],
+            "internalType": "struct ISyntheticOptimizer.SyntheticAsset",
+            "name": "inputAsset",
+            "type": "tuple"
+          },
+          {
+            "components": [
+              {
+                "internalType": "string",
+                "name": "namespace",
+                "type": "string"
+              },
+              {
+                "internalType": "string",
+                "name": "identifier",
+                "type": "string"
+              },
+              {
+                "internalType": "uint8",
+                "name": "decimals",
+                "type": "uint8"
+              }
+            ],
+            "internalType": "struct ISyntheticOptimizer.SyntheticAsset",
+            "name": "outputAsset",
+            "type": "tuple"
+          },
+          {
+            "internalType": "uint128",
+            "name": "amountIn",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "userMinOut",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint16",
+            "name": "toleranceBps",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint64",
+            "name": "asOfUnixSeconds",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "expiresAtUnixSeconds",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "snapshotId",
+            "type": "bytes32"
+          },
+          {
+            "components": [
+              {
+                "internalType": "bytes32",
+                "name": "routeId",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "bytes32",
+                "name": "snapshotId",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "uint128",
+                "name": "rateNumerator",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint128",
+                "name": "rateDenominator",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint16",
+                "name": "feeBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint16",
+                "name": "estimatedImpactBps",
+                "type": "uint16"
+              },
+              {
+                "internalType": "uint128",
+                "name": "minInput",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint128",
+                "name": "maxInput",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint128",
+                "name": "availableInput",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint128",
+                "name": "availableOutput",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint128",
+                "name": "executionCostUsdCents",
+                "type": "uint128"
+              },
+              {
+                "internalType": "uint64",
+                "name": "expiresAtUnixSeconds",
+                "type": "uint64"
+              }
+            ],
+            "internalType": "struct ISyntheticOptimizer.SyntheticCandidate[]",
+            "name": "candidates",
+            "type": "tuple[]"
+          }
+        ],
+        "internalType": "struct ISyntheticOptimizer.SyntheticRequest",
+        "name": "request",
+        "type": "tuple"
+      }
+    ],
+    "name": "evaluateSynthetic",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint8",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "string",
+            "name": "errorCode",
+            "type": "string"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "selectedRouteId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint128",
+            "name": "amountIn",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "grossOut",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "feeOut",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "expectedOut",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "minimumOut",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "executionCostUsdCents",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint64",
+            "name": "effectiveExpiry",
+            "type": "uint64"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "snapshotId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint8",
+            "name": "evaluatedCount",
+            "type": "uint8"
+          },
+          {
+            "components": [
+              {
+                "internalType": "bytes32",
+                "name": "routeId",
+                "type": "bytes32"
+              },
+              {
+                "internalType": "string",
+                "name": "reason",
+                "type": "string"
+              }
+            ],
+            "internalType": "struct ISyntheticOptimizer.Rejection[]",
+            "name": "rejected",
+            "type": "tuple[]"
+          }
+        ],
+        "internalType": "struct ISyntheticOptimizer.SyntheticResult",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]
