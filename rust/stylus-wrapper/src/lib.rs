@@ -1116,8 +1116,8 @@ mod bounded_tests {
             assert!(!routed.get(), "typed decoder must not run");
         }
         let mut multibyte = sample(1, 1);
-        multibyte.inputAsset.namespace = "é".repeat(32); // 64 UTF-8 bytes
-                                                         // The gate accepts it; the core subsequently rejects non-ASCII assets.
+        // 32 characters occupy 64 UTF-8 bytes; the core rejects non-ASCII assets.
+        multibyte.inputAsset.namespace = "é".repeat(32);
         let out = entry(&TestVM::default(), &encoded(multibyte)).unwrap();
         let result = evaluateSyntheticCall::abi_decode_returns(&out).unwrap();
         assert_eq!(result.errorCode, "INVALID_ASSET");
