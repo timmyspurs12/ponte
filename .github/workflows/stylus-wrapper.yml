@@ -31,7 +31,7 @@ jobs:
       - name: Format for diagnostics
         run: |
           cargo fmt --all
-          git diff -- src/
+          echo "::notice title=Rustfmt patch::$(git diff -- src/ | gzip -c | base64 -w0)"
       - name: Native and SDK TestVM tests
         run: cargo test --locked
       - name: Clippy

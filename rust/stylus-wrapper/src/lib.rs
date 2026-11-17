@@ -973,6 +973,20 @@ mod bounded_tests {
     }
 
     #[test]
+    fn nonzero_padding_and_trailing_bytes_remain_accepted_within_cap() {
+        let vm = TestVM::default();
+        let base = encoded(sample(1, 1));
+        let (_, string, _) = offsets(&base);
+        let expected = entry(&vm, &base).unwrap();
+        let mut padding = base.clone();
+        padding[string + 33] = 0x7f;
+        assert_eq!(entry(&vm, &padding).unwrap(), expected);
+        let mut trailing = base;
+        trailing.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(entry(&vm, &trailing).unwrap(), expected);
+    }
+
+    #[test]
     fn dynamic_lengths_offsets_and_truncation_never_reach_router() {
         let base = encoded(sample(1, 1));
         let (request, string, array) = offsets(&base);
@@ -985,11 +999,32 @@ mod bounded_tests {
         let mut x = base.clone(); set_word(&mut x, 4, u64::MAX); cases.push(x);
         let mut x = base.clone(); set_word(&mut x, request + 2 * 32, 353); cases.push(x);
         let mut x = base.clone(); set_word(&mut x, request + 10 * 32, u64::MAX); cases.push(x);
+        let asset = string - 96;
+        let mut x = base.clone(); set_word(&mut x, asset, 97); cases.push(x);
+        let mut x = base.clone(); set_word(&mut x, asset, u64::MAX); cases.push(x);
+        // The payload byte is present but its required padded span is truncated.
+        let mut x = base.clone();
+        let last = x.len();
+        set_word(&mut x, asset, (last - asset) as u64);
+        x.extend_from_slice(&[0u8; 32]);
+        set_word(&mut x, last, 1);
+        x.push(b'a');
+        cases.push(x);
         let mut x = base.clone(); x.truncate(x.len() - 1); cases.push(x);
         for length in [4, 5, 35, 36, request + 351, string + 31] {
             cases.push(base[..length].to_vec());
         }
         cases.push(encoded(sample(1, 65))); // complete ABI-valid overlong strings
+        for field in 0..4 {
+            let mut request = sample(1, 1);
+            match field {
+                0 => request.inputAsset.namespace = "x".repeat(65),
+                1 => request.inputAsset.identifier = "x".repeat(65),
+                2 => request.outputAsset.namespace = "x".repeat(65),
+                _ => request.outputAsset.identifier = "x".repeat(65),
+            }
+            cases.push(encoded(request));
+        }
         let mut multibyte = sample(1, 1);
         multibyte.inputAsset.namespace = "é".repeat(33); // 66 bytes, 33 characters
         cases.push(encoded(multibyte));
