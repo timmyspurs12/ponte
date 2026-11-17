@@ -99,12 +99,16 @@ pub extern "C" fn user_entrypoint(len: usize) -> usize {
         return 1;
     }
     host.pay_for_memory_grow(0);
-    let result = calldata::dispatch_bounded(len, |n| host.read_args(n), |input| {
-        stylus_sdk::abi::router_entrypoint::<SyntheticOptimizer, SyntheticOptimizer>(
-            input,
-            host.clone(),
-        )
-    });
+    let result = calldata::dispatch_bounded(
+        len,
+        |n| host.read_args(n),
+        |input| {
+            stylus_sdk::abi::router_entrypoint::<SyntheticOptimizer, SyntheticOptimizer>(
+                input,
+                host.clone(),
+            )
+        },
+    );
     let (data, status) = match result {
         Ok(data) => (data, 0),
         Err(data) => (data, 1),
@@ -528,7 +532,10 @@ mod tests {
             let routed = route(&mut SyntheticOptimizer::from(&vm), request(core.clone())).unwrap();
             compare(&routed, core_result.clone());
             use alloy_sol_types::SolCall;
-            let calldata = evaluateSyntheticCall { request: request(core.clone()) }.abi_encode();
+            let calldata = evaluateSyntheticCall {
+                request: request(core.clone()),
+            }
+            .abi_encode();
             let bounded = super::bounded_tests::entry(&vm, &calldata);
             if core.candidates.len() > 64 {
                 assert_eq!(bounded, Err(Vec::new()), "fixture {id}");
@@ -806,8 +813,8 @@ mod tests {
 #[cfg(test)]
 mod bounded_tests {
     use super::*;
-    use alloy_sol_types::SolCall;
     use alloc::boxed::Box;
+    use alloy_sol_types::SolCall;
     use core::cell::Cell;
     use stylus_sdk::testing::TestVM;
 
@@ -892,18 +899,24 @@ mod bounded_tests {
         data[at + 24..at + 32].copy_from_slice(&value.to_be_bytes());
     }
 
-    // A canonical 65-candidate request is larger than the cap even with empty
-    // strings. Alias the two asset tuples (accepted by Alloy) to create a complete
-    // noncanonical 65-candidate request below the cap and exercise the count gate.
-    fn under_cap_65() -> Vec<u8> {
-        let mut data = encoded(sample(65, 0));
+    // Alias the two empty-string asset tuples; this is noncanonical, but Alloy
+    // accepts it. In particular it makes 65 complete candidates fit under the cap.
+    fn aliased_request(count: usize) -> Vec<u8> {
+        let mut data = encoded(sample(count, 0));
         let (request, _, array) = offsets(&data);
         let input_offset = data[request + 2 * 32..request + 3 * 32].to_vec();
         data[request + 3 * 32..request + 4 * 32].copy_from_slice(&input_offset);
         data.drain(array - 160..array);
         set_word(&mut data, request + 10 * 32, (array - 160 - request) as u64);
         assert!(data.len() < calldata::MAX_CALLDATA);
-        assert_eq!(evaluateSyntheticCall::abi_decode_validate(&data).unwrap().request.candidates.len(), 65);
+        assert_eq!(
+            evaluateSyntheticCall::abi_decode_validate(&data)
+                .unwrap()
+                .request
+                .candidates
+                .len(),
+            count
+        );
         data
     }
 
@@ -913,17 +926,29 @@ mod bounded_tests {
         let routed = Cell::new(0);
         let too_large = calldata::dispatch_bounded(
             calldata::MAX_CALLDATA + 1,
-            |_| { read.set(read.get() + 1); Vec::new() },
-            |_| { routed.set(routed.get() + 1); Ok(Vec::new()) },
+            |_| {
+                read.set(read.get() + 1);
+                Vec::new()
+            },
+            |_| {
+                routed.set(routed.get() + 1);
+                Ok(Vec::new())
+            },
         );
         assert_eq!(too_large, Err(Vec::new()));
         assert_eq!((read.get(), routed.get()), (0, 0));
 
-        let oversized = under_cap_65();
+        let oversized = aliased_request(65);
         let result = calldata::dispatch_bounded(
             oversized.len(),
-            |_| { read.set(read.get() + 1); oversized.clone() },
-            |_| { routed.set(routed.get() + 1); Ok(Vec::new()) },
+            |_| {
+                read.set(read.get() + 1);
+                oversized.clone()
+            },
+            |_| {
+                routed.set(routed.get() + 1);
+                Ok(Vec::new())
+            },
         );
         assert_eq!(result, Err(Vec::new()));
         assert_eq!((read.get(), routed.get()), (1, 0));
@@ -931,8 +956,14 @@ mod bounded_tests {
         let input = encoded(sample(1, 1));
         let result = calldata::dispatch_bounded(
             input.len(),
-            |_| { read.set(read.get() + 1); input.clone() },
-            |_| { routed.set(routed.get() + 1); Ok(Vec::new()) },
+            |_| {
+                read.set(read.get() + 1);
+                input.clone()
+            },
+            |_| {
+                routed.set(routed.get() + 1);
+                Ok(Vec::new())
+            },
         );
         assert_eq!(result, Ok(Vec::new()));
         assert_eq!((read.get(), routed.get()), (2, 1));
@@ -957,7 +988,7 @@ mod bounded_tests {
                 assert_eq!(decoded.evaluatedCount, count as u8);
             }
         }
-        let too_many = under_cap_65();
+        let too_many = aliased_request(65);
         assert_eq!(entry(&vm, &too_many), Err(Vec::new()));
         let too_large = encoded(sample(65, 64));
         assert!(too_large.len() > calldata::MAX_CALLDATA);
@@ -984,6 +1015,27 @@ mod bounded_tests {
         let mut trailing = base;
         trailing.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(entry(&vm, &trailing).unwrap(), expected);
+
+        let aliased = aliased_request(1);
+        let result = entry(&vm, &aliased).unwrap();
+        let decoded = evaluateSyntheticCall::abi_decode_returns(&result).unwrap();
+        assert_eq!(decoded.errorCode, "INVALID_ASSET");
+
+        let mut invalid_utf8 = encoded(sample(1, 1));
+        let (_, string, _) = offsets(&invalid_utf8);
+        invalid_utf8[string + 32] = 0xff;
+        let routed = Cell::new(false);
+        let result = calldata::dispatch_bounded(
+            invalid_utf8.len(),
+            |_| invalid_utf8.clone(),
+            |_| {
+                routed.set(true);
+                Err(Vec::new())
+            },
+        );
+        assert!(result.is_err());
+        assert!(routed.get(), "preflight must leave UTF-8 validation to Alloy");
+        assert!(entry(&vm, &invalid_utf8).is_err());
     }
 
     #[test]
@@ -991,17 +1043,37 @@ mod bounded_tests {
         let base = encoded(sample(1, 1));
         let (request, string, array) = offsets(&base);
         let mut cases = Vec::new();
-        let mut x = base.clone(); set_word(&mut x, array, 65); cases.push(x);
-        let mut x = base.clone(); set_word(&mut x, array, u64::MAX); cases.push(x);
-        let mut x = base.clone(); x[array..array + 32].fill(0xff); cases.push(x);
-        let mut x = base.clone(); set_word(&mut x, string, 65); cases.push(x);
-        let mut x = base.clone(); set_word(&mut x, string, u64::MAX); cases.push(x);
-        let mut x = base.clone(); set_word(&mut x, 4, u64::MAX); cases.push(x);
-        let mut x = base.clone(); set_word(&mut x, request + 2 * 32, 353); cases.push(x);
-        let mut x = base.clone(); set_word(&mut x, request + 10 * 32, u64::MAX); cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, array, 65);
+        cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, array, u64::MAX);
+        cases.push(x);
+        let mut x = base.clone();
+        x[array..array + 32].fill(0xff);
+        cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, string, 65);
+        cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, string, u64::MAX);
+        cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, 4, u64::MAX);
+        cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, request + 2 * 32, 353);
+        cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, request + 10 * 32, u64::MAX);
+        cases.push(x);
         let asset = string - 96;
-        let mut x = base.clone(); set_word(&mut x, asset, 97); cases.push(x);
-        let mut x = base.clone(); set_word(&mut x, asset, u64::MAX); cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, asset, 97);
+        cases.push(x);
+        let mut x = base.clone();
+        set_word(&mut x, asset, u64::MAX);
+        cases.push(x);
         // The payload byte is present but its required padded span is truncated.
         let mut x = base.clone();
         let last = x.len();
@@ -1010,7 +1082,9 @@ mod bounded_tests {
         set_word(&mut x, last, 1);
         x.push(b'a');
         cases.push(x);
-        let mut x = base.clone(); x.truncate(x.len() - 1); cases.push(x);
+        let mut x = base.clone();
+        x.truncate(x.len() - 1);
+        cases.push(x);
         for length in [4, 5, 35, 36, request + 351, string + 31] {
             cases.push(base[..length].to_vec());
         }
@@ -1030,16 +1104,20 @@ mod bounded_tests {
         cases.push(encoded(multibyte));
         for input in cases {
             let routed = Cell::new(false);
-            let result = calldata::dispatch_bounded(input.len(), |_| input.clone(), |_| {
-                routed.set(true);
-                Ok(Vec::new())
-            });
+            let result = calldata::dispatch_bounded(
+                input.len(),
+                |_| input.clone(),
+                |_| {
+                    routed.set(true);
+                    Ok(Vec::new())
+                },
+            );
             assert!(result.is_err());
             assert!(!routed.get(), "typed decoder must not run");
         }
         let mut multibyte = sample(1, 1);
         multibyte.inputAsset.namespace = "é".repeat(32); // 64 UTF-8 bytes
-        // The gate accepts it; the core subsequently rejects non-ASCII assets.
+                                                         // The gate accepts it; the core subsequently rejects non-ASCII assets.
         let out = entry(&TestVM::default(), &encoded(multibyte)).unwrap();
         let result = evaluateSyntheticCall::abi_decode_returns(&out).unwrap();
         assert_eq!(result.errorCode, "INVALID_ASSET");

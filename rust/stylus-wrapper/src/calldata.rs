@@ -41,7 +41,12 @@ fn dynamic(data: &[u8], base: usize, at: usize, min_offset: usize) -> Option<usi
 }
 
 fn asset(data: &[u8], request: usize, field: usize) -> Option<()> {
-    let asset = dynamic(data, request, request.checked_add(field * WORD)?, REQUEST_HEAD)?;
+    let asset = dynamic(
+        data,
+        request,
+        request.checked_add(field * WORD)?,
+        REQUEST_HEAD,
+    )?;
     span(data, asset, ASSET_HEAD)?;
     for field in 0..2 {
         let string = dynamic(data, asset, asset.checked_add(field * WORD)?, ASSET_HEAD)?;
@@ -67,7 +72,11 @@ fn request(data: &[u8]) -> Option<()> {
     if count > MAX_CANDIDATES {
         return None;
     }
-    span(data, array.checked_add(WORD)?, count.checked_mul(CANDIDATE_SIZE)?)?;
+    span(
+        data,
+        array.checked_add(WORD)?,
+        count.checked_mul(CANDIDATE_SIZE)?,
+    )?;
     Some(())
 }
 
