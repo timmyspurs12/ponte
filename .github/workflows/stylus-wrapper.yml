@@ -39,4 +39,10 @@ jobs:
       - name: Build local WASM
         run: cargo build --locked --release --lib --target wasm32-unknown-unknown
       - name: Inspect entrypoint and imports
-        run: python3 scripts/inspect_wasm.py target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
+        run: |
+          set +e
+          python3 scripts/inspect_wasm.py target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm > /tmp/inspection.log 2>&1
+          result=$?
+          cat /tmp/inspection.log
+          while IFS= read -r line; do echo "::notice title=WASM inspection::$line"; done < /tmp/inspection.log
+          exit "$result"
