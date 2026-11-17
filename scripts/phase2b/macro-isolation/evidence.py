@@ -16,6 +16,7 @@ import shlex
 import subprocess
 import sys
 import tomllib
+import traceback
 from pathlib import Path
 
 MACRO_CRATES = ('alloy-sol-macro', 'alloy-sol-macro-expander', 'alloy-sol-macro-input')
@@ -360,8 +361,7 @@ def artifact_inventory(text):
 def compare_artifact_inventories(base_text, exp_text):
     base, exp = artifact_inventory(base_text), artifact_inventory(exp_text)
     bset, eset = set(base['units']), set(exp['units'])
-    changed = [key for key in sorted(bset & eset) if base['features'][key] != exp['features'].get(key)] \
-        if base['features'] else []
+    changed = [key for key in sorted(bset & eset) if base['features'].get(key) != exp['features'].get(key)]
     return {
         'count': [sum(base['units'].values()), sum(exp['units'].values())],
         'only_baseline': sorted(bset - eset),
@@ -759,77 +759,64 @@ def pass_lines(text, limit=12):
                                         'Result:', 'Local entrypoint', 'WASM bytes'))][:limit]
 
 
-def compare(evidence):
-    evidence = Path(evidence)
-    design = read_json(evidence / 'design.json', {}) or {}
-    sides = side_paths(evidence)
-    repo_root = design.get('repo_root')
-    rust_changed = design.get('rust_changed_files')
-    mode = 'control' if rust_changed == [] else 'experiment'
-    checks = {}
-    report = {'mode': mode, 'design': design, 'checks': checks}
+def check(report, name, ok, detail=''):
+    report['checks'][name] = {'ok': bool(ok), 'detail': detail}
 
-    def check(name, ok, detail=''):
-        checks[name] = {'ok': bool(ok), 'detail': detail}
 
-    if mode == 'control':
-        check('rust_diff_scope', rust_changed == [], f'rust changes: {rust_changed}')
-    else:
-        check('rust_diff_scope', rust_changed == [WRAPPER_MANIFEST], f'rust changes: {rust_changed}')
-
-    # Commands
+def section_scope_and_commands(report, ctx):
+    expected = [] if ctx['mode'] == 'control' else [WRAPPER_MANIFEST]
+    check(report, 'rust_diff_scope', ctx['rust_changed'] == expected, f"rust changes: {ctx['rust_changed']}")
     statuses = {}
-    for side, path in sides.items():
+    for side, path in ctx['sides'].items():
         status, failures = command_status(path)
         statuses[side] = status
-        check(f'{side}_commands', not failures, f'failures: {failures or "none"}')
+        check(report, f'{side}_commands', not failures, f'failures: {failures or "none"}')
     report['command_status'] = statuses
 
-    # Manifest
+
+def section_manifest_and_lockfiles(report, ctx):
+    sides = ctx['sides']
     try:
         move = manifest_move(read_text(sides['baseline'] / 'Cargo.toml.snapshot'),
                              read_text(sides['experiment'] / 'Cargo.toml.snapshot'))
     except (tomllib.TOMLDecodeError, ValueError) as exc:
         move = {'error': str(exc)}
     report['manifest'] = move
-    if mode == 'control':
-        check('manifest', move.get('identical'), 'manifests identical in control run')
+    if ctx['mode'] == 'control':
+        check(report, 'manifest', move.get('identical'), 'manifests identical in control run')
     else:
-        check('manifest', move.get('moved_exactly') and move.get('other_content_identical'),
+        check(report, 'manifest', move.get('moved_exactly') and move.get('other_content_identical'),
               'three =1.5.7 entries moved to [dev-dependencies]; all other manifest content identical')
-
-    # Lockfiles
     locks = {side: read_text(path / 'lockfiles.sha256').strip() for side, path in sides.items()}
     report['lockfiles'] = locks
-    check('lockfiles_identical', locks['baseline'] and locks['baseline'] == locks['experiment'],
+    check(report, 'lockfiles_identical', locks['baseline'] and locks['baseline'] == locks['experiment'],
           'sha256 of all three Cargo.lock files identical between sides')
 
-    # Metadata
+
+def section_metadata(report, ctx):
     metadata = {}
-    for side, path in sides.items():
+    for side, path in ctx['sides'].items():
         try:
             metadata[side] = metadata_view(read_text(path / 'dependency-evidence' / 'stylus-wrapper-metadata-all.json'))
         except (ValueError, KeyError, StopIteration) as exc:
             metadata[side] = {'error': str(exc)}
     report['metadata'] = metadata
-    try:
-        versions_ok = all(metadata[s]['versions'][c] == [MACRO_VERSION] for s in SIDES for c in MACRO_CRATES)
-        kinds = {s: {c: metadata[s]['direct'].get(c, {}).get('kinds') for c in MACRO_CRATES} for s in SIDES}
-        others = {s: {k: v for k, v in metadata[s]['direct'].items() if k not in MACRO_CRATES} for s in SIDES}
-        if mode == 'control':
-            kinds_ok = kinds['baseline'] == kinds['experiment']
-        else:
-            kinds_ok = (all(kinds['baseline'][c] == ['normal'] for c in MACRO_CRATES)
-                        and all(kinds['experiment'][c] == ['dev'] for c in MACRO_CRATES))
-        check('resolved_macro_versions', versions_ok, 'alloy-sol-macro family resolves only to 1.5.7 on both sides')
-        check('direct_dependency_kinds', kinds_ok and others['baseline'] == others['experiment'],
-              f'macro kinds {kinds}; other direct dependencies identical: {others["baseline"] == others["experiment"]}')
-        report['direct_kinds'] = kinds
-    except (KeyError, TypeError) as exc:
-        check('resolved_macro_versions', False, f'metadata error: {exc}')
-        check('direct_dependency_kinds', False, f'metadata error: {exc}')
+    versions_ok = all(metadata[s]['versions'][c] == [MACRO_VERSION] for s in SIDES for c in MACRO_CRATES)
+    kinds = {s: {c: metadata[s]['direct'].get(c, {}).get('kinds') for c in MACRO_CRATES} for s in SIDES}
+    others = {s: {k: v for k, v in metadata[s]['direct'].items() if k not in MACRO_CRATES} for s in SIDES}
+    if ctx['mode'] == 'control':
+        kinds_ok = kinds['baseline'] == kinds['experiment']
+    else:
+        kinds_ok = (all(kinds['baseline'][c] == ['normal'] for c in MACRO_CRATES)
+                    and all(kinds['experiment'][c] == ['dev'] for c in MACRO_CRATES))
+    report['direct_kinds'] = kinds
+    check(report, 'resolved_macro_versions', versions_ok, 'alloy-sol-macro family resolves only to 1.5.7 on both sides')
+    check(report, 'direct_dependency_kinds', kinds_ok and others['baseline'] == others['experiment'],
+          f'macro kinds {kinds}; other direct dependencies identical: {others["baseline"] == others["experiment"]}')
 
-    # Trees
+
+def section_trees(report, ctx):
+    sides = ctx['sides']
     trees = {}
     for target in (HOST_TARGET, WASM_TARGET):
         for label in ('normal-build', 'normal-build-dev', 'features'):
@@ -856,40 +843,57 @@ def compare(evidence):
             direct_trees[name] = {side: [l.strip() for l in read_text(path / f'{name}.stdout').splitlines()[1:] if l.strip()]
                                   for side, path in sides.items()}
     report['direct_trees'] = direct_trees
+    if ctx['mode'] == 'control':
+        identical = all(v.get('identical', v.get('identical_set')) for v in trees.values()) and all(
+            v['baseline'] == v['experiment'] for v in inverse.values())
+        check(report, 'cargo_graphs_control', identical, 'identical manifests must give identical Cargo graphs')
 
-    # Compiler invocations
-    inventories = {side: compile_inventory(read_text(path / 'dependency-evidence' / 'build.verbose.stderr'), repo_root)
+
+def section_compiler(report, ctx):
+    sides = ctx['sides']
+    inventories = {side: compile_inventory(read_text(path / 'dependency-evidence' / 'build.verbose.stderr'), ctx['repo_root'])
                    for side, path in sides.items()}
     invocation = compare_inventories(inventories['baseline'], inventories['experiment'])
     invocation['macro_units'] = {side: macro_units(inv) for side, inv in inventories.items()}
-    root_key = lambda inv: [u for u in inv['units'].values() if u['primary'] and u['kind'] == WASM_TARGET]
+
+    def root_units(inv):
+        return [u for u in inv['units'].values() if u['primary'] and u['kind'] == WASM_TARGET]
+
     invocation['root_units'] = {side: [{'key': u['key'], 'externs': u['externs'], 'features': u['features']}
-                                       for u in root_key(inv)] for side, inv in inventories.items()}
-    invocation['json_inventory'] = compare_artifact_inventories(
-        read_text(sides['baseline'] / 'wasm-artifacts-json.stdout'),
-        read_text(sides['experiment'] / 'wasm-artifacts-json.stdout'))
-    invocation['test_json_inventory'] = compare_artifact_inventories(
-        read_text(sides['baseline'] / 'test-artifacts-json.stdout'),
-        read_text(sides['experiment'] / 'test-artifacts-json.stdout'))
-    invocation['export_abi_json_inventory'] = compare_artifact_inventories(
-        read_text(sides['baseline'] / 'export-abi-artifacts-json.stdout'),
-        read_text(sides['experiment'] / 'export-abi-artifacts-json.stdout'))
-    report['compiler_invocations'] = invocation
+                                       for u in root_units(inv)] for side, inv in inventories.items()}
+    report.setdefault('compiler_invocations', {}).update(invocation)
     parsed_ok = all(inventories[s]['units'] and not inventories[s]['parse_errors'] for s in SIDES)
-    check('compiler_logs_parsed', parsed_ok,
+    check(report, 'compiler_logs_parsed', parsed_ok,
           f"rustc units {[len(inventories[s]['units']) for s in SIDES]}; parse errors {invocation['parse_errors']}")
-    if mode == 'control':
-        check('compiler_invocations_control', not (invocation['units_only_baseline'] or invocation['units_only_experiment']
-                                                  or invocation['feature_changes'] or invocation['flag_changes']
-                                                  or invocation['extern_changes']),
+    if ctx['mode'] == 'control':
+        check(report, 'compiler_invocations_control',
+              not (invocation['units_only_baseline'] or invocation['units_only_experiment']
+                   or invocation['build_script_runs_only_baseline'] or invocation['build_script_runs_only_experiment']
+                   or invocation['feature_changes'] or invocation['flag_changes'] or invocation['extern_changes']),
               'identical sources must give identical normalized compiler invocations')
 
-    # WASM
+
+def section_json_inventories(report, ctx):
+    sides = ctx['sides']
+    invocation = report.setdefault('compiler_invocations', {})
+    for key, name in (('json_inventory', 'wasm-artifacts-json'), ('test_json_inventory', 'test-artifacts-json'),
+                      ('export_abi_json_inventory', 'export-abi-artifacts-json')):
+        invocation[key] = compare_artifact_inventories(read_text(sides['baseline'] / f'{name}.stdout'),
+                                                       read_text(sides['experiment'] / f'{name}.stdout'))
+    if ctx['mode'] == 'control':
+        check(report, 'json_inventories_control', all(
+            not (invocation[k]['only_baseline'] or invocation[k]['only_experiment'] or invocation[k]['feature_changes'])
+            for k in ('json_inventory', 'test_json_inventory', 'export_abi_json_inventory')),
+            'identical sources must give identical Cargo JSON unit inventories')
+
+
+def section_wasm(report, ctx):
+    sides = ctx['sides']
     hashes = {side: wasm_hashes(path) for side, path in sides.items()}
     report['wasm_hashes'] = hashes
     for side in SIDES:
         values = {k: v for k, v in hashes[side].items() if k != 'size'}
-        check(f'{side}_wasm_deterministic', None not in values.values() and len(set(values.values())) == 1,
+        check(report, f'{side}_wasm_deterministic', None not in values.values() and len(set(values.values())) == 1,
               f'{values}')
     sections = {side: read_json(path / 'wasm-sections.json') for side, path in sides.items()}
     if all(sections.values()):
@@ -897,29 +901,59 @@ def compare(evidence):
     else:
         report['wasm'] = {'error': 'missing wasm-sections.json'}
     report['wat'] = compare_wat(read_text(sides['baseline'] / 'release.wat'), read_text(sides['experiment'] / 'release.wat'))
-    if mode == 'control':
-        check('wasm_identical_control', report['wasm'].get('identical'), 'identical sources must give identical WASM')
+    if ctx['mode'] == 'control':
+        check(report, 'wasm_identical_control', report['wasm'].get('identical'), 'identical sources must give identical WASM')
 
-    # ABI and selector
+
+def section_abi_selector_tests(report, ctx):
+    sides = ctx['sides']
     abi = {side: read_text(path / 'sdk-abi.sol') for side, path in sides.items()}
     report['abi'] = {
         'sha256': {side: sha256_bytes(text.encode()) if text else None for side, text in abi.items()},
         'identical': bool(abi['baseline']) and abi['baseline'] == abi['experiment'],
         'check_abi': {side: pass_lines(read_text(path / 'check-abi.stdout')) for side, path in sides.items()},
     }
-    check('abi_identical', report['abi']['identical'], 'SDK export-abi output byte-identical between sides')
+    check(report, 'abi_identical', report['abi']['identical'], 'SDK export-abi output byte-identical between sides')
     report['selector'] = {side: pass_lines(read_text(path / 'selector-check.stdout')) for side, path in sides.items()}
-    check('selector', all(exit_code(path, 'selector-check') == 0 and exit_code(path, 'abi-tools-check') == 0
-                          and exit_code(path, 'abi-tools-test') == 0 and exit_code(path, 'test') == 0
-                          and EXPECTED_SELECTOR in read_text(path / 'selector-check.stdout')
-                          for path in sides.values()),
+    check(report, 'selector', all(exit_code(path, 'selector-check') == 0 and exit_code(path, 'abi-tools-check') == 0
+                                  and exit_code(path, 'abi-tools-test') == 0 and exit_code(path, 'test') == 0
+                                  and EXPECTED_SELECTOR in read_text(path / 'selector-check.stdout')
+                                  for path in sides.values()),
           f'{EXPECTED_SELECTOR}: SDK declaration + keccak, solc, ethers, native tests and WASM dispatch')
     report['offline_tests'] = {
         side: {name: pass_lines(read_text(path / f'{name}.stdout'), 20)
                for name in ('wasm-inspect', 'wasm-entrypoint-tests', 'wasm-client-abi-tests', 'test',
                             'advisory-guard-baseline', 'abi-tools-check')}
         for side, path in sides.items()}
-    report['ok'] = all(item['ok'] for item in checks.values())
+
+
+SECTIONS = (
+    ('scope_and_commands', section_scope_and_commands),
+    ('manifest_and_lockfiles', section_manifest_and_lockfiles),
+    ('metadata', section_metadata),
+    ('trees', section_trees),
+    ('compiler_invocations', section_compiler),
+    ('json_inventories', section_json_inventories),
+    ('wasm', section_wasm),
+    ('abi_selector_tests', section_abi_selector_tests),
+)
+
+
+def compare(evidence):
+    """Run every analysis section; a crash becomes a failed check carrying its
+    traceback, so one defect cannot hide the remaining evidence."""
+    evidence = Path(evidence)
+    design = read_json(evidence / 'design.json', {}) or {}
+    rust_changed = design.get('rust_changed_files')
+    ctx = {'sides': side_paths(evidence), 'repo_root': design.get('repo_root'), 'rust_changed': rust_changed,
+           'mode': 'control' if rust_changed == [] else 'experiment'}
+    report = {'mode': ctx['mode'], 'design': design, 'checks': {}}
+    for name, section in SECTIONS:
+        try:
+            section(report, ctx)
+        except Exception:  # noqa: BLE001 - reported as a failed check, never a pass
+            check(report, f'analysis_{name}', False, 'analysis crashed: ' + traceback.format_exc(limit=8)[-2500:])
+    report['ok'] = all(item['ok'] for item in report['checks'].values())
     return report
 
 
@@ -934,112 +968,126 @@ def short(items, limit=12):
 
 
 def render_notices(report):
+    """Four groups of at most ten annotations (the per-step budget). Each notice
+    is built independently; a rendering defect yields an error annotation."""
     groups = [[], [], [], []]
-    d = report['design']
-    checks = report['checks']
-    failed = [name for name, item in checks.items() if not item['ok']]
-    groups[0].append(notice('Experiment design', (
+
+    def add(group, title, build, level='notice'):
+        try:
+            groups[group].append(notice(title, build(), level))
+        except Exception:  # noqa: BLE001
+            groups[group].append(notice(title, 'rendering failed: ' + traceback.format_exc(limit=4)[-1500:], 'error'))
+
+    d = report.get('design', {})
+    checks = report.get('checks', {})
+    status = report.get('command_status', {})
+    add(0, 'Experiment design', lambda: (
         f"mode={report['mode']}; baseline={d.get('base_sha')}; experiment={d.get('head_sha')}; "
         f"base is ancestor={d.get('base_is_ancestor')}; rust/ changes={d.get('rust_changed_files')}; "
-        f"all changed files={short(d.get('all_changed_files', []), 20)}")))
-    m = report.get('manifest', {})
-    groups[0].append(notice('Manifest', (
-        f"moved_exactly={m.get('moved_exactly')}; other content identical={m.get('other_content_identical')}; "
-        f"entries={json.dumps(m.get('entries'), sort_keys=True)}")))
-    groups[0].append(notice('Lockfiles', (
-        f"identical={checks.get('lockfiles_identical', {}).get('ok')}; unchanged after builds: "
-        f"baseline exit={report['command_status']['baseline'].get('lockfiles-unchanged')}, "
-        f"experiment exit={report['command_status']['experiment'].get('lockfiles-unchanged')}; "
-        f"baseline={report['lockfiles']['baseline'].replace(chr(10), ' | ')}")))
-    md = report.get('metadata', {})
-    groups[0].append(notice('Cargo metadata', (
+        f"all changed files={short(d.get('all_changed_files', []), 20)}"))
+    add(0, 'Manifest', lambda: (
+        f"identical={report['manifest'].get('identical')}; moved_exactly={report['manifest'].get('moved_exactly')}; "
+        f"other content identical={report['manifest'].get('other_content_identical')}; "
+        f"entries={json.dumps(report['manifest'].get('entries'), sort_keys=True)}"))
+    add(0, 'Lockfiles', lambda: (
+        f"identical={checks.get('lockfiles_identical', {}).get('ok')}; unchanged after all builds: "
+        f"baseline exit={status['baseline'].get('lockfiles-unchanged')}, "
+        f"experiment exit={status['experiment'].get('lockfiles-unchanged')}; "
+        f"baseline={report['lockfiles']['baseline'].replace(chr(10), ' | ')}"))
+    add(0, 'Cargo metadata', lambda: (
         f"direct macro dependency kinds={json.dumps(report.get('direct_kinds'), sort_keys=True)}; "
-        f"resolved versions baseline={json.dumps(md.get('baseline', {}).get('versions'), sort_keys=True)}; "
-        f"experiment={json.dumps(md.get('experiment', {}).get('versions'), sort_keys=True)}; "
-        f"package counts={[md.get(s, {}).get('package_count') for s in SIDES]}")))
-    groups[0].append(notice('Verification checks', (
-        f"overall={'PASS' if report['ok'] else 'FAIL'}; failed={failed or 'none'}; "
-        + '; '.join(f"{name}={'ok' if item['ok'] else 'FAIL'}" for name, item in checks.items())),
-        level='notice' if report['ok'] else 'error'))
+        f"resolved versions baseline={json.dumps(report['metadata']['baseline'].get('versions'), sort_keys=True)}; "
+        f"experiment={json.dumps(report['metadata']['experiment'].get('versions'), sort_keys=True)}; "
+        f"package counts={[report['metadata'][s].get('package_count') for s in SIDES]}"))
+    failed = [name for name, item in checks.items() if not item['ok']]
+    crashed = '; '.join(f"{name}: {checks[name]['detail'][-700:]}" for name in failed if name.startswith('analysis_'))
+    add(0, 'Verification checks', lambda: (
+        f"overall={'PASS' if report.get('ok') else 'FAIL'}; failed={failed or 'none'}; "
+        + '; '.join(f"{name}={'ok' if item['ok'] else 'FAIL'}" for name, item in checks.items())
+        + (f" | CRASHES: {crashed}" if crashed else '')), 'notice' if report.get('ok') else 'error')
 
-    t = report['trees']
-    package_lists = {k: v for k, v in t.items() if k.endswith('package-list.txt')}
-    groups[1].append(notice('Cargo package lists (normal+build)', '; '.join(
-        f"{k.replace('stylus-wrapper-', '').replace('-package-list.txt', '')}: "
-        f"identical set={v['identical_set']} counts={v['count']} only baseline={short(v['only_baseline'])} "
-        f"only experiment={short(v['only_experiment'])}" for k, v in package_lists.items())))
-    other_trees = {k: v for k, v in t.items() if not k.endswith('package-list.txt')}
-    groups[1].append(notice('Cargo trees', '; '.join(
-        f"{k.replace('stylus-wrapper-', '').replace('.txt', '')}: "
-        + ('identical' if v.get('identical') else
-           f"differs lines={v.get('lines')} -[{short(v.get('only_baseline', []), 4)}] +[{short(v.get('only_experiment', []), 4)}]")
-        for k, v in other_trees.items())))
-    inv = report['inverse_parents']
-    for target in (WASM_TARGET, HOST_TARGET):
-        groups[1].append(notice(f'Inverse macro trees {target}', '; '.join(
+    def package_lists():
+        return '; '.join(
+            f"{k.replace('stylus-wrapper-', '').replace('-package-list.txt', '')}: identical set={v['identical_set']} "
+            f"counts={v['count']} only baseline={short(v['only_baseline'])} only experiment={short(v['only_experiment'])}"
+            for k, v in report['trees'].items() if k.endswith('package-list.txt'))
+
+    def other_trees():
+        return '; '.join(
+            f"{k.replace('stylus-wrapper-', '').replace('.txt', '')}: "
+            + ('identical' if v.get('identical') else
+               f"differs lines={v.get('lines')} -[{short(v.get('only_baseline', []), 4)}] +[{short(v.get('only_experiment', []), 4)}]")
+            for k, v in report['trees'].items() if not k.endswith('package-list.txt'))
+
+    def inverse(target):
+        inv = report['inverse_parents']
+        return '; '.join(
             f"{crate} {label}: baseline<-[{short(inv[f'tree-inverse-{crate}-{target}-{label}']['baseline'], 6)}] "
             f"experiment<-[{short(inv[f'tree-inverse-{crate}-{target}-{label}']['experiment'], 6)}]"
-            for crate in MACRO_CRATES for label in ('normal-build', 'normal-build-dev'))))
-    dt = report['direct_trees']
-    groups[1].append(notice('Direct dependencies (cargo tree --depth 1)', '; '.join(
-        f"{k.replace('tree-direct-', '')}: baseline=[{short(v['baseline'], 10)}] experiment=[{short(v['experiment'], 10)}]"
-        for k, v in dt.items() if 'wasm32' in k or k.endswith('-dev'))))
+            for crate in MACRO_CRATES for label in ('normal-build', 'normal-build-dev'))
 
-    c = report['compiler_invocations']
-    groups[2].append(notice('Compiler invocations: counts', (
+    add(1, 'Cargo package lists (normal+build)', package_lists)
+    add(1, 'Cargo trees', other_trees)
+    add(1, f'Inverse macro trees {WASM_TARGET}', lambda: inverse(WASM_TARGET))
+    add(1, f'Inverse macro trees {HOST_TARGET}', lambda: inverse(HOST_TARGET))
+    add(1, 'Direct dependencies (cargo tree --depth 1)', lambda: '; '.join(
+        f"{k.replace('tree-direct-', '')}: baseline=[{short(v['baseline'], 10)}] experiment=[{short(v['experiment'], 10)}]"
+        for k, v in report['direct_trees'].items() if 'wasm32' in k or k.endswith('-dev')))
+
+    c = report.get('compiler_invocations', {})
+    add(2, 'Compiler invocations: counts', lambda: (
         f"baseline={json.dumps(c['counts']['baseline'], sort_keys=True)}; "
-        f"experiment={json.dumps(c['counts']['experiment'], sort_keys=True)}; parse errors={c['parse_errors']}; "
-        f"JSON artifact units={c['json_inventory']['count']}")))
-    groups[2].append(notice('Compiler invocations: units removed by experiment', (
+        f"experiment={json.dumps(c['counts']['experiment'], sort_keys=True)}; parse errors={c['parse_errors']}"))
+    add(2, 'Compiler invocations: units removed by experiment', lambda: (
         f"{len(c['units_only_baseline'])} rustc units: {short(c['units_only_baseline'], 40)}; "
-        f"build-script runs removed: {short(c['build_script_runs_only_baseline'], 20)}")))
-    groups[2].append(notice('Compiler invocations: units added / changed', (
+        f"build-script runs removed: {short(c['build_script_runs_only_baseline'], 20)}"))
+    add(2, 'Compiler invocations: units added / changed', lambda: (
         f"added rustc units: {short(c['units_only_experiment'], 20)}; added build-script runs: "
         f"{short(c['build_script_runs_only_experiment'], 10)}; feature changes: "
         f"{short([f['unit'] + ' ' + str(f['baseline']) + '->' + str(f['experiment']) for f in c['feature_changes']], 10)}; "
         f"flag changes: {short([f['unit'] + ' -' + str(f['only_baseline']) + ' +' + str(f['only_experiment']) for f in c['flag_changes']], 6)}; "
-        f"extern changes: {short([f['unit'] + ' -' + str(f['removed']) + ' +' + str(f['added']) for f in c['extern_changes']], 6)}")))
-    groups[2].append(notice('Compiler invocations: macro packages and root', (
+        f"extern changes: {short([f['unit'] + ' -' + str(f['removed']) + ' +' + str(f['added']) for f in c['extern_changes']], 6)}"))
+    add(2, 'Compiler invocations: macro packages and root', lambda: (
         f"macro units baseline={json.dumps(c['macro_units']['baseline'], sort_keys=True)}; "
         f"experiment={json.dumps(c['macro_units']['experiment'], sort_keys=True)}; "
         f"root wasm32 externs baseline={[u['externs'] for u in c['root_units']['baseline']]}; "
-        f"experiment={[u['externs'] for u in c['root_units']['experiment']]}")))
-    groups[2].append(notice('Other build inventories (JSON, no-op rebuilds)', (
-        f"release wasm: only baseline={short(c['json_inventory']['only_baseline'], 30)}; only experiment="
-        f"{short(c['json_inventory']['only_experiment'], 10)}; feature changes={short(c['json_inventory']['feature_changes'], 10)} | "
-        f"cargo test: count={c['test_json_inventory']['count']} only baseline={short(c['test_json_inventory']['only_baseline'], 10)} "
-        f"only experiment={short(c['test_json_inventory']['only_experiment'], 10)} feature changes={short(c['test_json_inventory']['feature_changes'], 6)} | "
-        f"export-abi host build: count={c['export_abi_json_inventory']['count']} only baseline="
-        f"{short(c['export_abi_json_inventory']['only_baseline'], 12)} only experiment={short(c['export_abi_json_inventory']['only_experiment'], 8)}")))
+        f"experiment={[u['externs'] for u in c['root_units']['experiment']]}"))
+    add(2, 'Other build inventories (Cargo JSON, no-op rebuilds)', lambda: ' | '.join(
+        f"{label}: units={c[key]['count']} only baseline={short(c[key]['only_baseline'], 30)} "
+        f"only experiment={short(c[key]['only_experiment'], 10)} feature changes={short(c[key]['feature_changes'], 10)}"
+        for label, key in (('release wasm', 'json_inventory'), ('cargo test', 'test_json_inventory'),
+                           ('export-abi host build', 'export_abi_json_inventory'))))
 
-    w = report['wasm']
-    h = report['wasm_hashes']
-    groups[3].append(notice('Release WASM checksum and size', (
-        f"baseline sha256={h['baseline'].get('exact_ci_build')} bytes={h['baseline'].get('size')}; "
-        f"experiment sha256={h['experiment'].get('exact_ci_build')} bytes={h['experiment'].get('size')}; "
-        f"identical={w.get('identical')}; per-side determinism (verbose, exact CI, JSON no-op, cold rebuild): "
-        f"baseline={checks.get('baseline_wasm_deterministic', {}).get('ok')} experiment={checks.get('experiment_wasm_deterministic', {}).get('ok')}")))
-    if 'error' not in w:
-        groups[3].append(notice('Release WASM sections', (
-            f"layout identical={w['section_layout_identical']}; differing sections={w['differing_sections'] or 'none'}; "
-            + '; '.join(f"{r['section']} {r['baseline_size']}/{r['experiment_size']} {'same' if r['identical'] else 'DIFF'}"
-                        for r in w['sections']))))
-        fn, code = w['function_names'], w['code']
-        wat = report['wat']
-        groups[3].append(notice('Release WASM code and names', (
-            f"code bodies={code['count']} identical in order={code['identical_in_order']} multiset identical="
-            f"{code['multiset_identical']} differing={code['differing_count']} [{short(code['differing_functions'], 6)}]; "
-            f"data identical={w['data_segments_identical']}; imports identical={w['imports_identical']}; exports identical="
-            f"{w['exports_identical']}; function names={fn['count']} differing raw={fn['differing_raw']} after hash "
-            f"normalization={fn['differing_after_hash_normalization']} hash-only examples={short(fn['examples_hash_only'], 2)}; "
-            f"wasm2wat: {json.dumps({k: wat.get(k) for k in ('available', 'raw_identical', 'normalized_identical', 'lines', 'lines_only_baseline', 'lines_only_experiment', 'first_difference_line')})}")))
-    a = report['abi']
-    groups[3].append(notice('ABI generation and selector', (
-        f"SDK export-abi identical={a['identical']} sha256={json.dumps(a['sha256'], sort_keys=True)}; "
-        f"check_abi baseline={short(a['check_abi']['baseline'], 3)}; experiment={short(a['check_abi']['experiment'], 3)}; "
-        f"selector baseline={short(report['selector']['baseline'], 6)}; experiment={short(report['selector']['experiment'], 6)}")))
-    ot = report['offline_tests']
-    status = report['command_status']
+    w = report.get('wasm', {})
+    add(3, 'Release WASM checksum and size', lambda: (
+        f"baseline sha256={report['wasm_hashes']['baseline'].get('exact_ci_build')} "
+        f"bytes={report['wasm_hashes']['baseline'].get('size')}; "
+        f"experiment sha256={report['wasm_hashes']['experiment'].get('exact_ci_build')} "
+        f"bytes={report['wasm_hashes']['experiment'].get('size')}; identical={w.get('identical')}; "
+        f"per-side determinism (verbose, exact CI, JSON no-op, cold rebuild): "
+        f"baseline={checks.get('baseline_wasm_deterministic', {}).get('ok')} "
+        f"experiment={checks.get('experiment_wasm_deterministic', {}).get('ok')}"))
+    add(3, 'Release WASM sections', lambda: (
+        f"layout identical={w['section_layout_identical']}; differing sections={w['differing_sections'] or 'none'}; "
+        + '; '.join(f"{r['section']} {r['baseline_size']}/{r['experiment_size']} {'same' if r['identical'] else 'DIFF'}"
+                    for r in w['sections'])))
+    add(3, 'Release WASM code and names', lambda: (
+        f"code bodies={w['code']['count']} identical in order={w['code']['identical_in_order']} multiset identical="
+        f"{w['code']['multiset_identical']} differing={w['code']['differing_count']} "
+        f"[{short(w['code']['differing_functions'], 6)}]; data identical={w['data_segments_identical']}; "
+        f"imports identical={w['imports_identical']}; exports identical={w['exports_identical']}; "
+        f"function names={w['function_names']['count']} differing raw={w['function_names']['differing_raw']} "
+        f"after hash normalization={w['function_names']['differing_after_hash_normalization']} "
+        f"hash-only examples={short(w['function_names']['examples_hash_only'], 2)}; wasm2wat: "
+        + json.dumps({k: report['wat'].get(k) for k in ('available', 'raw_identical', 'normalized_identical', 'lines',
+                                                       'lines_only_baseline', 'lines_only_experiment',
+                                                       'first_difference_line')})))
+    add(3, 'ABI generation and selector', lambda: (
+        f"SDK export-abi identical={report['abi']['identical']} sha256={json.dumps(report['abi']['sha256'], sort_keys=True)}; "
+        f"check_abi baseline={short(report['abi']['check_abi']['baseline'], 3)}; "
+        f"experiment={short(report['abi']['check_abi']['experiment'], 3)}; "
+        f"selector baseline={short(report['selector']['baseline'], 6)}; "
+        f"experiment={short(report['selector']['experiment'], 6)}"))
 
     def summarize(side, name, lines):
         results = [re.sub(r'\s+finished in .*$', '', line.replace('test result: ', ''))
@@ -1047,10 +1095,10 @@ def render_notices(report):
         detail = f" [{short(results, 6)}]" if results else ''
         return f"{name} exit={status[side].get(name)} pass-lines={sum(1 for l in lines if l.startswith('PASS'))}{detail}"
 
-    groups[3].append(notice('Offline WASM and Rust tests', ' | '.join(
-        f"{side}: " + '; '.join(summarize(side, name, lines) for name, lines in ot[side].items())
+    add(3, 'Offline WASM and Rust tests', lambda: ' | '.join(
+        f"{side}: " + '; '.join(summarize(side, name, lines) for name, lines in report['offline_tests'][side].items())
         + f"; clippy exit={status[side].get('clippy')}; fmt exit={status[side].get('fmt')}"
-        for side in SIDES)))
+        for side in SIDES))
     return groups
 
 
@@ -1064,7 +1112,8 @@ def render_markdown(report):
     lines += ['', 'Cargo graphs, compiler logs and WASM bytes are different kinds of evidence; none of them '
               'alone proves runtime reachability or exploitability. No RPC, activation or deployment was run.', '',
               '<details><summary>Full comparison JSON</summary>', '', '```json',
-              json.dumps({k: v for k, v in report.items() if k != 'design'}, indent=1, sort_keys=True)[:60000],
+              json.dumps({k: v for k, v in report.items() if k != 'design'}, indent=1, sort_keys=True,
+                         default=str)[:60000],
               '```', '', '</details>', '']
     return '\n'.join(lines)
 
@@ -1175,15 +1224,22 @@ def main(argv=None):
         return 0
     if args.command == 'compare':
         evidence = Path(args.evidence)
-        report = compare(evidence)
-        (evidence / 'comparison.json').write_text(json.dumps(report, indent=2, sort_keys=True))
-        (evidence / 'comparison.md').write_text(render_markdown(report))
         notices = evidence / 'notices'
-        notices.mkdir(exist_ok=True)
-        for index, group in enumerate(render_notices(report), 1):
-            if len(group) > 10:
-                raise SystemExit(f'notice group {index} exceeds the per-step annotation budget')
-            (notices / f'{index}.txt').write_text('\n'.join(group) + '\n')
+        notices.mkdir(parents=True, exist_ok=True)
+        try:
+            report = compare(evidence)
+            (evidence / 'comparison.json').write_text(json.dumps(report, indent=2, sort_keys=True, default=str))
+            (evidence / 'comparison.md').write_text(render_markdown(report))
+            for index, group in enumerate(render_notices(report), 1):
+                if len(group) > 10:
+                    raise ValueError(f'notice group {index} exceeds the per-step annotation budget')
+                (notices / f'{index}.txt').write_text('\n'.join(group) + '\n')
+        except Exception:  # noqa: BLE001 - make the failure visible in every report step
+            trace = traceback.format_exc()
+            print(trace, file=sys.stderr)
+            for index in range(1, 5):
+                (notices / f'{index}.txt').write_text(notice('Comparison crashed', trace[-3500:], 'error') + '\n')
+            return 1
         print(f"comparison mode={report['mode']} ok={report['ok']}")
         for name, item in report['checks'].items():
             print(f"{'ok  ' if item['ok'] else 'FAIL'} {name}: {item['detail']}")

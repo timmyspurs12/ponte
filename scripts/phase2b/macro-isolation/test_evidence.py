@@ -119,6 +119,59 @@ class ArtifactInventoryTests(NoNetwork):
         self.assertIn('syn 2.0.119 syn [lib] wasm32-unknown-unknown opt=3 debug=0 test=False', inventory['units'])
         self.assertIn('serde 1.0.0 build-script-run host', inventory['units'])
 
+    def test_comparison_with_build_scripts_on_both_sides(self):
+        # Regression: build-script units have no feature list; hosted run 44166894625 crashed here.
+        artifact = {'reason': 'compiler-artifact', 'package_id': 'registry+x#syn@2.0.119',
+                    'target': {'name': 'syn', 'crate_types': ['lib']}, 'features': ['full'],
+                    'profile': {'opt_level': '3', 'debuginfo': 0, 'test': False},
+                    'filenames': ['/r/target/wasm32-unknown-unknown/release/deps/libsyn-1.rlib']}
+        script = {'reason': 'build-script-executed', 'package_id': 'registry+x#serde@1.0.0',
+                  'out_dir': '/r/target/release/build/serde-1/out'}
+        base = '\n'.join(json.dumps(m) for m in (artifact, script))
+        same = evidence.compare_artifact_inventories(base, base)
+        self.assertEqual(same, {'count': [2, 2], 'only_baseline': [], 'only_experiment': [], 'feature_changes': []})
+        changed = dict(artifact, features=['full', 'extra-traits'])
+        diff = evidence.compare_artifact_inventories(base, '\n'.join(json.dumps(m) for m in (changed, script)))
+        self.assertEqual(diff['feature_changes'], ['syn 2.0.119 syn [lib] wasm32-unknown-unknown opt=3 debug=0 test=False'])
+        removed = evidence.compare_artifact_inventories(base, json.dumps(script))
+        self.assertEqual(removed['only_baseline'], ['syn 2.0.119 syn [lib] wasm32-unknown-unknown opt=3 debug=0 test=False'])
+
+
+class RobustnessTests(NoNetwork):
+    def test_crashing_section_becomes_failed_check_and_others_still_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'design.json').write_text(json.dumps({'rust_changed_files': []}))
+            for side in evidence.SIDES:
+                (root / side).mkdir()
+                (root / side / 'lockfiles.sha256').write_text('abc  rust/stylus-wrapper/Cargo.lock\n')
+            original = evidence.SECTIONS
+
+            def boom(report, ctx):
+                raise RuntimeError('synthetic analysis defect')
+            evidence.SECTIONS = (('boom', boom),) + tuple(s for s in original if s[0] == 'manifest_and_lockfiles')
+            try:
+                report = evidence.compare(root)
+            finally:
+                evidence.SECTIONS = original
+            self.assertFalse(report['ok'])
+            self.assertIn('synthetic analysis defect', report['checks']['analysis_boom']['detail'])
+            self.assertTrue(report['checks']['lockfiles_identical']['ok'])
+            groups = evidence.render_notices(report)
+            self.assertEqual([len(g) for g in groups], [5, 5, 5, 5])
+            flat = '\n'.join(line for group in groups for line in group)
+            self.assertIn('CRASHES: analysis_boom', flat)
+            self.assertIn('::error title=Cargo trees::rendering failed', flat)
+
+    def test_full_section_list_tolerates_empty_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = evidence.compare(Path(directory))
+            self.assertFalse(report['ok'])
+            groups = evidence.render_notices(report)
+            self.assertTrue(all(len(group) <= 10 for group in groups))
+            json.dumps(report, sort_keys=True, default=str)
+            evidence.render_markdown(report)
+
 
 class WasmTests(NoNetwork):
     def test_sections_names_code_and_data(self):

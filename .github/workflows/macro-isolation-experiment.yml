@@ -74,16 +74,16 @@ jobs:
           exit "$status"
       - name: 'Report: design, manifest, lockfiles and checks'
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
-        run: cat "$RUNNER_TEMP/evidence/notices/1.txt"
+        run: cat "$RUNNER_TEMP/evidence/notices/1.txt" || { echo "::error title=Missing comparison notices::compare produced no notices/1.txt"; exit 1; }
       - name: 'Report: Cargo graphs'
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
-        run: cat "$RUNNER_TEMP/evidence/notices/2.txt"
+        run: cat "$RUNNER_TEMP/evidence/notices/2.txt" || { echo "::error title=Missing comparison notices::compare produced no notices/2.txt"; exit 1; }
       - name: 'Report: compiler invocations'
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
-        run: cat "$RUNNER_TEMP/evidence/notices/3.txt"
+        run: cat "$RUNNER_TEMP/evidence/notices/3.txt" || { echo "::error title=Missing comparison notices::compare produced no notices/3.txt"; exit 1; }
       - name: 'Report: WASM, ABI, selector and offline tests'
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
-        run: cat "$RUNNER_TEMP/evidence/notices/4.txt"
+        run: cat "$RUNNER_TEMP/evidence/notices/4.txt" || { echo "::error title=Missing comparison notices::compare produced no notices/4.txt"; exit 1; }
       - name: Audit baseline and experiment lockfiles with RustSec (no suppressions)
         if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: bash "$RUNNER_TEMP/harness/rustsec.sh" "$RUNNER_TEMP/evidence/rustsec"
