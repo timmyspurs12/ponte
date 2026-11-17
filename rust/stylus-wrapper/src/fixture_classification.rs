@@ -11,9 +11,15 @@ pub(super) const FIXTURES: &[(&str, &str)] = &[
     ("edge-009-output-liquidity-boundary", ""),
     ("edge-010-min-max-input-boundaries", ""),
     ("edge-011-candidate-and-request-expiry", ""),
-    ("edge-012-effective-expiry-capped-by-request-and-u64-max", ""),
+    (
+        "edge-012-effective-expiry-capped-by-request-and-u64-max",
+        "",
+    ),
     ("edge-013-equal-expected-output-cost-tiebreaker", ""),
-    ("edge-014-equal-output-equal-cost-route-id-tiebreaker-permuted", ""),
+    (
+        "edge-014-equal-output-equal-cost-route-id-tiebreaker-permuted",
+        "",
+    ),
     ("edge-015-asset-decimals-metadata-no-rescaling", ""),
     ("edge-016-gross-output-u128-overflow-rejected", ""),
     ("edge-017-u256-intermediate-overflow-no-cancellation", ""),
@@ -23,16 +29,40 @@ pub(super) const FIXTURES: &[(&str, &str)] = &[
     ("edge-021-candidate-count-0-rejected", ""),
     ("edge-022-duplicate-route-ids", ""),
     ("edge-023-snapshot-mismatch", ""),
-    ("edge-024-invalid-bytes32-uppercase-and-short", "JSON bytes32 spelling/length error is not expressible as a bytes32 value"),
+    (
+        "edge-024-invalid-bytes32-uppercase-and-short",
+        "JSON bytes32 spelling/length error is not expressible as a bytes32 value",
+    ),
     ("edge-025-zero-rate-numerator", ""),
     ("edge-026-zero-rate-denominator", ""),
-    ("edge-027-invalid-int-encoding-leading-zero", "JSON leading-zero string encoding is not preserved in uint128"),
-    ("edge-027-invalid-int-encoding-negative", "negative amount cannot be represented by uint128"),
-    ("edge-027-invalid-int-encoding-decimal-point", "fractional amount cannot be represented by uint128"),
-    ("edge-027-invalid-int-encoding-scientific", "JSON scientific-notation string encoding is not preserved in uint128"),
-    ("edge-027-invalid-int-encoding-whitespace", "JSON whitespace in integer string is not preserved in uint128"),
-    ("edge-027-invalid-int-encoding-empty", "empty integer string has no uint128 value"),
-    ("edge-028-invalid-int-json-number-for-amount", "JSON number-versus-string type error is not expressible in ABI"),
+    (
+        "edge-027-invalid-int-encoding-leading-zero",
+        "JSON leading-zero string encoding is not preserved in uint128",
+    ),
+    (
+        "edge-027-invalid-int-encoding-negative",
+        "negative amount cannot be represented by uint128",
+    ),
+    (
+        "edge-027-invalid-int-encoding-decimal-point",
+        "fractional amount cannot be represented by uint128",
+    ),
+    (
+        "edge-027-invalid-int-encoding-scientific",
+        "JSON scientific-notation string encoding is not preserved in uint128",
+    ),
+    (
+        "edge-027-invalid-int-encoding-whitespace",
+        "JSON whitespace in integer string is not preserved in uint128",
+    ),
+    (
+        "edge-027-invalid-int-encoding-empty",
+        "empty integer string has no uint128 value",
+    ),
+    (
+        "edge-028-invalid-int-json-number-for-amount",
+        "JSON number-versus-string type error is not expressible in ABI",
+    ),
     ("edge-029-u128-parse-overflow", "amount exceeds uint128"),
     ("edge-030-unsupported-version", ""),
     ("edge-031-unsupported-mode", ""),
@@ -55,9 +85,18 @@ pub(super) const FIXTURES: &[(&str, &str)] = &[
     ("legacy-1000000000-combined-selection", ""),
     ("reg-001-u256-exact-ceiling-passes", ""),
     ("reg-002-u256-exact-ceiling-plus-one-rejected", ""),
-    ("reg-003-gross-overflow-precedes-zero-output-at-100pct-fee", ""),
-    ("reg-004-raw-json-float-bps-rejected", "fractional JSON bps cannot be represented by uint16"),
-    ("reg-005-raw-json-duplicate-key-rejected", "duplicate JSON object keys have no ABI tuple equivalent"),
+    (
+        "reg-003-gross-overflow-precedes-zero-output-at-100pct-fee",
+        "",
+    ),
+    (
+        "reg-004-raw-json-float-bps-rejected",
+        "fractional JSON bps cannot be represented by uint16",
+    ),
+    (
+        "reg-005-raw-json-duplicate-key-rejected",
+        "duplicate JSON object keys have no ABI tuple equivalent",
+    ),
     ("reg-006-multi-structural-error-order-forward", ""),
     ("reg-006-multi-structural-error-order-reversed", ""),
 ];

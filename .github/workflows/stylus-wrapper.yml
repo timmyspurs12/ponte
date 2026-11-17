@@ -21,7 +21,7 @@ jobs:
           python3 - <<'PY'
           import base64,gzip,io,tarfile,pathlib,subprocess
           logs=[]; fails=[]
-          for cmd in [['cargo','fmt'],['cargo','test','--locked'],['cargo','run','--locked','--features','export-abi']]:
+          for cmd in [['cargo','fmt'],['cargo','test','--locked'],['cargo','clippy','--locked','--all-targets','--','-D','warnings'],['cargo','run','--locked','--features','export-abi']]:
               p=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
               logs.append('COMMAND '+' '.join(cmd)+' EXIT '+str(p.returncode)+'\n'+p.stdout)
               fails.append(p.returncode)

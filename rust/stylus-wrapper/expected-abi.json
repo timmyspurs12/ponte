@@ -1,0 +1,13 @@
+{
+  "note": "Independent expected SDK 0.10.10 method declaration and result layout. The SDK export omits input-only struct declarations; see implementation documentation.",
+  "method": "function evaluateSynthetic(SyntheticRequest request) external view returns (SyntheticResult memory);",
+  "result_structs": {
+    "SyntheticResult": [
+      "uint8 status", "string errorCode", "bytes32 selectedRouteId", "uint128 amountIn",
+      "uint128 grossOut", "uint128 feeOut", "uint128 expectedOut", "uint128 minimumOut",
+      "uint128 executionCostUsdCents", "uint64 effectiveExpiry", "bytes32 snapshotId",
+      "uint8 evaluatedCount", "Rejection[] rejected"
+    ],
+    "Rejection": ["bytes32 routeId", "string reason"]
+  }
+}

@@ -202,10 +202,10 @@ mod fixture_classification;
 
 #[cfg(test)]
 mod tests {
+    use super::fixture_classification;
     use super::*;
     use alloy_sol_types::SolValue;
     use ponte_optimizer::{parse_canonical_bytes32, parse_raw_json, RawJsonValue};
-    use super::fixture_classification;
     use stylus_sdk::testing::TestVM;
 
     fn asset(a: AssetIdV1) -> SyntheticAsset {
@@ -254,20 +254,30 @@ mod tests {
     // Test-only conversion preserves ABI-representable values without applying
     // JSON adapter domain validation. It does not change production parsing.
     fn object(v: &RawJsonValue) -> &alloc::collections::BTreeMap<String, RawJsonValue> {
-        let RawJsonValue::Object(v) = v else { panic!("expected object") };
+        let RawJsonValue::Object(v) = v else {
+            panic!("expected object")
+        };
         v
     }
     fn text(v: &RawJsonValue) -> &str {
-        let RawJsonValue::String(v) = v else { panic!("expected string") };
+        let RawJsonValue::String(v) = v else {
+            panic!("expected string")
+        };
         v
     }
     fn integer<T: core::str::FromStr>(v: &RawJsonValue) -> T
-    where T::Err: core::fmt::Debug {
-        let RawJsonValue::Int(v) = v else { panic!("expected JSON integer") };
+    where
+        T::Err: core::fmt::Debug,
+    {
+        let RawJsonValue::Int(v) = v else {
+            panic!("expected JSON integer")
+        };
         v.parse().unwrap()
     }
     fn decimal<T: core::str::FromStr>(v: &RawJsonValue) -> T
-    where T::Err: core::fmt::Debug {
+    where
+        T::Err: core::fmt::Debug,
+    {
         text(v).parse().unwrap()
     }
     fn bytes32(v: &RawJsonValue) -> stylus_sdk::alloy_primitives::B256 {
@@ -275,13 +285,18 @@ mod tests {
     }
     fn fixture_asset(v: &RawJsonValue) -> AssetIdV1 {
         let o = object(v);
-        AssetIdV1 { namespace: text(&o["namespace"]).into(),
-            identifier: text(&o["identifier"]).into(), decimals: integer(&o["decimals"]) }
+        AssetIdV1 {
+            namespace: text(&o["namespace"]).into(),
+            identifier: text(&o["identifier"]).into(),
+            decimals: integer(&o["decimals"]),
+        }
     }
     fn fixture_request(raw: &str) -> OptimizeRequestV1 {
         let value = parse_raw_json(raw).unwrap();
         let o = object(&value);
-        let RawJsonValue::Array(items) = &o["candidates"] else { panic!("candidates") };
+        let RawJsonValue::Array(items) = &o["candidates"] else {
+            panic!("candidates")
+        };
         OptimizeRequestV1 {
             version: integer(&o["version"]),
             mode: match text(&o["mode"]) {
@@ -291,23 +306,32 @@ mod tests {
             },
             input_asset: fixture_asset(&o["inputAsset"]),
             output_asset: fixture_asset(&o["outputAsset"]),
-            amount_in: decimal(&o["amountIn"]), user_min_out: decimal(&o["userMinOut"]),
+            amount_in: decimal(&o["amountIn"]),
+            user_min_out: decimal(&o["userMinOut"]),
             tolerance_bps: integer(&o["toleranceBps"]),
             as_of_unix_seconds: decimal(&o["asOfUnixSeconds"]),
             expires_at_unix_seconds: decimal(&o["expiresAtUnixSeconds"]),
             snapshot_id: bytes32(&o["snapshotId"]),
-            candidates: items.iter().map(|v| {
-                let c = object(v);
-                CandidateV1 {
-                    route_id: bytes32(&c["routeId"]), snapshot_id: bytes32(&c["snapshotId"]),
-                    rate_numerator: decimal(&c["rateNumerator"]), rate_denominator: decimal(&c["rateDenominator"]),
-                    fee_bps: integer(&c["feeBps"]), estimated_impact_bps: integer(&c["estimatedImpactBps"]),
-                    min_input: decimal(&c["minInput"]), max_input: decimal(&c["maxInput"]),
-                    available_input: decimal(&c["availableInput"]), available_output: decimal(&c["availableOutput"]),
-                    execution_cost_usd_cents: decimal(&c["executionCostUsdCents"]),
-                    expires_at_unix_seconds: decimal(&c["expiresAtUnixSeconds"]),
-                }
-            }).collect(),
+            candidates: items
+                .iter()
+                .map(|v| {
+                    let c = object(v);
+                    CandidateV1 {
+                        route_id: bytes32(&c["routeId"]),
+                        snapshot_id: bytes32(&c["snapshotId"]),
+                        rate_numerator: decimal(&c["rateNumerator"]),
+                        rate_denominator: decimal(&c["rateDenominator"]),
+                        fee_bps: integer(&c["feeBps"]),
+                        estimated_impact_bps: integer(&c["estimatedImpactBps"]),
+                        min_input: decimal(&c["minInput"]),
+                        max_input: decimal(&c["maxInput"]),
+                        available_input: decimal(&c["availableInput"]),
+                        available_output: decimal(&c["availableOutput"]),
+                        execution_cost_usd_cents: decimal(&c["executionCostUsdCents"]),
+                        expires_at_unix_seconds: decimal(&c["expiresAtUnixSeconds"]),
+                    }
+                })
+                .collect(),
         }
     }
     fn fixture_requests() -> Vec<(String, OptimizeRequestV1, RawJsonValue)> {
@@ -320,20 +344,32 @@ mod tests {
             include_str!("../../../scripts/phase2b/fixtures/v1/regression-minimized.json"),
         ] {
             let root = parse_raw_json(file).unwrap();
-            let RawJsonValue::Array(vectors) = &object(&root)["vectors"] else { panic!("vectors") };
+            let RawJsonValue::Array(vectors) = &object(&root)["vectors"] else {
+                panic!("vectors")
+            };
             for vector in vectors {
                 let v = object(vector);
                 let id = text(&v["id"]);
                 assert!(seen.insert(id.to_owned()), "duplicate fixture {id}");
-                let (_, reason) = fixture_classification::FIXTURES.iter()
-                    .find(|(known, _)| *known == id).unwrap_or_else(|| panic!("unclassified fixture {id}"));
+                let (_, reason) = fixture_classification::FIXTURES
+                    .iter()
+                    .find(|(known, _)| *known == id)
+                    .unwrap_or_else(|| panic!("unclassified fixture {id}"));
                 if reason.is_empty() {
                     let raw = text(&v["rawRequestJson"]);
-                    entries.push((id.into(), fixture_request(raw), v["expectedResponse"].clone()));
+                    entries.push((
+                        id.into(),
+                        fixture_request(raw),
+                        v["expectedResponse"].clone(),
+                    ));
                 }
             }
         }
-        assert_eq!(seen.len(), fixture_classification::FIXTURES.len(), "missing classified fixture");
+        assert_eq!(
+            seen.len(),
+            fixture_classification::FIXTURES.len(),
+            "missing classified fixture"
+        );
         for (id, _) in fixture_classification::FIXTURES {
             assert!(seen.contains(*id), "missing fixture {id}");
         }
@@ -348,10 +384,20 @@ mod tests {
             Err(e) => {
                 assert_eq!(actual.status, 0);
                 assert_eq!(actual.errorCode, e.code());
-                assert_eq!(actual.selectedRouteId, Default::default());
-                assert_eq!((actual.amountIn, actual.grossOut, actual.feeOut, actual.expectedOut,
-                    actual.minimumOut, actual.executionCostUsdCents, actual.effectiveExpiry), (0, 0, 0, 0, 0, 0, 0));
-                assert_eq!(actual.snapshotId, Default::default());
+                assert_eq!(actual.selectedRouteId, stylus_sdk::alloy_primitives::B256::ZERO);
+                assert_eq!(
+                    (
+                        actual.amountIn,
+                        actual.grossOut,
+                        actual.feeOut,
+                        actual.expectedOut,
+                        actual.minimumOut,
+                        actual.executionCostUsdCents,
+                        actual.effectiveExpiry
+                    ),
+                    (0, 0, 0, 0, 0, 0, 0)
+                );
+                assert_eq!(actual.snapshotId, stylus_sdk::alloy_primitives::B256::ZERO);
                 assert_eq!(actual.evaluatedCount, 0);
                 assert!(actual.rejected.is_empty());
             }
@@ -374,9 +420,18 @@ mod tests {
                     OptimizeOutcomeV1::NoRoute(n) => {
                         assert_eq!(actual.status, 2);
                         assert!(actual.errorCode.is_empty());
-                        assert_eq!(actual.selectedRouteId, Default::default());
-                        assert_eq!((actual.grossOut, actual.feeOut, actual.expectedOut, actual.minimumOut,
-                            actual.executionCostUsdCents, actual.effectiveExpiry), (0, 0, 0, 0, 0, 0));
+                        assert_eq!(actual.selectedRouteId, stylus_sdk::alloy_primitives::B256::ZERO);
+                        assert_eq!(
+                            (
+                                actual.grossOut,
+                                actual.feeOut,
+                                actual.expectedOut,
+                                actual.minimumOut,
+                                actual.executionCostUsdCents,
+                                actual.effectiveExpiry
+                            ),
+                            (0, 0, 0, 0, 0, 0)
+                        );
                         assert_eq!(actual.amountIn, n.amount_in);
                         assert_eq!(actual.snapshotId, n.snapshot_id);
                         (n.evaluated_count, n.rejected)
@@ -391,7 +446,10 @@ mod tests {
             }
         }
     }
-    fn route(contract: &mut SyntheticOptimizer, input: SyntheticRequest) -> Result<SyntheticResult, Vec<u8>> {
+    fn route(
+        contract: &mut SyntheticOptimizer,
+        input: SyntheticRequest,
+    ) -> Result<SyntheticResult, Vec<u8>> {
         use alloy_sol_types::SolCall;
         use stylus_sdk::abi::Router;
         let data = evaluateSyntheticCall { request: input }.abi_encode();
@@ -538,8 +596,10 @@ mod tests {
     fn typed_and_routed_invalid_counts_preserve_validation_precedence() {
         let vm = TestVM::default();
         let mut contract = SyntheticOptimizer::from(&vm);
-        let (_, original, _) = fixture_requests().into_iter()
-            .find(|(_, r, _)| r.candidates.len() == 1 && optimize_v1(r).is_ok()).unwrap();
+        let (_, original, _) = fixture_requests()
+            .into_iter()
+            .find(|(_, r, _)| r.candidates.len() == 1 && optimize_v1(r).is_ok())
+            .unwrap();
         for count in [0, 65] {
             let mut base = original.clone();
             base.candidates = (0..count).map(|_| original.candidates[0].clone()).collect();
@@ -552,20 +612,41 @@ mod tests {
             }
             let mut cases = Vec::new();
             cases.push((base.clone(), "INVALID_CANDIDATE_COUNT"));
-            let mut r = base.clone(); r.version = 2; cases.push((r, "UNSUPPORTED_VERSION"));
-            let mut r = base.clone(); r.mode = OptimizerMode::Unsupported; cases.push((r, "UNSUPPORTED_MODE"));
-            let mut r = base.clone(); r.input_asset.identifier.clear(); cases.push((r, "INVALID_ASSET"));
-            let mut r = base.clone(); r.output_asset.decimals = 39; cases.push((r, "INVALID_ASSET_DECIMALS"));
-            let mut r = base.clone(); r.amount_in = 0; cases.push((r, "INVALID_AMOUNT_IN"));
-            let mut r = base.clone(); r.tolerance_bps = 10001; cases.push((r, "INVALID_BPS"));
-            let mut r = base.clone(); r.as_of_unix_seconds = r.expires_at_unix_seconds; cases.push((r, "INVALID_REQUEST_EXPIRY"));
+            let mut r = base.clone();
+            r.version = 2;
+            cases.push((r, "UNSUPPORTED_VERSION"));
+            let mut r = base.clone();
+            r.mode = OptimizerMode::Unsupported;
+            cases.push((r, "UNSUPPORTED_MODE"));
+            let mut r = base.clone();
+            r.input_asset.identifier.clear();
+            cases.push((r, "INVALID_ASSET"));
+            let mut r = base.clone();
+            r.output_asset.decimals = 39;
+            cases.push((r, "INVALID_ASSET_DECIMALS"));
+            let mut r = base.clone();
+            r.amount_in = 0;
+            cases.push((r, "INVALID_AMOUNT_IN"));
+            let mut r = base.clone();
+            r.tolerance_bps = 10001;
+            cases.push((r, "INVALID_BPS"));
+            let mut r = base.clone();
+            r.as_of_unix_seconds = r.expires_at_unix_seconds;
+            cases.push((r, "INVALID_REQUEST_EXPIRY"));
             // Earlier invalid fields continue to win even when several coexist.
-            let mut r = base.clone(); r.version = 2; r.mode = OptimizerMode::Unsupported;
-            r.input_asset.identifier.clear(); r.amount_in = 0; cases.push((r, "UNSUPPORTED_VERSION"));
+            let mut r = base.clone();
+            r.version = 2;
+            r.mode = OptimizerMode::Unsupported;
+            r.input_asset.identifier.clear();
+            r.amount_in = 0;
+            cases.push((r, "UNSUPPORTED_VERSION"));
             for (r, code) in cases {
                 let core = optimize_v1(&r);
                 assert_eq!(core.as_ref().unwrap_err().code(), code);
-                compare(&contract.evaluate_synthetic(request(r.clone())), core.clone());
+                compare(
+                    &contract.evaluate_synthetic(request(r.clone())),
+                    core.clone(),
+                );
                 compare(&route(&mut contract, request(r)).unwrap(), core);
             }
         }
@@ -573,7 +654,10 @@ mod tests {
         let mut r = original;
         r.candidates[0].fee_bps = 10001;
         assert_eq!(optimize_v1(&r).unwrap_err().code(), "INVALID_BPS");
-        compare(&route(&mut contract, request(r.clone())).unwrap(), optimize_v1(&r));
+        compare(
+            &route(&mut contract, request(r.clone())).unwrap(),
+            optimize_v1(&r),
+        );
     }
 
     #[test]
@@ -591,7 +675,12 @@ mod tests {
         let vm = TestVM::default();
         let mut contract = SyntheticOptimizer::from(&vm);
         let (_, core, _) = fixture_requests().into_iter().next().unwrap();
-        let data = evaluateSyntheticCall { request: request(core.clone()) }.abi_encode();
+        let data = evaluateSyntheticCall {
+            request: request(core.clone()),
+        }
+        .abi_encode();
+        assert_eq!(<SyntheticRequest as AbiType>::SELECTOR_ABI.as_str(), include_str!("../expected-request-tuple.txt").trim());
+        assert_eq!(<SyntheticResult as AbiType>::SELECTOR_ABI.as_str(), include_str!("../expected-result-tuple.txt").trim());
         assert_eq!(evaluateSyntheticCall::SELECTOR, [0x31, 0x63, 0x19, 0x81]);
         let selector = u32::from_be_bytes(evaluateSyntheticCall::SELECTOR);
         let args = &data[4..];
@@ -606,17 +695,41 @@ mod tests {
         let original = call(&mut contract, args).unwrap();
         let mut padding = args.to_vec();
         padding[string_at + 32 + string_len] = 0x7f;
-        assert_eq!(call(&mut contract, &padding).unwrap(), original, "dynamic string padding is accepted");
-        let mut trailing = args.to_vec(); trailing.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-        assert_eq!(call(&mut contract, &trailing).unwrap(), original, "trailing bytes are accepted");
-        let mut offset = args.to_vec(); set_word(&mut offset, request_at + 2 * 32, u64::MAX);
-        assert!(call(&mut contract, &offset).is_err(), "out-of-bounds offset rejected");
-        let mut length = args.to_vec(); set_word(&mut length, string_at, u64::MAX);
-        assert!(call(&mut contract, &length).is_err(), "out-of-bounds string length rejected");
-        let mut utf8 = args.to_vec(); utf8[string_at + 32] = 0xff;
-        assert!(call(&mut contract, &utf8).is_err(), "invalid UTF-8 rejected");
-        let mut integer = args.to_vec(); integer[request_at] = 1;
-        assert!(call(&mut contract, &integer).is_err(), "nonzero uint16 high bits rejected");
+        assert_eq!(
+            call(&mut contract, &padding).unwrap(),
+            original,
+            "dynamic string padding is accepted"
+        );
+        let mut trailing = args.to_vec();
+        trailing.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(
+            call(&mut contract, &trailing).unwrap(),
+            original,
+            "trailing bytes are accepted"
+        );
+        let mut offset = args.to_vec();
+        set_word(&mut offset, request_at + 2 * 32, u64::MAX);
+        assert!(
+            call(&mut contract, &offset).is_err(),
+            "out-of-bounds offset rejected"
+        );
+        let mut length = args.to_vec();
+        set_word(&mut length, string_at, u64::MAX);
+        assert!(
+            call(&mut contract, &length).is_err(),
+            "out-of-bounds string length rejected"
+        );
+        let mut utf8 = args.to_vec();
+        utf8[string_at + 32] = 0xff;
+        assert!(
+            call(&mut contract, &utf8).is_err(),
+            "invalid UTF-8 rejected"
+        );
+        let mut integer = args.to_vec();
+        integer[request_at] = 1;
+        assert!(
+            call(&mut contract, &integer).is_err(),
+            "nonzero uint16 high bits rejected"
+        );
     }
-
 }
