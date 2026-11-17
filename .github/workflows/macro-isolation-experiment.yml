@@ -1,0 +1,97 @@
+name: Phase 2B.5.3 macro dependency isolation experiment
+# Builds the baseline and experiment commits sequentially in ONE job, in the
+# SAME checkout path, with the same toolchain and commands, then compares them.
+# Offline checks only: no RPC, chain, wallet, activation, deployment,
+# transaction, payment or settlement step. Findings and failures stay visible.
+on:
+  push:
+    branches:
+      - 'arena/85bd8a06-ponte'
+      - 'experiment/phase2b5-3-macro-isolation'
+    paths:
+      - 'rust/stylus-wrapper/Cargo.toml'
+      - 'scripts/phase2b/macro-isolation/**'
+      - '.github/workflows/macro-isolation-experiment.yml'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Baseline commit (default: the assigned Phase 2B.5.3 starting commit)'
+        required: false
+        default: 'fe6e928bbacd23948fbe32c492ac42df4ef49b1b'
+permissions:
+  contents: read
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      CARGO_TERM_COLOR: never
+      BASE_SHA: ${{ inputs.base || 'fe6e928bbacd23948fbe32c492ac42df4ef49b1b' }}
+      HEAD_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Test experiment evidence parsing
+        run: python3 -m unittest discover -s scripts/phase2b/macro-isolation -p 'test_evidence.py' -v
+      - name: Record design and freeze the harness outside the checkout
+        run: |
+          cp -R scripts/phase2b/macro-isolation "$RUNNER_TEMP/harness"
+          python3 "$RUNNER_TEMP/harness/evidence.py" design "$BASE_SHA" "$HEAD_SHA" "$RUNNER_TEMP/evidence"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Install pinned Rust toolchain and WASM target
+        id: toolchain
+        run: rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+      - name: Install optional WebAssembly text tooling (non-gating)
+        continue-on-error: true
+        run: |
+          timeout 240 sudo apt-get update -qq
+          timeout 240 sudo apt-get install -y -qq --no-install-recommends wabt
+          wasm2wat --version
+      - name: Capture BASELINE (unchanged commit)
+        id: baseline
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: |
+          git checkout --quiet --detach "$BASE_SHA"
+          bash "$RUNNER_TEMP/harness/capture.sh" baseline "$RUNNER_TEMP/evidence/baseline"
+      - name: Capture EXPERIMENT (same path, toolchain and commands)
+        id: experiment
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: |
+          git checkout --quiet --detach "$HEAD_SHA"
+          bash "$RUNNER_TEMP/harness/capture.sh" experiment "$RUNNER_TEMP/evidence/experiment"
+      - name: Compare baseline and experiment
+        id: compare
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: |
+          status=0
+          python3 "$RUNNER_TEMP/harness/evidence.py" compare "$RUNNER_TEMP/evidence" || status=$?
+          if [[ -f "$RUNNER_TEMP/evidence/comparison.md" ]]; then
+            cat "$RUNNER_TEMP/evidence/comparison.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+      - name: 'Report: design, manifest, lockfiles and checks'
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cat "$RUNNER_TEMP/evidence/notices/1.txt"
+      - name: 'Report: Cargo graphs'
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cat "$RUNNER_TEMP/evidence/notices/2.txt"
+      - name: 'Report: compiler invocations'
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cat "$RUNNER_TEMP/evidence/notices/3.txt"
+      - name: 'Report: WASM, ABI, selector and offline tests'
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: cat "$RUNNER_TEMP/evidence/notices/4.txt"
+      - name: Audit baseline and experiment lockfiles with RustSec (no suppressions)
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: bash "$RUNNER_TEMP/harness/rustsec.sh" "$RUNNER_TEMP/evidence/rustsec"
+      - name: Upload evidence, including on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ponte-macro-isolation-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          if-no-files-found: error
+          retention-days: 30
