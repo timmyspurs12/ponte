@@ -32,7 +32,7 @@ A manual comparison of all locked crate versions with the RustSec advisory datab
 
 The TypeScript BigInt reference independently implements validation, arithmetic bounds and wire encoding. The static fixture sets contain 41 edge cases, 12 legacy parity vectors and 7 minimized boundary/regression cases. Tests cover overflow before cancellation, rounding, liquidity, expiry, duplicate IDs, tie-breaking, 64/65 candidates, malformed JSON and errors. The Rust suite has 8 unit/property tests plus 3 integration tests loading all 60 vectors. The TypeScript suite has 7 deterministic tests. Property checks include repeatability, permutation invariance, conservation, bounds, and selected-route feasibility. These finite tests are not an exhaustive proof; malformed input fuzzing is bounded.
 
-On [CI run 43957536859](https://github.com/timmyspurs12/ponte/actions/runs/43957536859), the differential seed `0x504f4e54455f3242` produced 10,760 comparisons: 60 static, 10,000 generated synthetic, 500 permutation cases, and 200 adversarial cases. Results: 5,236 selected, 3,298 no-route, 2,226 errors; 10,760 matches, **0 mismatches**. On a mismatch the harness delta-minimizes candidate lists where possible and writes counterexamples to the summary artifact; review and promote confirmed minimal regressions to the versioned fixture suite. No additional generated discrepancy was found in this run.
+On [CI run 43959588203](https://github.com/timmyspurs12/ponte/actions/runs/43959588203) for commit `6a64337384aabcb063194a3b170043f6bc397bd5`, the differential seed `0x504f4e54455f3242` produced 10,760 comparisons: 60 static, 10,000 generated synthetic, 500 permutation cases, and 200 adversarial cases. Results: 5,236 SELECTED, 3,298 NO_ROUTE, 2,226 ERROR; 10,760 byte-for-byte canonical JSON matches, **0 mismatches**. On a mismatch the harness delta-minimizes candidate lists where possible and writes counterexamples to the summary artifact; review and promote confirmed minimal regressions to the versioned fixture suite. No additional generated discrepancy was found in this run.
 
 Legacy parity uses the untouched `quote()` implementation for inputs 100, 2500000 and 1000000000, with synthetic Direct/Split/Multi fee/impact bps 35/5, 48/8 and 65/12, rate 100/525 and tolerance 50. Rust and TypeScript match all nine per-route gross, fee, expected and minimum values; 18 permutation checks and 27 non-deduction-of-impact checks also passed.
 
@@ -50,7 +50,7 @@ node --import tsx scripts/phase2b/benchmark.ts --rust-bin rust/optimizer/target/
 
 ## Native host benchmark
 
-These measurements are from [CI run 43958244133](https://github.com/timmyspurs12/ponte/actions/runs/43958244133) at `2026-11-16T21:19:14Z`, on standard `ubuntu-latest` (Ubuntu 26.04.1, Linux x86-64, Intel Xeon Platinum 8370C, 4 logical CPUs, ~16 GiB RAM), Node `v22.23.4`, and a release binary built with rustc `1.91.0` / Cargo `1.91.0`. That run's benchmark report incorrectly displayed the runner's default Rust 1.99.1 because its version probe ran outside the crate; the run's environment log and pinned toolchain establish the compiler actually used, and the probe has since been corrected.
+These measurements are from [CI run 43959588203](https://github.com/timmyspurs12/ponte/actions/runs/43959588203) at `2026-11-16T21:26:17.033Z`, on standard `ubuntu-latest` (Ubuntu 26.04.1 LTS, Linux `7.0.0-1019-azure` x86-64, AMD EPYC 9V45 96-Core Processor, 4 logical CPUs available to the runner, 15,983 MiB RAM), Node `v22.23.4`, and a release binary built with rustc `1.91.0` / Cargo `1.91.0`.
 
 Seed `0x504f4e54455f424d`: each dataset contains 100 identical synthetic requests per implementation, five separate OS process runs, 20 warmup passes and 100 measured passes (2,000 / 10,000 evaluations per run). Core timings use already-parsed requests; JSON roundtrip includes parsing, validation, core evaluation and serialization, but excludes process startup and reading files. JSON measurements use 5 warmup and 20 measured passes (500 / 2,000 evaluations per run). The percentiles are over **batch mean ns per request**, across passes and processes, not individual-request tail latency. Timers are `process.hrtime.bigint()` and `std::time::Instant`. Shared hosted hardware and JIT effects make results variable. The observed native Rust core median was lower in every listed dataset on this run; this is not a universal performance guarantee.
 
@@ -58,33 +58,32 @@ Seed `0x504f4e54455f424d`: each dataset contains 100 identical synthetic request
 
 | Dataset | Candidates | Scenario | TS p50 (ns) | TS p95 (ns) | TS p99 (ns) | Rust p50 (ns) | Rust p95 (ns) | Rust p99 (ns) | TS/Rust p50 |
 |---|---:|---|---:|---:|---:|---:|---:|---:|---:|
-| valid_01_cand | 1 | all_valid | 2720 | 8088 | 9434 | 111 | 170 | 271 | 24.5x |
-| valid_03_cand | 3 | all_valid | 6108 | 8213 | 12620 | 235 | 300 | 565 | 25.99x |
-| valid_08_cand | 8 | all_valid | 13495 | 15665 | 16874 | 869 | 1256 | 1501 | 15.53x |
-| valid_16_cand | 16 | all_valid | 26054 | 28425 | 30384 | 1173 | 2558 | 3333 | 22.21x |
-| valid_32_cand | 32 | all_valid | 51898 | 62036 | 65271 | 2538 | 2649 | 2770 | 20.45x |
-| valid_64_cand | 64 | all_valid | 104784 | 108352 | 110439 | 5915 | 6054 | 6226 | 17.71x |
-| mixed_16_cand | 16 | mixed_rejected | 20005 | 22713 | 23771 | 1295 | 1955 | 2383 | 15.45x |
-| mixed_64_cand | 64 | mixed_rejected | 82576 | 87300 | 92467 | 4587 | 4782 | 5010 | 18x |
-| ties_32_cand | 32 | equal_ties | 53030 | 56574 | 66688 | 2626 | 2748 | 2874 | 20.19x |
-| ties_64_cand | 64 | equal_ties | 106873 | 111014 | 114470 | 6249 | 7034 | 7240 | 17.1x |
-| boundary_16_cand | 16 | numeric_boundary | 30905 | 33476 | 37901 | 1658 | 3349 | 4277 | 18.64x |
+| valid_01_cand | 1 | all_valid | 1809 | 7136 | 8917 | 113 | 145 | 176 | 16.01x |
+| valid_03_cand | 3 | all_valid | 3882 | 6358 | 12358 | 200 | 321 | 417 | 19.41x |
+| valid_08_cand | 8 | all_valid | 8423 | 9782 | 11291 | 535 | 687 | 768 | 15.74x |
+| valid_16_cand | 16 | all_valid | 16196 | 18024 | 19625 | 762 | 1058 | 1241 | 21.25x |
+| valid_32_cand | 32 | all_valid | 31787 | 34203 | 35781 | 1645 | 1745 | 1879 | 19.32x |
+| valid_64_cand | 64 | all_valid | 68639 | 71566 | 73678 | 3922 | 4084 | 5111 | 17.5x |
+| mixed_16_cand | 16 | mixed_rejected | 12832 | 14584 | 16019 | 507 | 706 | 831 | 25.31x |
+| mixed_64_cand | 64 | mixed_rejected | 57675 | 61815 | 63737 | 2952 | 3088 | 3240 | 19.54x |
+| ties_32_cand | 32 | equal_ties | 33050 | 35463 | 37431 | 1894 | 1999 | 2096 | 17.45x |
+| ties_64_cand | 64 | equal_ties | 71965 | 75654 | 80224 | 4469 | 4637 | 4847 | 16.1x |
+| boundary_16_cand | 16 | numeric_boundary | 18957 | 20683 | 21372 | 1102 | 1203 | 1273 | 17.2x |
 
 ## JSON Parse + Core Evaluate + Canonical Serialize (ns / line)
 
 | Dataset | Candidates | TS JSON p50 (ns) | TS JSON p95 (ns) | Rust JSON p50 (ns) | Rust JSON p95 (ns) |
 |---|---:|---:|---:|---:|---:|
-| valid_01_cand | 1 | 37013 | 50032 | 9647 | 17429 |
-| valid_03_cand | 3 | 78873 | 85582 | 18326 | 32488 |
-| valid_08_cand | 8 | 176390 | 211516 | 42508 | 44235 |
-| valid_16_cand | 16 | 335742 | 374641 | 80440 | 84917 |
-| valid_32_cand | 32 | 671200 | 706216 | 156169 | 161017 |
-| valid_64_cand | 64 | 1344461 | 1379708 | 305341 | 318857 |
-| mixed_16_cand | 16 | 331547 | 361631 | 86015 | 88739 |
-| mixed_64_cand | 64 | 1329871 | 1364880 | 327500 | 340591 |
-| ties_32_cand | 32 | 669032 | 681419 | 155380 | 160808 |
-| ties_64_cand | 64 | 1343785 | 1368225 | 305243 | 309929 |
-| boundary_16_cand | 16 | 444128 | 487608 | 91661 | 97203 |
+| valid_01_cand | 1 | 23109 | 34067 | 6289 | 10080 |
+| valid_03_cand | 3 | 46890 | 59126 | 11715 | 18013 |
+| valid_08_cand | 8 | 103032 | 117779 | 26444 | 27001 |
+| valid_16_cand | 16 | 193829 | 232301 | 49878 | 50592 |
+| valid_32_cand | 32 | 383393 | 392711 | 96660 | 99136 |
+| valid_64_cand | 64 | 784822 | 845260 | 194897 | 206446 |
+| mixed_16_cand | 16 | 193938 | 225823 | 52420 | 53334 |
+| mixed_64_cand | 64 | 765746 | 784736 | 200500 | 209521 |
+| ties_32_cand | 32 | 389854 | 409651 | 98534 | 101728 |
+| ties_64_cand | 64 | 791040 | 820827 | 197158 | 202945 |
+| boundary_16_cand | 16 | 256090 | 291398 | 55644 | 59184 |
 
 *Note: Host microbenchmark only on synthetic offline inputs. Does not represent WASM execution, Arbitrum Stylus gas/ink, RPC latency, or production settlement throughput.*
-
