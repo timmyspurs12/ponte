@@ -48,3 +48,7 @@ jobs:
           cat /tmp/inspection.log
           while IFS= read -r line; do echo "::notice title=WASM inspection::$line"; done < /tmp/inspection.log
           exit "$result"
+      - name: Execute release WASM offline with host stubs
+        run: |
+          node --version
+          node scripts/test_wasm_entrypoint.cjs target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm

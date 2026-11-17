@@ -21,6 +21,7 @@ stylus-sdk = { version = "=0.10.10", features = ["stylus-test"] }
 
 [features]
 export-abi = ["stylus-sdk/export-abi"]
+stylus-test = ["stylus-sdk/stylus-test"]
 contract-client-gen = []
 
 [lib]
