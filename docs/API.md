@@ -45,7 +45,7 @@ JSON bodies are strict; unknown fields (including caller-supplied status, receip
 | POST `/invoices/:id/quotes` | `{}` | Persisted server quote; Pending payment/Funded only |
 | GET `/invoices/:id/quotes` | — | Quote history including source/expiry/candidate snapshot |
 | GET `/invoices/:id/quotes/:quoteId` | UUID | Same-tenant, same-invoice quote record |
-| GET `/invoices/:id/settlements` | — | Array, zero/one locked simulation settlement |
+| GET `/invoices/:id/settlements` | — | Array, zero/one locked settlement record with server-owned `simulated: true` |
 | GET `/invoices/:id/activity` | — | Append-only correlated event history |
 
 Invoice-scoped history endpoints return that invoice's complete history in this foundation. Pagination applies to the top-level invoice collection and business-wide activity; a production history-retention/cursor strategy remains a scaling gate. Same-timestamp event ordering is not a sequence-number guarantee.
@@ -98,7 +98,9 @@ A failed expired quote settlement does not partially update a receipt or append 
 
 Quote `fundingMinor`: BRL cents. Candidate `outputMinor`, `feeMinor`, `minimumOutputMinor`: **illustrative USDG two-decimal units**, not verified ERC-20 decimals. `executionCostMinor: "2"`: illustrative **USD accounting cents**, separate from token output. Rational rate `525/100` is fixed demonstration BRL per USDG. Financial arithmetic is BigInt with documented floors, not floating-point execution math.
 
-Settlement record exposes `expected_minor`, `minimum_minor`, `actual_minor`, locked `route_id`, `status`, timestamps and NULL `transaction_hash`. Receipt `execution.identifier` begins `SIM-`; it is not a transaction hash or proof of a blockchain transfer. See [FINANCIAL_MODEL.md](FINANCIAL_MODEL.md).
+Each settlement-history record exposes `expected_minor`, `minimum_minor`, `actual_minor`, locked `route_id`, `status`, timestamps, NULL `transaction_hash`, and **`simulated: true`**. The server adds this boolean when returning settlement history; it is not supplied or controlled by the client. The current lifecycle and schema support only simulated payments and quotes, and settlement records reference those quotes. Therefore all existing records, including records created before this response field existed and records in Routing, Failed, or Settled state, receive the same flag without a database migration or backfill. Other history resources are unchanged.
+
+The flag identifies simulation provenance; it is **not proof of payment, blockchain settlement, or any transfer**. `Settled` and `actual_minor` describe a completed demo state, not a real financial outcome. Receipt `execution.identifier` begins `SIM-`; it is not a transaction hash or proof of a blockchain transfer. If real settlement is ever introduced, this response must first be redesigned around independently verified, persisted provenance; it must not label unknown or real records by assuming this simulation-only invariant. See [FINANCIAL_MODEL.md](FINANCIAL_MODEL.md).
 
 ## Relational audit metadata
 

@@ -246,6 +246,225 @@ test("full settlement persists exact receipt, expected/actual output, no hash, a
   assert.equal(records[0].transaction_hash, null);
   assert.equal(((await request(`/${i.id}/activity`)) as unknown[]).length, 6);
 });
+test("settlement history carries server-owned simulation provenance for current and existing rows", async () => {
+  const { GET, POST } = await import("../src/app/api/v1/[...path]/route");
+  const i = await funded();
+  const path = ["invoices", i.id, "settlements"];
+  const url = `http://localhost/api/v1/invoices/${i.id}/settlements`;
+  const history = (authorization = `Bearer ${token}`) =>
+    GET(new Request(url, { headers: { authorization } }), {
+      params: Promise.resolve({ path }),
+    });
+  const readHistory = async (status: string) => {
+    const response = await history();
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    assert.match(body.requestId, /^[\w-]+$/);
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].simulated, true);
+    assert.equal(body.data[0].status, status);
+    assert.equal(body.data[0].transaction_hash, null);
+    const stored = await pool.query(
+      "SELECT * FROM settlements WHERE invoice_id=$1",
+      [i.id],
+    );
+    // JSON serialization mirrors the HTTP handler's Date conversion. Every
+    // original field is preserved; only server-owned provenance is added.
+    assert.deepEqual(body.data[0], {
+      ...JSON.parse(JSON.stringify(stored.rows[0])),
+      simulated: true,
+    });
+    return body.data[0];
+  };
+  const send = (resource: string, body: unknown, key = randomUUID()) =>
+    POST(
+      new Request(`http://localhost/api/v1/invoices/${i.id}/${resource}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "idempotency-key": key,
+        },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ path: ["invoices", i.id, resource] }) },
+    );
+
+  assert.deepEqual((await (await history()).json()).data, []);
+  const rejectedQuote = await send("quotes", { simulated: false });
+  assert.equal(rejectedQuote.status, 422);
+  assert.equal((await rejectedQuote.json()).error.code, "VALIDATION_ERROR");
+  const q = (await request(`/${i.id}/quotes`, {})) as {
+    id: string;
+    data: { simulated: boolean };
+  };
+  assert.equal(q.data.simulated, true);
+  const routing = { status: "Routing", route: "split", quoteId: q.id };
+  for (const simulated of [false, true, "false", null]) {
+    const rejected = await send("transitions", { ...routing, simulated });
+    assert.equal(rejected.status, 422);
+    assert.equal((await rejected.json()).error.code, "VALIDATION_ERROR");
+  }
+  assert.deepEqual((await (await history()).json()).data, []);
+  const routingKey = randomUUID();
+  const routed = await request(`/${i.id}/transitions`, routing, routingKey);
+  assert.deepEqual(
+    await request(`/${i.id}/transitions`, routing, routingKey),
+    routed,
+  );
+  const first = await readHistory("Routing");
+  assert.equal(first.actual_minor, null);
+  assert.equal(first.settled_at, null);
+  const forgedQuery = await GET(
+    new Request(`${url}?simulated=false`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+    { params: Promise.resolve({ path }) },
+  );
+  assert.equal((await forgedQuery.json()).data[0].simulated, true);
+  assert.equal((await send("settlements", { simulated: false })).status, 404);
+  await assert.rejects(
+    pool.query("UPDATE quotes SET simulated=false WHERE id=$1", [q.id]),
+    (e) => (e as { code: string }).code === "23514",
+  );
+  await assert.rejects(
+    pool.query(
+      "UPDATE settlements SET transaction_hash='not-a-real-hash' WHERE id=$1",
+      [first.id],
+    ),
+    (e) => (e as { code: string }).code === "23514",
+  );
+
+  assert.equal((await history("Bearer wrong")).status, 401);
+  const denied = await GET(new Request(url), {
+    params: Promise.resolve({ path }),
+  });
+  assert.equal(denied.status, 401);
+  assert.equal((await denied.json()).error.code, "UNAUTHENTICATED");
+  const user = process.env.PONTE_DEV_USER_ID!;
+  const other = randomUUID();
+  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+    other,
+    "Other history tenant",
+  ]);
+  await pool.query(
+    "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
+    [other, user],
+  );
+  process.env.PONTE_DEV_BUSINESS_ID = other;
+  try {
+    const crossTenant = await history();
+    assert.equal(crossTenant.status, 404);
+    assert.equal((await crossTenant.json()).error.code, "NOT_FOUND");
+  } finally {
+    process.env.PONTE_DEV_BUSINESS_ID = business;
+  }
+  await pool.query(
+    "UPDATE memberships SET role='viewer' WHERE business_id=$1 AND user_id=$2",
+    [business, user],
+  );
+  try {
+    assert.equal((await history()).status, 200);
+    assert.equal(
+      (await send("transitions", { status: "Settled" })).status,
+      403,
+    );
+  } finally {
+    await pool.query(
+      "UPDATE memberships SET role='admin' WHERE business_id=$1 AND user_id=$2",
+      [business, user],
+    );
+  }
+  await pool.query(
+    "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
+    [business, user],
+  );
+  try {
+    assert.equal((await history()).status, 403);
+  } finally {
+    await pool.query(
+      "UPDATE memberships SET status='active' WHERE business_id=$1 AND user_id=$2",
+      [business, user],
+    );
+  }
+  const previous = process.env.NODE_ENV;
+  Object.assign(process.env, { NODE_ENV: "production" });
+  try {
+    const production = await history();
+    assert.equal(production.status, 503);
+    assert.equal((await production.json()).error.code, "AUTH_NOT_CONFIGURED");
+  } finally {
+    Object.assign(process.env, { NODE_ENV: previous });
+  }
+  const rejectedSettle = await send("transitions", {
+    status: "Settled",
+    simulated: false,
+  });
+  assert.equal(rejectedSettle.status, 422);
+  assert.equal((await readHistory("Routing")).id, first.id);
+  const settleKey = randomUUID();
+  const settled = (await request(
+    `/${i.id}/transitions`,
+    { status: "Settled" },
+    settleKey,
+  )) as Invoice;
+  assert.deepEqual(
+    await request(`/${i.id}/transitions`, { status: "Settled" }, settleKey),
+    settled,
+  );
+  assert.equal(settled.receipt!.execution.simulated, true);
+  assert.match(settled.receipt!.execution.identifier, /^SIM-/);
+  const completed = await readHistory("Settled");
+  assert.equal(completed.id, first.id);
+  assert.equal(completed.actual_minor, completed.expected_minor);
+  assert.ok(completed.settled_at);
+
+  const failed = await funded();
+  const failedQuote = (await request(`/${failed.id}/quotes`, {})) as {
+    id: string;
+  };
+  await transition(failed.id, "Routing", {
+    route: "split",
+    quoteId: failedQuote.id,
+  });
+  await transition(failed.id, "Failed");
+  const failedHistory = (await request(`/${failed.id}/settlements`)) as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(failedHistory.length, 1);
+  assert.equal(failedHistory[0].simulated, true);
+  assert.equal(failedHistory[0].status, "Failed");
+  assert.equal(failedHistory[0].transaction_hash, null);
+  assert.equal(failedHistory[0].actual_minor, null);
+
+  // Construct a record in the unchanged legacy schema, without any persisted
+  // simulated field, just as a settlement created before this response change.
+  const legacy = await funded();
+  const legacyQuote = (await request(`/${legacy.id}/quotes`, {})) as {
+    id: string;
+  };
+  await pool.query(
+    "INSERT INTO settlements(id,business_id,invoice_id,quote_id,route_id,expected_minor,minimum_minor,status) VALUES($1,$2,$3,$4,'direct',100,99,'Routing')",
+    [randomUUID(), business, legacy.id, legacyQuote.id],
+  );
+  const legacyRow = (
+    await pool.query("SELECT * FROM settlements WHERE invoice_id=$1", [
+      legacy.id,
+    ])
+  ).rows[0];
+  assert.equal(Object.hasOwn(legacyRow, "simulated"), false);
+  const legacyHistory = await request(`/${legacy.id}/settlements`);
+  assert.deepEqual(legacyHistory, [{ ...legacyRow, simulated: true }]);
+  const payment = (
+    (await request(`/${i.id}/payments`)) as Array<Record<string, unknown>>
+  )[0];
+  const events = (await request(`/${i.id}/activity`)) as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(Object.hasOwn(payment, "simulated"), false);
+  assert.ok(events.every((entry) => !Object.hasOwn(entry, "simulated")));
+});
 test("pagination/filter validation and persisted rate limiting", async () => {
   await assert.rejects(
     execute(
