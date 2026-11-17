@@ -1,5 +1,7 @@
 # Phase 2B.2 — Stylus readiness and integration feasibility audit
 
+> **Historical audit:** This report records the pre-implementation assessment as of its original date and baseline. References to no implementation having started and the report being the only intended addition describe that earlier audit, not the later wrapper PR. Its network-readiness conclusions below are preserved and require fresh verification before any future network action.
+
 **Decision: CONDITIONAL.** A bounded, offline wrapper design and local testing can be proposed, but **deployment and activation are not authorized or established**. Official documentation currently says new and expired-program activation is paused on Arbitrum One and Nova. Arbitrum Sepolia has Stylus capability, but this audit could not establish its current activation policy, applicable permissions, or a usable activation path for PONTE. Do not deploy or activate on any network on this evidence.
 
 **Scope and date.** Inspected merged `main` baseline `fdef6b794e5b2b8995a08c9f62edf2f8ee691a8d`; sources below were checked on **2026-11-16 UTC**. This is research, not contract implementation. No wallet, credentials, signatures, transactions, activation, deployment or paid services were used. Source statements and historical explorer results are not live onchain parameter measurements. The report is the only intended working-tree addition; no commit, push or change to `main` is requested.

@@ -384,7 +384,10 @@ mod tests {
             Err(e) => {
                 assert_eq!(actual.status, 0);
                 assert_eq!(actual.errorCode, e.code());
-                assert_eq!(actual.selectedRouteId, stylus_sdk::alloy_primitives::B256::ZERO);
+                assert_eq!(
+                    actual.selectedRouteId,
+                    stylus_sdk::alloy_primitives::B256::ZERO
+                );
                 assert_eq!(
                     (
                         actual.amountIn,
@@ -420,7 +423,10 @@ mod tests {
                     OptimizeOutcomeV1::NoRoute(n) => {
                         assert_eq!(actual.status, 2);
                         assert!(actual.errorCode.is_empty());
-                        assert_eq!(actual.selectedRouteId, stylus_sdk::alloy_primitives::B256::ZERO);
+                        assert_eq!(
+                            actual.selectedRouteId,
+                            stylus_sdk::alloy_primitives::B256::ZERO
+                        );
                         assert_eq!(
                             (
                                 actual.grossOut,
@@ -679,8 +685,14 @@ mod tests {
             request: request(core.clone()),
         }
         .abi_encode();
-        assert_eq!(<SyntheticRequest as AbiType>::SELECTOR_ABI.as_str(), include_str!("../expected-request-tuple.txt").trim());
-        assert_eq!(<SyntheticResult as AbiType>::SELECTOR_ABI.as_str(), include_str!("../expected-result-tuple.txt").trim());
+        assert_eq!(
+            <SyntheticRequest as stylus_sdk::abi::AbiType>::SELECTOR_ABI.as_str(),
+            include_str!("../expected-request-tuple.txt").trim()
+        );
+        assert_eq!(
+            <SyntheticResult as stylus_sdk::abi::AbiType>::SELECTOR_ABI.as_str(),
+            include_str!("../expected-result-tuple.txt").trim()
+        );
         assert_eq!(evaluateSyntheticCall::SELECTOR, [0x31, 0x63, 0x19, 0x81]);
         let selector = u32::from_be_bytes(evaluateSyntheticCall::SELECTOR);
         let args = &data[4..];
