@@ -61,9 +61,10 @@ if any(module != 'vm_hooks' for module, _ in imports):
     raise SystemExit('unexpected import module')
 if not {'read_args', 'write_result'}.issubset({item for _, item in imports}):
     raise SystemExit('missing expected SDK I/O hooks')
-forbidden = ('call_contract', 'delegate_call_contract', 'static_call_contract',
-             'storage_load_bytes32', 'storage_cache_bytes32', 'storage_flush_cache',
-             'create1', 'create2')
-if any(item in forbidden for _, item in imports):
-    raise SystemExit('unexpected external-call, creation or storage hook')
+# SDK v0.10.10 entrypoint unconditionally flushes its cache; no load or
+# cache-write imports are allowed. Fail closed on any newly introduced hook.
+allowed = {'pay_for_memory_grow', 'msg_reentrant', 'msg_value',
+           'storage_flush_cache', 'write_result', 'read_args'}
+if any(item not in allowed for _, item in imports):
+    raise SystemExit('unexpected SDK hook; review artifact and allowlist')
 print('Local entrypoint/import checks passed; this is not an activation check.')
