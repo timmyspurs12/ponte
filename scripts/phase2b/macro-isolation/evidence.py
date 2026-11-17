@@ -190,6 +190,7 @@ def classify_command(command, repo_root=None):
     args = argv[1:]
     crate_name = target = source = None
     crate_types, features, cfgs, externs, flags = [], [], [], [], []
+    metadata = None
     value_options = {'--crate-name', '--crate-type', '--target', '--cfg', '--extern', '-C',
                      '-L', '--out-dir', '--check-cfg', '--cap-lints', '-l', '-A', '-W', '-D',
                      '--remap-path-prefix'}
@@ -216,6 +217,8 @@ def classify_command(command, repo_root=None):
                 externs.append(f'{name}{"=" + suffix if suffix else ""}')
             elif arg == '-C':
                 key = value.split('=', 1)[0]
+                if key == 'metadata':
+                    metadata = value.split('=', 1)[1] if '=' in value else ''
                 if key in ('metadata', 'extra-filename', 'incremental'):
                     flags.append(f'-C {key}=<hash>')
                 else:
@@ -241,7 +244,7 @@ def classify_command(command, repo_root=None):
     return {
         'type': 'rustc', 'package': name, 'version': version, 'crate': crate_name,
         'crate_types': types, 'kind': kind, 'features': sorted(features), 'cfgs': sorted(cfgs),
-        'externs': sorted(externs), 'flags': flags, 'source': source,
+        'externs': sorted(externs), 'flags': flags, 'source': source, 'metadata': metadata,
         'primary': env.get('CARGO_PRIMARY_PACKAGE') == '1',
         'key': f'{name} {version} {crate_name} [{types}] {kind}',
     }
@@ -303,6 +306,11 @@ def compare_inventories(base, exp):
         'feature_changes': feature_changes,
         'flag_changes': flag_changes,
         'extern_changes': extern_changes,
+        # Raw Cargo `-C metadata` values (normalized out of flag_changes): Cargo hashes the sorted metadata of a
+        # unit's dependencies into it, and rustc derives symbol hashes from it.
+        'metadata_changes': [{'unit': key, 'baseline': bu[key].get('metadata'), 'experiment': eu[key].get('metadata')}
+                             for key in common if bu[key].get('metadata') != eu[key].get('metadata')],
+        'common_units': len(common),
         'parse_errors': {'baseline': len(base['parse_errors']), 'experiment': len(exp['parse_errors'])},
     }
 
@@ -1060,7 +1068,8 @@ def section_compiler(report, ctx):
     def root_units(inv):
         return [u for u in inv['units'].values() if u['primary'] and u['kind'] == WASM_TARGET]
 
-    invocation['root_units'] = {side: [{'key': u['key'], 'externs': u['externs'], 'features': u['features']}
+    invocation['root_units'] = {side: [{'key': u['key'], 'externs': u['externs'], 'features': u['features'],
+                                        'metadata': u.get('metadata')}
                                        for u in root_units(inv)] for side, inv in inventories.items()}
     report.setdefault('compiler_invocations', {}).update(invocation)
     parsed_ok = all(inventories[s]['units'] and not inventories[s]['parse_errors'] for s in SIDES)
@@ -1255,7 +1264,9 @@ def render_notices(report):
         f"macro units baseline={json.dumps(c['macro_units']['baseline'], sort_keys=True)}; "
         f"experiment={json.dumps(c['macro_units']['experiment'], sort_keys=True)}; "
         f"root wasm32 externs baseline={[u['externs'] for u in c['root_units']['baseline']]}; "
-        f"experiment={[u['externs'] for u in c['root_units']['experiment']]}"))
+        f"experiment={[u['externs'] for u in c['root_units']['experiment']]}; "
+        f"raw -C metadata changed for {len(c.get('metadata_changes', []))} of {c.get('common_units')} common rustc units: "
+        f"{short([m['unit'] + ' ' + str(m['baseline']) + '->' + str(m['experiment']) for m in c.get('metadata_changes', [])], 6)}"))
     add(2, 'Other build inventories (Cargo JSON, no-op rebuilds)', lambda: ' | '.join(
         f"{label}: units={c[key]['count']} only-counts={c[key].get('only_counts')} "
         f"multiplicity changes={short(c[key].get('multiplicity_changes', []), 8)} "

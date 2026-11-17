@@ -99,6 +99,18 @@ class RunningLineTests(NoNetwork):
         diff = evidence.compare_inventories(base, exp)
         self.assertEqual(diff['units_only_baseline'], ['multi 0.1.0 multi [lib] wasm32-unknown-unknown'])
         self.assertEqual(diff['extern_changes'][0]['added'], ['alloy_sol_macro=.so'])
+        self.assertEqual(diff['metadata_changes'], [])
+        self.assertEqual(diff['flag_changes'], [])
+
+    def test_raw_metadata_changes_are_reported_separately_from_flags(self):
+        base = evidence.compile_inventory(VERBOSE_LOG, REPO)
+        exp = evidence.compile_inventory(VERBOSE_LOG.replace('-C metadata=feed', '-C metadata=beef'), REPO)
+        self.assertEqual(base['units']['ponte-stylus-wrapper 0.1.0 ponte_stylus_wrapper [lib+cdylib] wasm32-unknown-unknown']['metadata'], 'feed')
+        diff = evidence.compare_inventories(base, exp)
+        self.assertEqual(diff['flag_changes'], [])
+        self.assertEqual(diff['metadata_changes'], [{'unit': 'ponte-stylus-wrapper 0.1.0 ponte_stylus_wrapper [lib+cdylib] wasm32-unknown-unknown',
+                                                     'baseline': 'feed', 'experiment': 'beef'}])
+        self.assertEqual(diff['common_units'], 3)
 
 
 class ArtifactInventoryTests(NoNetwork):
