@@ -27,6 +27,9 @@ class EvidenceSummaryTests(unittest.TestCase):
                 prefix = self.root / f'wrapper-inverse-{name}@{version}-{target}-normal-build'
                 for suffix, value in (('.exit', '0'), ('.txt', ''), ('.stderr', 'nothing to print')):
                     Path(f'{prefix}{suffix}').write_text(value)
+                dev_prefix = self.root / f'wrapper-inverse-{name}@{version}-{target}-normal-build-dev'
+                Path(f'{dev_prefix}.exit').write_text('0')
+                Path(f'{dev_prefix}.txt').write_text('')
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             summary.graph(self.root)

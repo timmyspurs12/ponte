@@ -2,7 +2,7 @@
 
 ## Status
 
-**Evidence collection is not yet verified.** The workflow added in this change captures fresh evidence on GitHub-hosted `ubuntu-latest`. A completed run, its result, a downloadable artifact, RustSec results and a WASM checksum must be verified before they can be asserted here. Failure to produce those is a blocker, not a clean audit. No deployment, activation or RPC validation is in scope.
+**The hosted audit found advisories and failed; this is not a clean audit or deployment approval.** The first run built and uploaded evidence, but the sandbox could not download the artifact or full logs because the GitHub artifact storage endpoint returned EOF. Conclusions below are limited to independently available GitHub job metadata and check annotations. No deployment, activation or RPC validation is in scope.
 
 Baseline: this branch starts from `main` commit `666da3e602a4fff6838f64e939db4dd1c22b3bc0`. Three separate workspaces and lockfiles are covered: `rust/environment-check`, `rust/optimizer`, and `rust/stylus-wrapper`. The existing `stylus-wrapper.yml` release build is `cargo build --locked --release --lib --target wasm32-unknown-unknown`. No existing CI or release gate is changed.
 
@@ -18,11 +18,17 @@ The wrapper's exact release CI build is preceded by the same command with `-vv`;
 
 A previous custom semver scan of advisory-db commit `233155b4025b854c68a4b199c0e32d7fd53291a2` identified candidates including vulnerability [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html) for `crypto-bigint 0.5.5` and unsoundness warning [RUSTSEC-2026-0253](https://rustsec.org/advisories/RUSTSEC-2026-0253.html) for `lru 0.16.4`. That scan is not authoritative cargo-audit output. The lru advisory requires a panicking key destructor, caught unwinding and subsequent cache operations; the inspected Alloy provider call uses a `u64` block-number key. No general exploitability or unreachability conclusion follows. The crypto-bigint timing advisory requires relevant operations on secrets and observable timing; neither has been established. Determine actual target-specific Cargo paths from uploaded evidence; they do not establish machine-code reachability. No dependency was upgraded or removed.
 
+## Hosted run 44099488399
+
+The [push run](https://github.com/timmyspurs12/ponte/actions/runs/44099488399) on commit `27770e7c45b345f6c4f799da234e0042b2c369c1` finished **failure**: toolchain install and graph/WASM capture succeeded; the audit step failed; artifact upload succeeded. GitHub lists [artifact `ponte-dependency-evidence-44099488399-1`](https://github.com/timmyspurs12/ponte/actions/runs/44099488399/artifacts/14334524551), expiring 2026-12-17, archive digest `sha256:4b2593ef5d7ba732f002112c9128cd1f1c0a49fa4bd6118ffd46c8e01a2b78fb`. This environment could not download the archive or logs (storage endpoint EOF); upload metadata is not independent inspection of the archive.
+
+- The successful graph step annotated **90,506 bytes**, WASM SHA-256 `26f536e6e2ca6eb219b011b4f353d43222e4a09df12cc39397e383ede18fc67d`. This is the first run's build, not a separately reproduced or downloaded binary.
+- Normal/build wrapper trees for both host and WASM did not list either `crypto-bigint 0.5.5` or `lru 0.16.4`; their inverse queries returned 0 with Cargo's `nothing to print` warning. This is the captured Cargo graph scope only, not a proof of binary or runtime absence. The detailed feature and dev-inclusive graphs are in the artifact but could not be inspected here.
+- RustSec annotations: environment-check exit 0, zero vulnerabilities and zero warnings; optimizer exit 1, zero vulnerabilities and one unmaintained warning, `RUSTSEC-2024-0436` (`paste 1.0.15`); wrapper exit 1, one vulnerability and six warnings. The visible vulnerability is `RUSTSEC-2026-0387` (`crypto-bigint 0.5.5`). Visible unmaintained notices cover `RUSTSEC-2024-0370` (`proc-macro-error 1.0.4`), `RUSTSEC-2024-0388` (`derivative 2.2.0`), `RUSTSEC-2024-0436` (`paste 1.0.15`), `RUSTSEC-2026-0173` (`proc-macro-error2 2.0.1`), and `RUSTSEC-2026-0543` (`chrono 0.4.45`). The remaining warning is **not identifiable from available annotations**; it must be verified in the JSON artifact, not assumed to be the preliminary `lru` candidate. The JSON summary's database fields `last-commit` and `last-updated` were null (1,527 advisories); the separately recorded Git revision could not be inspected in the inaccessible artifact. Yanked-index coverage is unknown.
+
 ## Open evidence
 
-- Hosted run and commit: **not yet verified**.
-- RustSec revision, audit JSON, findings, exit codes and yanked-index coverage: **not yet verified**.
-- WASM SHA-256, byte size and artifact download: **not yet verified**.
-- Exploitability, full linked-crate inventory, chain/Nitro behavior and activation eligibility: **not established**.
+- Inspect downloaded raw JSON, full build/feature/dev graphs, toolchain provenance and the separate RustSec revision; independently hash the uploaded WASM. Check yanked-index coverage and identify the sixth wrapper warning.
+- Exploitability, full linked-crate inventory, chain/Nitro behavior and activation eligibility are **not established**.
 
 Deployment/activation is not authorized by this evidence and remains blocked pending appropriate security review and separately authorized validation.

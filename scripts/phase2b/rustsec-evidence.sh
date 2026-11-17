@@ -33,6 +33,7 @@ git -C "$TMP/advisory-db" rev-parse HEAD > "$OUT/advisory-db.commit"
 git -C "$TMP/advisory-db" show -s --format='%cI %s' HEAD > "$OUT/advisory-db.date"
 date -u +%FT%TZ > "$OUT/audit-date.txt"
 cat "$OUT/advisory-db.commit" "$OUT/advisory-db.date" "$OUT/audit-date.txt"
+echo "::notice title=RustSec database::revision=$(cat "$OUT/advisory-db.commit"); audited=$(cat "$OUT/audit-date.txt"); --no-fetch may leave yanked index stale or unavailable"
 
 # Audits must run for all three locks even when an earlier one has findings.
 # --deny warnings includes unsound/unmaintained/yanked; no ID or target is ignored.

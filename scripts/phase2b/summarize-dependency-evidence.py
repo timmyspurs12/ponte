@@ -30,6 +30,11 @@ def graph(out):
                        f'stderr={stderr[:400] or "<empty>"}. This tree includes host build dependencies; '
                        'it does not establish linkage or runtime reachability.')
             notice('Cargo graph', message)
+        for name, version in (('crypto-bigint', '0.5.5'), ('lru', '0.16.4')):
+            prefix = out / f'wrapper-inverse-{name}@{version}-{target}-normal-build-dev'
+            inverse = Path(f'{prefix}.txt').read_text().strip()
+            code = Path(f'{prefix}.exit').read_text().strip()
+            notice('Cargo dev-inclusive inverse', f'{target}: {name} {version}: exit={code}; {inverse[:2500] or "<empty>"}')
 
 
 def audit(out):
@@ -47,9 +52,8 @@ def audit(out):
                 for item in items:
                     advisory = item.get('advisory') or {}
                     findings.append((category, advisory.get('id', '<no advisory ID>'), item['package']['name'], item['package']['version']))
-            notice('RustSec audit', f'{workspace}: exit={code}; vulnerabilities={len(vulnerabilities)}; warnings={sum(len(x) for x in warnings.values())}; database={data.get("database", {})}')
-            for category, advisory, name, version in findings:
-                notice('RustSec finding', f'{workspace}: {category} {advisory} {name} {version}')
+            detail = '; '.join(f'{category} {advisory} {name} {version}' for category, advisory, name, version in findings) or 'none'
+            notice('RustSec audit', f'{workspace}: exit={code}; vulnerabilities={len(vulnerabilities)}; warnings={sum(len(x) for x in warnings.values())}; findings: {detail}; database={data.get("database", {})}')
             if findings and code == 0:
                 print(f'::error title=RustSec status inconsistent::{workspace}: findings with a zero audit exit')
                 failed = True
