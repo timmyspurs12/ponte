@@ -37,6 +37,8 @@ SIDES = ('baseline', 'experiment')
 ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
 # Legacy Rust symbol hashes, demangled (`::h<16 hex>`) or mangled (`17h<16 hex>E`).
 SYMBOL_HASH = re.compile(r'(::h[0-9a-f]{16}|17h[0-9a-f]{16}E)(?=$|[^0-9A-Za-z_])')
+LLVM_LOCAL_SUFFIX = re.compile(r'\.llvm\.\d+')
+WAT_IDENTIFIER = re.compile(r'\$([^\s()]+)')
 SECTION_NAMES = {
     0: 'custom', 1: 'type', 2: 'import', 3: 'function', 4: 'table', 5: 'memory',
     6: 'global', 7: 'export', 8: 'start', 9: 'element', 10: 'code', 11: 'data',
@@ -688,6 +690,135 @@ def compare_wat_blocks(base_text, exp_text):
     }
 
 
+def identity_key(text):
+    """Cross-build function identity: legacy symbol hashes and ThinLTO `.llvm.N` promotion suffixes removed."""
+    return LLVM_LOCAL_SUFFIX.sub('.llvm.<n>', strip_symbol_hashes(text))
+
+
+def wat_fields(text):
+    """Ordered top-level module fields of wasm2wat output, classifying functions, imported functions and names."""
+    fields, current = [], None
+    for line in text.splitlines():
+        if line.startswith('  (') and not line.startswith('   '):
+            current = {'kind': 'other', 'name': None, 'lines': [line]}
+            func = re.match(r'  \(func(?: \$([^\s()]+))?', line)
+            imported = re.match(r'  \(import "[^"]*" "[^"]*" \(func(?: \$([^\s()]+))?', line)
+            if func:
+                current.update(kind='func', name=func.group(1))
+            elif imported:
+                current.update(kind='import_func', name=imported.group(1))
+            elif line.startswith('  (@custom "name"'):
+                current['kind'] = 'name_section'
+            fields.append(current)
+        elif current is not None:
+            current['lines'].append(line)
+    return fields
+
+
+def compare_wat_renamed(base_text, exp_text, base_wasm, exp_wasm):
+    """Prove or refute equivalence up to symbol renaming and function order.
+
+    Functions are paired one-to-one by identity key; same-key groups (monomorphizations whose names differ
+    only by hash) are paired by normalized content, then by order. Every baseline symbol is renamed to its
+    paired experiment symbol and blocks are compared exactly, so a hash-normalization blind spot cannot hide
+    a changed call target. Binary body differences of paired functions are then attributed to calls of
+    moved functions (whose index immediates necessarily change) or reported as unexplained.
+    """
+    if not base_text or not exp_text:
+        return {'available': False}
+    fb, fe = wat_fields(base_text), wat_fields(exp_text)
+    funcs_b = [f for f in fb if f['kind'] in ('import_func', 'func')]
+    funcs_e = [f for f in fe if f['kind'] in ('import_func', 'func')]
+    imports = [sum(f['kind'] == 'import_func' for f in funcs_b), sum(f['kind'] == 'import_func' for f in funcs_e)]
+
+    def groups(funcs):
+        out = collections.defaultdict(list)
+        for index, f in enumerate(funcs):
+            out[(f['kind'], identity_key(f['name'] or f'(;{index};)'))].append(index)
+        return out
+
+    def normalized(f):
+        return identity_key('\n'.join(f['lines']))
+
+    gb, ge = groups(funcs_b), groups(funcs_e)
+    mapping = {}
+    for key, b_indices in gb.items():
+        available = list(ge.get(key, []))
+        unpaired = []
+        for i in b_indices:
+            j = next((j for j in available if normalized(funcs_e[j]) == normalized(funcs_b[i])), None)
+            if j is None:
+                unpaired.append(i)
+            else:
+                mapping[i] = j
+                available.remove(j)
+        mapping.update(zip(unpaired, available))
+    rename = {funcs_b[i]['name']: funcs_e[j]['name'] for i, j in mapping.items()
+              if funcs_b[i]['name'] and funcs_e[j]['name']}
+
+    def renamed(lines):
+        return [WAT_IDENTIFIER.sub(lambda m: '$' + rename.get(m.group(1), m.group(1)), line) for line in lines]
+
+    differing = []
+    for i, j in sorted(mapping.items()):
+        a, b = renamed(funcs_b[i]['lines']), funcs_e[j]['lines']
+        if a != b:
+            diff = [d[:220] for d in difflib.unified_diff(a, b, lineterm='', n=0) if not d.startswith(('---', '+++', '@@'))]
+            differing.append({'function': identity_key(funcs_b[i]['name'] or '')[:160], 'diff': diff[:10]})
+    other_b = [renamed(f['lines']) for f in fb if f['kind'] == 'other']
+    other_e = [f['lines'] for f in fe if f['kind'] == 'other']
+    other_differing = [a[0][:160] for a, b in zip(other_b, other_e) if a != b]
+    names_b = [f['lines'] for f in fb if f['kind'] == 'name_section']
+    names_e = [f['lines'] for f in fe if f['kind'] == 'name_section']
+
+    offset_b, offset_e = imports
+    moved = [{'function': identity_key(funcs_b[i]['name'] or '')[:160], 'from': i - offset_b, 'to': j - offset_e}
+             for i, j in sorted(mapping.items()) if funcs_b[i]['kind'] == 'func' and i - offset_b != j - offset_e]
+    moved_names = {funcs_e[j]['name'] for i, j in mapping.items()
+                   if funcs_b[i]['kind'] == 'func' and i - offset_b != j - offset_e}
+    bodies_b, bodies_e = base_wasm.get('code_bodies', []), exp_wasm.get('code_bodies', [])
+    defined = [len(funcs_b) - offset_b, len(funcs_e) - offset_e]
+    binary = {'code_body_counts_match_wat': defined == [len(bodies_b), len(bodies_e)], 'identical': 0,
+              'identical_but_moved': 0, 'differs_calls_moved': [], 'differs_unexplained': []}
+    if binary['code_body_counts_match_wat']:
+        for i, j in sorted(mapping.items()):
+            if funcs_b[i]['kind'] != 'func':
+                continue
+            k, m = i - offset_b, j - offset_e
+            name = identity_key(funcs_b[i]['name'] or '')[:160]
+            if bodies_b[k]['sha256'] == bodies_e[m]['sha256']:
+                binary['identical'] += 1
+                binary['identical_but_moved'] += k != m
+                continue
+            called = sorted({identity_key(x)[:120] for line in funcs_e[j]['lines'][1:]
+                             for x in WAT_IDENTIFIER.findall(line) if x in moved_names})
+            entry = {'function': name, 'calls_moved': called, 'moved_itself': k != m, 'sizes': [bodies_b[k]['size'], bodies_e[m]['size']]}
+            binary['differs_calls_moved' if called else 'differs_unexplained'].append(entry)
+    result = {
+        'available': True,
+        'functions': [len(funcs_b), len(funcs_e)],
+        'imported_functions': imports,
+        'paired': len(mapping),
+        'unpaired_baseline': [identity_key(funcs_b[i]['name'] or '')[:160] for i in range(len(funcs_b)) if i not in mapping][:10],
+        'unpaired_experiment': [identity_key(funcs_e[j]['name'] or '')[:160] for j in range(len(funcs_e))
+                                if j not in set(mapping.values())][:10],
+        'symbols_renamed': sum(1 for a, b in rename.items() if a != b),
+        'identical_after_renaming': len(mapping) - len(differing),
+        'differing_after_renaming': differing[:10],
+        'differing_after_renaming_count': len(differing),
+        'moved': moved,
+        'other_fields': [len(other_b), len(other_e)],
+        'other_fields_differing_after_renaming': other_differing[:5] + (['field count differs'] if len(other_b) != len(other_e) else []),
+        'name_section_identical': names_b == names_e,
+        'binary': binary,
+    }
+    result['equivalent_up_to_renaming_and_order'] = (
+        not result['unpaired_baseline'] and not result['unpaired_experiment'] and not differing
+        and not result['other_fields_differing_after_renaming'] and binary['code_body_counts_match_wat']
+        and not binary['differs_unexplained'])
+    return result
+
+
 def compare_wat(base_text, exp_text):
     if not base_text or not exp_text:
         return {'available': False}
@@ -973,6 +1104,7 @@ def section_wasm(report, ctx):
     wat_b, wat_e = read_text(sides['baseline'] / 'release.wat'), read_text(sides['experiment'] / 'release.wat')
     report['wat'] = compare_wat(wat_b, wat_e)
     report['wat_blocks'] = compare_wat_blocks(wat_b, wat_e)
+    report['wat_renamed'] = compare_wat_renamed(wat_b, wat_e, sections['baseline'] or {}, sections['experiment'] or {})
     if ctx['mode'] == 'control':
         check(report, 'wasm_identical_control', report['wasm'].get('identical'), 'identical sources must give identical WASM')
 
@@ -1169,6 +1301,22 @@ def render_notices(report):
         f"{short(report['wat_blocks']['only_experiment'], 4)} differing blocks={report['wat_blocks']['differing_count']}: "
         + ' || '.join(f"{d['block']} lines={d['lines']} diff={short(d['diff'], 10)}" for d in report['wat_blocks']['details'])
         if report['wat_blocks'].get('available') else 'wasm2wat unavailable'))
+    def renamed_notice():
+        r = report['wat_renamed']
+        if not r.get('available'):
+            return 'wasm2wat unavailable'
+        b = r['binary']
+        return (f"equivalent up to symbol renaming and function order={r['equivalent_up_to_renaming_and_order']}; "
+                f"functions={r['functions']} (imported {r['imported_functions']}) paired={r['paired']} unpaired="
+                f"{short(r['unpaired_baseline'] + r['unpaired_experiment'], 4)}; symbols renamed={r['symbols_renamed']}; "
+                f"identical after renaming={r['identical_after_renaming']} differing={r['differing_after_renaming_count']} "
+                f"{short(r['differing_after_renaming'], 3)}; other module fields={r['other_fields']} differing="
+                f"{short(r['other_fields_differing_after_renaming'], 5)}; name section identical={r['name_section_identical']}; "
+                f"moved functions ({len(r['moved'])})={short(r['moved'], 8)}; binary bodies: counts match WAT="
+                f"{b['code_body_counts_match_wat']} identical={b['identical']} (of which moved={b['identical_but_moved']}) "
+                f"differ only by calling moved functions={len(b['differs_calls_moved'])} {short(b['differs_calls_moved'], 10)}; "
+                f"unexplained={len(b['differs_unexplained'])} {short(b['differs_unexplained'], 5)}")
+    add(3, 'Release WASM attribution (exact renaming proof)', renamed_notice)
     add(3, 'ABI generation and selector', lambda: (
         f"SDK export-abi identical={report['abi']['identical']} sha256={json.dumps(report['abi']['sha256'], sort_keys=True)}; "
         f"check_abi baseline={short(report['abi']['check_abi']['baseline'], 3)}; "

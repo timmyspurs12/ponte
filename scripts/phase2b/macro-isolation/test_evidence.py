@@ -159,7 +159,7 @@ class RobustnessTests(NoNetwork):
             self.assertIn('synthetic analysis defect', report['checks']['analysis_boom']['detail'])
             self.assertTrue(report['checks']['lockfiles_identical']['ok'])
             groups = evidence.render_notices(report)
-            self.assertEqual([len(g) for g in groups], [5, 5, 5, 7])
+            self.assertEqual([len(g) for g in groups], [5, 5, 5, 8])
             flat = '\n'.join(line for group in groups for line in group)
             self.assertIn('CRASHES: analysis_boom', flat)
             self.assertIn('::error title=Cargo trees::rendering failed', flat)
@@ -233,6 +233,68 @@ class WasmTests(NoNetwork):
         self.assertEqual(changed['details'][0]['block'], 'func $b::h<hash>')
         self.assertEqual(changed['details'][0]['diff'], ['-    i32.const 1', '+    i32.const 2'])
         self.assertTrue(changed['order_identical'])
+
+    RENAME_BASE = """(module
+  (type (;0;) (func))
+  (import "vm_hooks" "read_args" (func $_ZN3sdk9read_args17h0000000000000001E (type 0)))
+  (func $_ZN1a1f17h1111111111111111E (type 0)
+    call $_ZN1b1g17h2222222222222222E)
+  (func $_ZN1b1g17h2222222222222222E (type 0)
+    call $_ZN3sdk9read_args17h0000000000000001E)
+  (func $_ZN4core4fold17haaaaaaaaaaaaaaaaE (type 0)
+    nop)
+  (func $_ZN4core4fold17hbbbbbbbbbbbbbbbbE (type 0)
+    unreachable)
+  (func $_ZN5alloc11finish_grow17hccccccccccccccccE.llvm.111 (type 0)
+    nop)
+  (export "a" (func $_ZN1a1f17h1111111111111111E))
+  (@custom "name" "base"))
+"""
+    RENAME_EXP = """(module
+  (type (;0;) (func))
+  (import "vm_hooks" "read_args" (func $_ZN3sdk9read_args17h0000000000000001E (type 0)))
+  (func $_ZN1b1g17h4444444444444444E (type 0)
+    call $_ZN3sdk9read_args17h0000000000000001E)
+  (func $_ZN1a1f17h5555555555555555E (type 0)
+    call $_ZN1b1g17h4444444444444444E)
+  (func $_ZN4core4fold17hddddddddddddddddE (type 0)
+    unreachable)
+  (func $_ZN4core4fold17heeeeeeeeeeeeeeeeE (type 0)
+    nop)
+  (func $_ZN5alloc11finish_grow17hccccccccccccccccE.llvm.222 (type 0)
+    nop)
+  (export "a" (func $_ZN1a1f17h5555555555555555E))
+  (@custom "name" "experiment"))
+"""
+
+    def rename_bodies(self, *names):
+        return {'code_bodies': [{'sha256': n, 'size': len(n)} for n in names]}
+
+    def test_exact_renaming_proves_reorder_only_change(self):
+        result = evidence.compare_wat_renamed(
+            self.RENAME_BASE, self.RENAME_EXP,
+            self.rename_bodies('F1', 'G', 'NOP', 'UNREACH', 'NOP'), self.rename_bodies('G', 'F2', 'UNREACH', 'NOP', 'NOP'))
+        self.assertTrue(result['equivalent_up_to_renaming_and_order'])
+        self.assertEqual(result['functions'], [6, 6])
+        self.assertEqual(result['paired'], 6)
+        self.assertEqual(result['symbols_renamed'], 5)
+        self.assertEqual(result['differing_after_renaming_count'], 0)
+        self.assertEqual([(m['from'], m['to']) for m in result['moved']], [(0, 1), (1, 0), (2, 3), (3, 2)])
+        self.assertFalse(result['name_section_identical'])
+        self.assertEqual(result['binary']['identical'], 4)
+        self.assertEqual(result['binary']['identical_but_moved'], 3)
+        self.assertEqual([e['function'] for e in result['binary']['differs_calls_moved']], ['_ZN1a1f17h<hash>E'])
+        self.assertEqual(result['binary']['differs_unexplained'], [])
+
+    def test_exact_renaming_detects_changed_instruction_and_unexplained_bytes(self):
+        changed = self.RENAME_EXP.replace('unreachable)', 'i32.const 1\n    drop)')
+        result = evidence.compare_wat_renamed(
+            self.RENAME_BASE, changed,
+            self.rename_bodies('F1', 'G', 'NOP', 'UNREACH', 'NOP'), self.rename_bodies('G', 'F2', 'UNREACH', 'NOP', 'NOP2'))
+        self.assertFalse(result['equivalent_up_to_renaming_and_order'])
+        self.assertEqual(result['differing_after_renaming_count'], 1)
+        self.assertEqual(result['differing_after_renaming'][0]['diff'], ['-    unreachable)', '+    i32.const 1', '+    drop)'])
+        self.assertEqual([e['function'] for e in result['binary']['differs_unexplained']], ['_ZN5alloc11finish_grow17h<hash>E.llvm.<n>'])
 
     def test_rejects_non_wasm_and_normalizes_wat(self):
         with self.assertRaises(ValueError):
