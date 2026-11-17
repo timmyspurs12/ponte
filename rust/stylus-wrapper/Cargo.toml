@@ -1,0 +1,27 @@
+[package]
+name = "ponte-stylus-wrapper"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+ponte-optimizer = { path = "../optimizer" }
+stylus-sdk = { version = "=0.10.10" }
+alloy-sol-types = { version = "=1.5.7", default-features = false }
+# Keep the proc-macro family aligned with sol-types; newer generated APIs are incompatible.
+alloy-sol-macro = "=1.5.7"
+alloy-sol-macro-expander = "=1.5.7"
+alloy-sol-macro-input = "=1.5.7"
+
+[dev-dependencies]
+stylus-sdk = { version = "=0.10.10", features = ["stylus-test"] }
+
+[features]
+export-abi = ["stylus-sdk/export-abi"]
+contract-client-gen = []
+
+[lib]
+crate-type = ["lib", "cdylib"]

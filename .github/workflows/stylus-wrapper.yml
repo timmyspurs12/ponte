@@ -1,0 +1,50 @@
+name: Local Stylus wrapper
+on:
+  push:
+    paths:
+      - 'rust/stylus-wrapper/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/fixtures/**'
+      - '.github/workflows/stylus-wrapper.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rust/stylus-wrapper/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/fixtures/**'
+      - '.github/workflows/stylus-wrapper.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: rust/stylus-wrapper
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Native and SDK TestVM tests
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Generate SDK ABI
+        run: |
+          cargo run --locked --features export-abi > /tmp/ponte-synthetic-abi.sol
+          python3 scripts/check_abi.py /tmp/ponte-synthetic-abi.sol
+      - name: Build local WASM
+        run: cargo build --locked --release --lib --target wasm32-unknown-unknown
+      - name: Inspect entrypoint and imports
+        run: |
+          set +e
+          python3 scripts/inspect_wasm.py target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm > /tmp/inspection.log 2>&1
+          result=$?
+          cat /tmp/inspection.log
+          while IFS= read -r line; do echo "::notice title=WASM inspection::$line"; done < /tmp/inspection.log
+          exit "$result"
