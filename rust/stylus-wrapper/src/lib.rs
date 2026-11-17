@@ -734,7 +734,10 @@ mod tests {
         let array_at = request_at + read_word(args, request_at + 10 * 32);
         let mut array_length = args.to_vec();
         set_word(&mut array_length, array_at, 65);
-        assert!(call(&mut contract, &array_length).is_err(), "out-of-bounds array length rejected");
+        assert!(
+            call(&mut contract, &array_length).is_err(),
+            "out-of-bounds array length rejected"
+        );
         let mut utf8 = args.to_vec();
         utf8[string_at + 32] = 0xff;
         assert!(

@@ -1,11 +1,23 @@
-name: Local Stylus wrapper diagnostics
+name: Local Stylus wrapper
 on:
   push:
-    branches: [arena/2f57c6df-ponte]
+    paths:
+      - 'rust/stylus-wrapper/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/fixtures/**'
+      - '.github/workflows/stylus-wrapper.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rust/stylus-wrapper/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/fixtures/**'
+      - '.github/workflows/stylus-wrapper.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  diagnostics:
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -16,30 +28,23 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
-      - name: Diagnostic execution and source transfer
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Native and SDK TestVM tests
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Generate SDK ABI
         run: |
-          python3 - <<'PY'
-          import base64,gzip,io,tarfile,pathlib,subprocess
-          logs=[]; fails=[]
-          for cmd in [['cargo','fmt'],['cargo','test','--locked'],['cargo','clippy','--locked','--all-targets','--','-D','warnings'],['cargo','run','--locked','--features','export-abi']]:
-              p=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
-              logs.append('COMMAND '+' '.join(cmd)+' EXIT '+str(p.returncode)+'\n'+p.stdout)
-              fails.append(p.returncode)
-          buf=io.BytesIO()
-          with tarfile.open(fileobj=buf,mode='w:gz') as tar:
-              for file in pathlib.Path('src').rglob('*.rs'): tar.add(file)
-          pathlib.Path('/tmp/diag-source').write_text(base64.b64encode(buf.getvalue()).decode())
-          data=base64.b64encode(gzip.compress('\n'.join(logs).encode())).decode()
-          for i in range(0,len(data),3800): print(f'::notice title=LOG_{i//3800}::{data[i:i+3800]}')
-          pathlib.Path('/tmp/diag-failed').write_text(str(int(any(fails))))
-          PY
-      - name: Transfer formatted source
+          cargo run --locked --features export-abi > /tmp/ponte-synthetic-abi.sol
+          python3 scripts/check_abi.py /tmp/ponte-synthetic-abi.sol
+      - name: Build local WASM
+        run: cargo build --locked --release --lib --target wasm32-unknown-unknown
+      - name: Inspect entrypoint and imports
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('/tmp/diag-source').read_text()
-          for n in range(10):
-              if 3800*n<len(s): print(f'::notice title=SRC_{n}::{s[3800*n:3800*(n+1)]}')
-          PY
-      - name: Preserve diagnostic failure
-        run: exit "$(cat /tmp/diag-failed)"
+          set +e
+          python3 scripts/inspect_wasm.py target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm > /tmp/inspection.log 2>&1
+          result=$?
+          cat /tmp/inspection.log
+          while IFS= read -r line; do echo "::notice title=WASM inspection::$line"; done < /tmp/inspection.log
+          exit "$result"
