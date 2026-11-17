@@ -162,7 +162,7 @@ export async function execute(request: Request, parts: string[]) {
         return (await repository.listQuotes(db, [ctx.business, id])).rows;
       if (!["payments", "settlements", "activity"].includes(resource))
         fail(404, "NOT_FOUND");
-      return (
+      const history = (
         await repository.history(
           db,
           ctx.business,
@@ -170,6 +170,11 @@ export async function execute(request: Request, parts: string[]) {
           resource as "payments" | "settlements" | "activity",
         )
       ).rows;
+      // This schema and lifecycle support only simulation. If real settlements
+      // are ever introduced, replace this with verified persisted provenance.
+      return resource === "settlements"
+        ? history.map((record) => ({ ...record, simulated: true }))
+        : history;
     });
   if (!["POST", "PATCH"].includes(method)) fail(405, "METHOD_NOT_ALLOWED");
   if (ctx.role === "viewer") fail(403, "FORBIDDEN");
