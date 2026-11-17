@@ -1034,7 +1034,10 @@ mod bounded_tests {
             },
         );
         assert!(result.is_err());
-        assert!(routed.get(), "preflight must leave UTF-8 validation to Alloy");
+        assert!(
+            routed.get(),
+            "preflight must leave UTF-8 validation to Alloy"
+        );
         assert!(entry(&vm, &invalid_utf8).is_err());
     }
 
