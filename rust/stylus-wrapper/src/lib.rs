@@ -9,6 +9,12 @@ use ponte_optimizer::{
 };
 use stylus_sdk::prelude::*;
 
+#[cfg(all(
+    not(feature = "contract-client-gen"),
+    any(target_arch = "wasm32", test)
+))]
+mod calldata;
+
 sol! {
     #[derive(Debug, AbiType)]
     struct SyntheticAsset {
@@ -70,8 +76,43 @@ sol! {
 }
 
 #[storage]
-#[entrypoint]
 pub struct SyntheticOptimizer {}
+
+// SAFETY: this is the root storage object, instantiated once by the SDK router
+// for the whole invocation. It has no storage fields and makes no external calls.
+#[cfg(not(feature = "contract-client-gen"))]
+unsafe impl stylus_sdk::stylus_core::storage::TopLevelStorage for SyntheticOptimizer {}
+
+/// SDK-compatible low-level entrypoint; the SDK macro is deliberately not used
+/// because its generated entrypoint reads calldata before application code runs.
+#[cfg(all(
+    target_arch = "wasm32",
+    not(feature = "stylus-test"),
+    not(feature = "contract-client-gen")
+))]
+#[no_mangle]
+pub extern "C" fn user_entrypoint(len: usize) -> usize {
+    let host = stylus_sdk::host::VM {
+        host: stylus_sdk::host::WasmVM {},
+    };
+    if host.msg_reentrant() {
+        return 1;
+    }
+    host.pay_for_memory_grow(0);
+    let result = calldata::dispatch_bounded(len, |n| host.read_args(n), |input| {
+        stylus_sdk::abi::router_entrypoint::<SyntheticOptimizer, SyntheticOptimizer>(
+            input,
+            host.clone(),
+        )
+    });
+    let (data, status) = match result {
+        Ok(data) => (data, 0),
+        Err(data) => (data, 1),
+    };
+    host.flush_cache(false);
+    host.write_result(&data);
+    status
+}
 
 fn empty_result() -> SyntheticResult {
     SyntheticResult {
@@ -484,8 +525,17 @@ mod tests {
             let result_bytes = actual.abi_encode();
             let roundtrip = SyntheticResult::abi_decode(&result_bytes).unwrap();
             compare(&roundtrip, core_result.clone());
-            let routed = route(&mut SyntheticOptimizer::from(&vm), request(core)).unwrap();
-            compare(&routed, core_result);
+            let routed = route(&mut SyntheticOptimizer::from(&vm), request(core.clone())).unwrap();
+            compare(&routed, core_result.clone());
+            use alloy_sol_types::SolCall;
+            let calldata = evaluateSyntheticCall { request: request(core.clone()) }.abi_encode();
+            let bounded = super::bounded_tests::entry(&vm, &calldata);
+            if core.candidates.len() > 64 {
+                assert_eq!(bounded, Err(Vec::new()), "fixture {id}");
+            } else {
+                let actual = evaluateSyntheticCall::abi_decode_returns(&bounded.unwrap()).unwrap();
+                compare(&actual, core_result);
+            }
         }
     }
     #[test]
@@ -750,5 +800,213 @@ mod tests {
             call(&mut contract, &integer).is_err(),
             "nonzero uint16 high bits rejected"
         );
+    }
+}
+
+#[cfg(test)]
+mod bounded_tests {
+    use super::*;
+    use alloy_sol_types::SolCall;
+    use alloc::boxed::Box;
+    use core::cell::Cell;
+    use stylus_sdk::testing::TestVM;
+
+    fn sample(count: usize, string_bytes: usize) -> SyntheticRequest {
+        let candidate = SyntheticCandidate {
+            routeId: Default::default(),
+            snapshotId: Default::default(),
+            rateNumerator: 1,
+            rateDenominator: 1,
+            feeBps: 0,
+            estimatedImpactBps: 0,
+            minInput: 1,
+            maxInput: 100,
+            availableInput: 100,
+            availableOutput: 100,
+            executionCostUsdCents: 0,
+            expiresAtUnixSeconds: 100,
+        };
+        let mut candidates = Vec::new();
+        for i in 0..count {
+            let mut c = candidate.clone();
+            let mut id = [0u8; 32];
+            id[31] = i as u8;
+            c.routeId = id.into();
+            candidates.push(c);
+        }
+        SyntheticRequest {
+            version: 1,
+            mode: 1,
+            inputAsset: SyntheticAsset {
+                namespace: "a".repeat(string_bytes),
+                identifier: "b".repeat(string_bytes),
+                decimals: 18,
+            },
+            outputAsset: SyntheticAsset {
+                namespace: "c".repeat(string_bytes),
+                identifier: "d".repeat(string_bytes),
+                decimals: 18,
+            },
+            amountIn: 1,
+            userMinOut: 0,
+            toleranceBps: 0,
+            asOfUnixSeconds: 1,
+            expiresAtUnixSeconds: 100,
+            snapshotId: Default::default(),
+            candidates,
+        }
+    }
+
+    fn encoded(r: SyntheticRequest) -> Vec<u8> {
+        evaluateSyntheticCall { request: r }.abi_encode()
+    }
+
+    pub(super) fn entry(vm: &TestVM, data: &[u8]) -> stylus_sdk::ArbResult {
+        calldata::dispatch_bounded(
+            data.len(),
+            |_| data.to_vec(),
+            |bytes| {
+                let host = stylus_sdk::host::VM {
+                    host: Box::new(vm.clone()),
+                };
+                stylus_sdk::abi::router_entrypoint::<SyntheticOptimizer, SyntheticOptimizer>(
+                    bytes, host,
+                )
+            },
+        )
+    }
+
+    fn offsets(data: &[u8]) -> (usize, usize, usize) {
+        fn read(data: &[u8], at: usize) -> usize {
+            usize::from(u16::from_be_bytes([data[at + 30], data[at + 31]]))
+        }
+        let request = 4 + read(data, 4);
+        let asset = request + read(data, request + 2 * 32);
+        let string = asset + read(data, asset);
+        let array = request + read(data, request + 10 * 32);
+        (request, string, array)
+    }
+
+    fn set_word(data: &mut [u8], at: usize, value: u64) {
+        data[at..at + 32].fill(0);
+        data[at + 24..at + 32].copy_from_slice(&value.to_be_bytes());
+    }
+
+    // A canonical 65-candidate request is larger than the cap even with empty
+    // strings. Alias the two asset tuples (accepted by Alloy) to create a complete
+    // noncanonical 65-candidate request below the cap and exercise the count gate.
+    fn under_cap_65() -> Vec<u8> {
+        let mut data = encoded(sample(65, 0));
+        let (request, _, array) = offsets(&data);
+        let input_offset = data[request + 2 * 32..request + 3 * 32].to_vec();
+        data[request + 3 * 32..request + 4 * 32].copy_from_slice(&input_offset);
+        data.drain(array - 160..array);
+        set_word(&mut data, request + 10 * 32, (array - 160 - request) as u64);
+        assert!(data.len() < calldata::MAX_CALLDATA);
+        assert_eq!(evaluateSyntheticCall::abi_decode_validate(&data).unwrap().request.candidates.len(), 65);
+        data
+    }
+
+    #[test]
+    fn raw_guard_and_router_order_are_observable() {
+        let read = Cell::new(0);
+        let routed = Cell::new(0);
+        let too_large = calldata::dispatch_bounded(
+            calldata::MAX_CALLDATA + 1,
+            |_| { read.set(read.get() + 1); Vec::new() },
+            |_| { routed.set(routed.get() + 1); Ok(Vec::new()) },
+        );
+        assert_eq!(too_large, Err(Vec::new()));
+        assert_eq!((read.get(), routed.get()), (0, 0));
+
+        let oversized = under_cap_65();
+        let result = calldata::dispatch_bounded(
+            oversized.len(),
+            |_| { read.set(read.get() + 1); oversized.clone() },
+            |_| { routed.set(routed.get() + 1); Ok(Vec::new()) },
+        );
+        assert_eq!(result, Err(Vec::new()));
+        assert_eq!((read.get(), routed.get()), (1, 0));
+
+        let input = encoded(sample(1, 1));
+        let result = calldata::dispatch_bounded(
+            input.len(),
+            |_| { read.set(read.get() + 1); input.clone() },
+            |_| { routed.set(routed.get() + 1); Ok(Vec::new()) },
+        );
+        assert_eq!(result, Ok(Vec::new()));
+        assert_eq!((read.get(), routed.get()), (2, 1));
+    }
+
+    #[test]
+    fn exact_limit_counts_and_nonpayable_router() {
+        let vm = TestVM::default();
+        assert_eq!(evaluateSyntheticCall::SELECTOR, [0x31, 0x63, 0x19, 0x81]);
+        for count in [0, 1, 64] {
+            let input = encoded(sample(count, 64));
+            if count == 64 {
+                assert_eq!(input.len(), calldata::MAX_CALLDATA);
+            }
+            let output = entry(&vm, &input).expect("bounded SDK route succeeds");
+            let decoded = evaluateSyntheticCall::abi_decode_returns(&output).unwrap();
+            if count == 0 {
+                assert_eq!(decoded.status, 0);
+                assert_eq!(decoded.errorCode, "INVALID_CANDIDATE_COUNT");
+            } else {
+                assert_eq!(decoded.status, 1);
+                assert_eq!(decoded.evaluatedCount, count as u8);
+            }
+        }
+        let too_many = under_cap_65();
+        assert_eq!(entry(&vm, &too_many), Err(Vec::new()));
+        let too_large = encoded(sample(65, 64));
+        assert!(too_large.len() > calldata::MAX_CALLDATA);
+        assert_eq!(entry(&vm, &too_large), Err(Vec::new()));
+        let mut extra = encoded(sample(64, 64));
+        extra.push(0);
+        assert_eq!(entry(&vm, &extra), Err(Vec::new()));
+        assert!(entry(&vm, &[]).is_err());
+        assert!(entry(&vm, &[1, 2, 3]).is_err());
+        assert!(entry(&vm, &[1, 2, 3, 4]).is_err());
+        vm.set_value(stylus_sdk::alloy_primitives::U256::from(1));
+        assert_eq!(entry(&vm, &encoded(sample(1, 1))), Err(Vec::new()));
+    }
+
+    #[test]
+    fn dynamic_lengths_offsets_and_truncation_never_reach_router() {
+        let base = encoded(sample(1, 1));
+        let (request, string, array) = offsets(&base);
+        let mut cases = Vec::new();
+        let mut x = base.clone(); set_word(&mut x, array, 65); cases.push(x);
+        let mut x = base.clone(); set_word(&mut x, array, u64::MAX); cases.push(x);
+        let mut x = base.clone(); x[array..array + 32].fill(0xff); cases.push(x);
+        let mut x = base.clone(); set_word(&mut x, string, 65); cases.push(x);
+        let mut x = base.clone(); set_word(&mut x, string, u64::MAX); cases.push(x);
+        let mut x = base.clone(); set_word(&mut x, 4, u64::MAX); cases.push(x);
+        let mut x = base.clone(); set_word(&mut x, request + 2 * 32, 353); cases.push(x);
+        let mut x = base.clone(); set_word(&mut x, request + 10 * 32, u64::MAX); cases.push(x);
+        let mut x = base.clone(); x.truncate(x.len() - 1); cases.push(x);
+        for length in [4, 5, 35, 36, request + 351, string + 31] {
+            cases.push(base[..length].to_vec());
+        }
+        cases.push(encoded(sample(1, 65))); // complete ABI-valid overlong strings
+        let mut multibyte = sample(1, 1);
+        multibyte.inputAsset.namespace = "é".repeat(33); // 66 bytes, 33 characters
+        cases.push(encoded(multibyte));
+        for input in cases {
+            let routed = Cell::new(false);
+            let result = calldata::dispatch_bounded(input.len(), |_| input.clone(), |_| {
+                routed.set(true);
+                Ok(Vec::new())
+            });
+            assert!(result.is_err());
+            assert!(!routed.get(), "typed decoder must not run");
+        }
+        let mut multibyte = sample(1, 1);
+        multibyte.inputAsset.namespace = "é".repeat(32); // 64 UTF-8 bytes
+        // The gate accepts it; the core subsequently rejects non-ASCII assets.
+        let out = entry(&TestVM::default(), &encoded(multibyte)).unwrap();
+        let result = evaluateSyntheticCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(result.errorCode, "INVALID_ASSET");
     }
 }
