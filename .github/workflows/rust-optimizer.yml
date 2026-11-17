@@ -17,6 +17,7 @@ on:
     branches:
       - arena/5b4a73d0-ponte
       - arena/f3b4611b-ponte
+      - arena/dc905f3a-ponte
     paths:
       - 'rust/**'
       - 'rust/optimizer/**'
