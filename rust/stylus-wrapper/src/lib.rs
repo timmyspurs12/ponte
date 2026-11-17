@@ -118,23 +118,35 @@ fn evaluate(request: SyntheticRequest) -> SyntheticResult {
     // count before cloning or converting candidate contents into core structures.
     // Preserve the core's validation precedence for earlier request fields.
     let valid_count = (1..=64).contains(&request.candidates.len());
-    let candidates = if valid_count { request.candidates.into_iter().map(|c| CandidateV1 {
-        route_id: c.routeId,
-        snapshot_id: c.snapshotId,
-        rate_numerator: c.rateNumerator,
-        rate_denominator: c.rateDenominator,
-        fee_bps: c.feeBps,
-        estimated_impact_bps: c.estimatedImpactBps,
-        min_input: c.minInput,
-        max_input: c.maxInput,
-        available_input: c.availableInput,
-        available_output: c.availableOutput,
-        execution_cost_usd_cents: c.executionCostUsdCents,
-        expires_at_unix_seconds: c.expiresAtUnixSeconds,
-    }).collect() } else { Vec::new() };
+    let candidates = if valid_count {
+        request
+            .candidates
+            .into_iter()
+            .map(|c| CandidateV1 {
+                route_id: c.routeId,
+                snapshot_id: c.snapshotId,
+                rate_numerator: c.rateNumerator,
+                rate_denominator: c.rateDenominator,
+                fee_bps: c.feeBps,
+                estimated_impact_bps: c.estimatedImpactBps,
+                min_input: c.minInput,
+                max_input: c.maxInput,
+                available_input: c.availableInput,
+                available_output: c.availableOutput,
+                execution_cost_usd_cents: c.executionCostUsdCents,
+                expires_at_unix_seconds: c.expiresAtUnixSeconds,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let core = OptimizeRequestV1 {
         version: request.version,
-        mode: if request.mode == 1 { OptimizerMode::Synthetic } else { OptimizerMode::Unsupported },
+        mode: if request.mode == 1 {
+            OptimizerMode::Synthetic
+        } else {
+            OptimizerMode::Unsupported
+        },
         input_asset: convert_asset(request.inputAsset),
         output_asset: convert_asset(request.outputAsset),
         amount_in: request.amountIn,
@@ -172,10 +184,13 @@ fn evaluate(request: SyntheticRequest) -> SyntheticResult {
             };
             // Core guarantees evaluated count 1..=64.
             result.evaluatedCount = u8::try_from(count).expect("bounded candidate count");
-            result.rejected = rejected.into_iter().map(|r| Rejection {
-                routeId: r.route_id,
-                reason: r.reason.as_str().into(),
-            }).collect();
+            result.rejected = rejected
+                .into_iter()
+                .map(|r| Rejection {
+                    routeId: r.route_id,
+                    reason: r.reason.as_str().into(),
+                })
+                .collect();
             result
         }
     }
@@ -189,23 +204,46 @@ mod tests {
     use stylus_sdk::testing::TestVM;
 
     fn asset(a: AssetIdV1) -> SyntheticAsset {
-        SyntheticAsset { namespace: a.namespace, identifier: a.identifier, decimals: a.decimals }
+        SyntheticAsset {
+            namespace: a.namespace,
+            identifier: a.identifier,
+            decimals: a.decimals,
+        }
     }
     fn request(r: OptimizeRequestV1) -> SyntheticRequest {
         SyntheticRequest {
-            version: r.version, mode: if r.mode == OptimizerMode::Synthetic { 1 } else { 0 },
-            inputAsset: asset(r.input_asset), outputAsset: asset(r.output_asset),
-            amountIn: r.amount_in, userMinOut: r.user_min_out, toleranceBps: r.tolerance_bps,
-            asOfUnixSeconds: r.as_of_unix_seconds, expiresAtUnixSeconds: r.expires_at_unix_seconds,
+            version: r.version,
+            mode: if r.mode == OptimizerMode::Synthetic {
+                1
+            } else {
+                0
+            },
+            inputAsset: asset(r.input_asset),
+            outputAsset: asset(r.output_asset),
+            amountIn: r.amount_in,
+            userMinOut: r.user_min_out,
+            toleranceBps: r.tolerance_bps,
+            asOfUnixSeconds: r.as_of_unix_seconds,
+            expiresAtUnixSeconds: r.expires_at_unix_seconds,
             snapshotId: r.snapshot_id,
-            candidates: r.candidates.into_iter().map(|c| SyntheticCandidate {
-                routeId: c.route_id, snapshotId: c.snapshot_id, rateNumerator: c.rate_numerator,
-                rateDenominator: c.rate_denominator, feeBps: c.fee_bps,
-                estimatedImpactBps: c.estimated_impact_bps, minInput: c.min_input,
-                maxInput: c.max_input, availableInput: c.available_input,
-                availableOutput: c.available_output, executionCostUsdCents: c.execution_cost_usd_cents,
-                expiresAtUnixSeconds: c.expires_at_unix_seconds,
-            }).collect(),
+            candidates: r
+                .candidates
+                .into_iter()
+                .map(|c| SyntheticCandidate {
+                    routeId: c.route_id,
+                    snapshotId: c.snapshot_id,
+                    rateNumerator: c.rate_numerator,
+                    rateDenominator: c.rate_denominator,
+                    feeBps: c.fee_bps,
+                    estimatedImpactBps: c.estimated_impact_bps,
+                    minInput: c.min_input,
+                    maxInput: c.max_input,
+                    availableInput: c.available_input,
+                    availableOutput: c.available_output,
+                    executionCostUsdCents: c.execution_cost_usd_cents,
+                    expiresAtUnixSeconds: c.expires_at_unix_seconds,
+                })
+                .collect(),
         }
     }
     fn fixture_requests() -> Vec<(String, OptimizeRequestV1, RawJsonValue)> {
@@ -215,12 +253,22 @@ mod tests {
             include_str!("../../../scripts/phase2b/fixtures/v1/legacy-parity.json"),
             include_str!("../../../scripts/phase2b/fixtures/v1/regression-minimized.json"),
         ] {
-            let RawJsonValue::Object(root) = parse_raw_json(file).unwrap() else { panic!("root") };
-            let RawJsonValue::Array(vectors) = &root["vectors"] else { panic!("vectors") };
+            let RawJsonValue::Object(root) = parse_raw_json(file).unwrap() else {
+                panic!("root")
+            };
+            let RawJsonValue::Array(vectors) = &root["vectors"] else {
+                panic!("vectors")
+            };
             for vector in vectors {
-                let RawJsonValue::Object(v) = vector else { panic!("vector") };
-                let RawJsonValue::String(raw) = &v["rawRequestJson"] else { panic!("raw") };
-                let RawJsonValue::String(id) = &v["id"] else { panic!("id") };
+                let RawJsonValue::Object(v) = vector else {
+                    panic!("vector")
+                };
+                let RawJsonValue::String(raw) = &v["rawRequestJson"] else {
+                    panic!("raw")
+                };
+                let RawJsonValue::String(id) = &v["id"] else {
+                    panic!("id")
+                };
                 if let Ok(r) = parse_request_v1_json(raw) {
                     entries.push((id.clone(), r, v["expectedResponse"].clone()));
                 }
@@ -228,29 +276,42 @@ mod tests {
         }
         entries
     }
-    fn compare(actual: &SyntheticResult, core: Result<OptimizeOutcomeV1, ponte_optimizer::OptimizerError>) {
+    fn compare(
+        actual: &SyntheticResult,
+        core: Result<OptimizeOutcomeV1, ponte_optimizer::OptimizerError>,
+    ) {
         match core {
-            Err(e) => { assert_eq!(actual.status, 0); assert_eq!(actual.errorCode, e.code()); }
+            Err(e) => {
+                assert_eq!(actual.status, 0);
+                assert_eq!(actual.errorCode, e.code());
+            }
             Ok(outcome) => {
                 let (count, rejects) = match outcome {
                     OptimizeOutcomeV1::Selected(s) => {
-                        assert_eq!(actual.status, 1); assert_eq!(actual.selectedRouteId, s.selected_route_id);
-                        assert_eq!(actual.amountIn, s.amount_in); assert_eq!(actual.grossOut, s.gross_out);
-                        assert_eq!(actual.feeOut, s.fee_out); assert_eq!(actual.expectedOut, s.expected_out);
+                        assert_eq!(actual.status, 1);
+                        assert_eq!(actual.selectedRouteId, s.selected_route_id);
+                        assert_eq!(actual.amountIn, s.amount_in);
+                        assert_eq!(actual.grossOut, s.gross_out);
+                        assert_eq!(actual.feeOut, s.fee_out);
+                        assert_eq!(actual.expectedOut, s.expected_out);
                         assert_eq!(actual.minimumOut, s.minimum_out);
                         assert_eq!(actual.executionCostUsdCents, s.execution_cost_usd_cents);
-                        assert_eq!(actual.effectiveExpiry, s.effective_expiry); assert_eq!(actual.snapshotId, s.snapshot_id);
+                        assert_eq!(actual.effectiveExpiry, s.effective_expiry);
+                        assert_eq!(actual.snapshotId, s.snapshot_id);
                         (s.evaluated_count, s.rejected)
-                    },
+                    }
                     OptimizeOutcomeV1::NoRoute(n) => {
-                        assert_eq!(actual.status, 2); assert_eq!(actual.amountIn, n.amount_in);
-                        assert_eq!(actual.snapshotId, n.snapshot_id); (n.evaluated_count, n.rejected)
-                    },
+                        assert_eq!(actual.status, 2);
+                        assert_eq!(actual.amountIn, n.amount_in);
+                        assert_eq!(actual.snapshotId, n.snapshot_id);
+                        (n.evaluated_count, n.rejected)
+                    }
                 };
                 assert_eq!(usize::from(actual.evaluatedCount), count);
                 assert_eq!(actual.rejected.len(), rejects.len());
                 for (a, b) in actual.rejected.iter().zip(rejects) {
-                    assert_eq!(a.routeId, b.route_id); assert_eq!(a.reason, b.reason.as_str());
+                    assert_eq!(a.routeId, b.route_id);
+                    assert_eq!(a.reason, b.reason.as_str());
                 }
             }
         }
@@ -260,11 +321,18 @@ mod tests {
         let vm = TestVM::default();
         let contract = SyntheticOptimizer::from(&vm);
         let fixtures = fixture_requests();
-        assert!(fixtures.len() >= 35, "need meaningful representable fixture coverage");
+        assert!(
+            fixtures.len() >= 35,
+            "need meaningful representable fixture coverage"
+        );
         for (id, core, expected) in fixtures {
             let core_result = optimize_v1(&core);
             let core_json = ponte_optimizer::format_result_v1_json(&core_result);
-            assert_eq!(parse_raw_json(&core_json).unwrap(), expected, "fixture {id}");
+            assert_eq!(
+                parse_raw_json(&core_json).unwrap(),
+                expected,
+                "fixture {id}"
+            );
             let encoded = request(core).abi_encode();
             let decoded = SyntheticRequest::abi_decode(&encoded).unwrap();
             let actual = contract.evaluate_synthetic(decoded);
@@ -277,24 +345,47 @@ mod tests {
     fn oversized_and_invalid_requests_have_deterministic_core_errors() {
         let vm = TestVM::default();
         let contract = SyntheticOptimizer::from(&vm);
-        let (_, core, _) = fixture_requests().into_iter().find(|(_, r, _)| r.candidates.len() == 1).unwrap();
+        let (_, core, _) = fixture_requests()
+            .into_iter()
+            .find(|(_, r, _)| r.candidates.len() == 1)
+            .unwrap();
         let mut oversized = core.clone();
         oversized.candidates = (0..65).map(|_| core.candidates[0].clone()).collect();
-        compare(&contract.evaluate_synthetic(request(oversized.clone())), optimize_v1(&oversized));
+        compare(
+            &contract.evaluate_synthetic(request(oversized.clone())),
+            optimize_v1(&oversized),
+        );
         oversized.version = 2;
-        compare(&contract.evaluate_synthetic(request(oversized.clone())), optimize_v1(&oversized));
-        let mut zero = core; zero.amount_in = 0;
-        compare(&contract.evaluate_synthetic(request(zero.clone())), optimize_v1(&zero));
+        compare(
+            &contract.evaluate_synthetic(request(oversized.clone())),
+            optimize_v1(&oversized),
+        );
+        let mut zero = core;
+        zero.amount_in = 0;
+        compare(
+            &contract.evaluate_synthetic(request(zero.clone())),
+            optimize_v1(&zero),
+        );
     }
     #[test]
     fn tie_break_and_rejections_are_permutation_invariant() {
         let vm = TestVM::default();
         let contract = SyntheticOptimizer::from(&vm);
-        let (_, mut core, _) = fixture_requests().into_iter().find(|(_, r, _)| r.candidates.len() > 1).unwrap();
-        let a = contract.evaluate_synthetic(request(core.clone())).abi_encode();
+        let (_, mut core, _) = fixture_requests()
+            .into_iter()
+            .find(|(_, r, _)| r.candidates.len() > 1)
+            .unwrap();
+        let a = contract
+            .evaluate_synthetic(request(core.clone()))
+            .abi_encode();
         core.candidates.reverse();
-        let b = contract.evaluate_synthetic(request(core.clone())).abi_encode();
+        let b = contract
+            .evaluate_synthetic(request(core.clone()))
+            .abi_encode();
         assert_eq!(a, b);
-        compare(&SyntheticResult::abi_decode(&b).unwrap(), optimize_v1(&core));
+        compare(
+            &SyntheticResult::abi_decode(&b).unwrap(),
+            optimize_v1(&core),
+        );
     }
 }
