@@ -1,0 +1,22 @@
+[package]
+name = "ponte-stylus-wrapper"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+ponte-optimizer = { path = "../optimizer" }
+stylus-sdk = { version = "=0.10.10" }
+alloy-sol-types = { version = "=1.5.7", default-features = false }
+
+[dev-dependencies]
+stylus-sdk = { version = "=0.10.10", features = ["stylus-test"] }
+
+[features]
+export-abi = ["stylus-sdk/export-abi"]
+
+[lib]
+crate-type = ["lib", "cdylib"]

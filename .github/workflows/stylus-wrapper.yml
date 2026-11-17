@@ -1,0 +1,42 @@
+name: Local Stylus wrapper
+on:
+  push:
+    branches: [arena/2f57c6df-ponte]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rust/stylus-wrapper/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/fixtures/**'
+      - '.github/workflows/stylus-wrapper.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: rust/stylus-wrapper
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+      - name: Bootstrap diagnostics
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, io, pathlib, subprocess, tarfile
+          log = []
+          for cmd in [['cargo','generate-lockfile'], ['cargo','fmt'], ['cargo','test','--locked'], ['cargo','clippy','--locked','--all-targets','--','-D','warnings'], ['cargo','build','--locked','--release','--lib','--target','wasm32-unknown-unknown']]:
+              p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+              log.append('COMMAND ' + ' '.join(cmd) + ' EXIT ' + str(p.returncode) + '\n' + p.stdout)
+          out = io.BytesIO()
+          with tarfile.open(fileobj=out, mode='w:gz') as archive:
+              for f in [pathlib.Path('Cargo.lock'), *pathlib.Path('src').rglob('*.rs')]:
+                  if f.exists(): archive.add(f)
+          for title,data in [('SOURCE',out.getvalue()),('LOG',gzip.compress('\n'.join(log).encode()))]:
+              text=base64.b64encode(data).decode()
+              for i in range(0,len(text),3800): print(f'::notice title={title}_{i//3800}::{text[i:i+3800]}')
+          PY
