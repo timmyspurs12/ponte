@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import difflib
 import hashlib
 import json
 import re
@@ -366,6 +367,9 @@ def compare_artifact_inventories(base_text, exp_text):
         'count': [sum(base['units'].values()), sum(exp['units'].values())],
         'only_baseline': sorted(bset - eset),
         'only_experiment': sorted(eset - bset),
+        'only_counts': [sum(base['units'][k] for k in bset - eset), sum(exp['units'][k] for k in eset - bset)],
+        'multiplicity_changes': [f"{k} x{base['units'][k]}->x{exp['units'][k]}" for k in sorted(bset & eset)
+                                 if base['units'][k] != exp['units'][k]],
         'feature_changes': changed,
     }
 
@@ -612,10 +616,76 @@ def compare_wasm(base, exp):
                                 for i in differing][:15],
         'differing_count': len(differing),
     }
+    sequence_b = [strip_symbol_hashes(names_b.get(i + offset, f'func[{i + offset}]')) for i in range(len(cb))]
+    sequence_e = [strip_symbol_hashes(names_e.get(i + offset, f'func[{i + offset}]')) for i in range(len(ce))]
+    result['code']['differing_positions'] = [
+        {'index': i + offset, 'baseline': sequence_b[i], 'experiment': sequence_e[i],
+         'sizes': [base['code_bodies'][i]['size'], exp['code_bodies'][i]['size']],
+         'experiment_body_found_in_baseline': ce[i] in set(cb)} for i in differing][:20]
+
+    def keyed(sequence, bodies):
+        out = {}
+        for name, body in zip(sequence, bodies):
+            key, n = name, 2
+            while key in out:
+                key, n = f'{name} #{n}', n + 1
+            out[key] = body
+        return out
+
+    kb, ke = keyed(sequence_b, base['code_bodies']), keyed(sequence_e, exp['code_bodies'])
+    by_name = [k for k in sorted(set(kb) & set(ke)) if kb[k]['sha256'] != ke[k]['sha256']]
+    result['code']['by_name'] = {
+        'order_identical': sequence_b == sequence_e,
+        'positions_with_other_function': sum(1 for x, y in zip(sequence_b, sequence_e) if x != y),
+        'only_baseline': sorted(set(kb) - set(ke))[:10],
+        'only_experiment': sorted(set(ke) - set(kb))[:10],
+        'differing_count': len(by_name),
+        'differing': [{'function': k, 'sizes': [kb[k]['size'], ke[k]['size']]} for k in by_name][:20],
+    }
     result['data_segments_identical'] = base['data_segments'] == exp['data_segments']
     result['imports_identical'] = base['imports'] == exp['imports']
     result['exports_identical'] = base['exports'] == exp['exports']
     return result
+
+
+def wat_blocks(text):
+    """Split wasm2wat output into top-level blocks keyed by normalized function name."""
+    blocks, order, current = {}, [], None
+    for line in strip_symbol_hashes(text).splitlines():
+        if line.startswith('  (') and not line.startswith('   '):
+            match = re.match(r'  \(func (\$\S+|\(;\d+;\))', line)
+            name = f'func {match.group(1)}' if match else line.strip()[:100]
+            key, n = name, 2
+            while key in blocks:
+                key, n = f'{name} #{n}', n + 1
+            blocks[key], current = [line], key
+            order.append(key)
+        elif current is not None:
+            blocks[current].append(line)
+    return blocks, order
+
+
+def compare_wat_blocks(base_text, exp_text):
+    if not base_text or not exp_text:
+        return {'available': False}
+    bb, bo = wat_blocks(base_text)
+    eb, eo = wat_blocks(exp_text)
+    common = [k for k in bo if k in eb]
+    differing = [k for k in common if bb[k] != eb[k]]
+    details = []
+    for key in differing[:10]:
+        diff = [d[:220] for d in difflib.unified_diff(bb[key], eb[key], lineterm='', n=0)
+                if not d.startswith(('---', '+++', '@@'))]
+        details.append({'block': key[:160], 'lines': [len(bb[key]), len(eb[key])], 'diff': diff[:10]})
+    return {
+        'available': True,
+        'blocks': [len(bb), len(eb)],
+        'order_identical': common == [k for k in eo if k in bb],
+        'only_baseline': [k[:160] for k in bo if k not in eb][:10],
+        'only_experiment': [k[:160] for k in eo if k not in bb][:10],
+        'differing_count': len(differing),
+        'details': details,
+    }
 
 
 def compare_wat(base_text, exp_text):
@@ -900,7 +970,9 @@ def section_wasm(report, ctx):
         report['wasm'] = compare_wasm(sections['baseline'], sections['experiment'])
     else:
         report['wasm'] = {'error': 'missing wasm-sections.json'}
-    report['wat'] = compare_wat(read_text(sides['baseline'] / 'release.wat'), read_text(sides['experiment'] / 'release.wat'))
+    wat_b, wat_e = read_text(sides['baseline'] / 'release.wat'), read_text(sides['experiment'] / 'release.wat')
+    report['wat'] = compare_wat(wat_b, wat_e)
+    report['wat_blocks'] = compare_wat_blocks(wat_b, wat_e)
     if ctx['mode'] == 'control':
         check(report, 'wasm_identical_control', report['wasm'].get('identical'), 'identical sources must give identical WASM')
 
@@ -1053,8 +1125,10 @@ def render_notices(report):
         f"root wasm32 externs baseline={[u['externs'] for u in c['root_units']['baseline']]}; "
         f"experiment={[u['externs'] for u in c['root_units']['experiment']]}"))
     add(2, 'Other build inventories (Cargo JSON, no-op rebuilds)', lambda: ' | '.join(
-        f"{label}: units={c[key]['count']} only baseline={short(c[key]['only_baseline'], 30)} "
-        f"only experiment={short(c[key]['only_experiment'], 10)} feature changes={short(c[key]['feature_changes'], 10)}"
+        f"{label}: units={c[key]['count']} only-counts={c[key].get('only_counts')} "
+        f"multiplicity changes={short(c[key].get('multiplicity_changes', []), 8)} "
+        f"only baseline={short(c[key]['only_baseline'], 20)} "
+        f"only experiment={short(c[key]['only_experiment'], 20)} feature changes={short(c[key]['feature_changes'], 10)}"
         for label, key in (('release wasm', 'json_inventory'), ('cargo test', 'test_json_inventory'),
                            ('export-abi host build', 'export_abi_json_inventory'))))
 
@@ -1082,6 +1156,19 @@ def render_notices(report):
         + json.dumps({k: report['wat'].get(k) for k in ('available', 'raw_identical', 'normalized_identical', 'lines',
                                                        'lines_only_baseline', 'lines_only_experiment',
                                                        'first_difference_line')})))
+    add(3, 'Release WASM attribution (binary functions)', lambda: (
+        f"by name: order identical={w['code']['by_name']['order_identical']}; positions holding a different "
+        f"function={w['code']['by_name']['positions_with_other_function']}; bodies differing when matched by name="
+        f"{w['code']['by_name']['differing_count']} [{short(w['code']['by_name']['differing'], 12)}]; only baseline="
+        f"{short(w['code']['by_name']['only_baseline'], 4)}; only experiment={short(w['code']['by_name']['only_experiment'], 4)}; "
+        f"names differing beyond hash at same index={short(w['function_names']['examples_other'], 5)}; differing positions="
+        f"{short(w['code']['differing_positions'], 12)}"))
+    add(3, 'Release WASM attribution (wasm2wat by function, calls by name)', lambda: (
+        f"blocks={report['wat_blocks']['blocks']} order identical={report['wat_blocks']['order_identical']} "
+        f"only baseline={short(report['wat_blocks']['only_baseline'], 4)} only experiment="
+        f"{short(report['wat_blocks']['only_experiment'], 4)} differing blocks={report['wat_blocks']['differing_count']}: "
+        + ' || '.join(f"{d['block']} lines={d['lines']} diff={short(d['diff'], 10)}" for d in report['wat_blocks']['details'])
+        if report['wat_blocks'].get('available') else 'wasm2wat unavailable'))
     add(3, 'ABI generation and selector', lambda: (
         f"SDK export-abi identical={report['abi']['identical']} sha256={json.dumps(report['abi']['sha256'], sort_keys=True)}; "
         f"check_abi baseline={short(report['abi']['check_abi']['baseline'], 3)}; "

@@ -129,7 +129,8 @@ class ArtifactInventoryTests(NoNetwork):
                   'out_dir': '/r/target/release/build/serde-1/out'}
         base = '\n'.join(json.dumps(m) for m in (artifact, script))
         same = evidence.compare_artifact_inventories(base, base)
-        self.assertEqual(same, {'count': [2, 2], 'only_baseline': [], 'only_experiment': [], 'feature_changes': []})
+        self.assertEqual(same, {'count': [2, 2], 'only_baseline': [], 'only_experiment': [], 'only_counts': [0, 0],
+                                'multiplicity_changes': [], 'feature_changes': []})
         changed = dict(artifact, features=['full', 'extra-traits'])
         diff = evidence.compare_artifact_inventories(base, '\n'.join(json.dumps(m) for m in (changed, script)))
         self.assertEqual(diff['feature_changes'], ['syn 2.0.119 syn [lib] wasm32-unknown-unknown opt=3 debug=0 test=False'])
@@ -158,7 +159,7 @@ class RobustnessTests(NoNetwork):
             self.assertIn('synthetic analysis defect', report['checks']['analysis_boom']['detail'])
             self.assertTrue(report['checks']['lockfiles_identical']['ok'])
             groups = evidence.render_notices(report)
-            self.assertEqual([len(g) for g in groups], [5, 5, 5, 5])
+            self.assertEqual([len(g) for g in groups], [5, 5, 5, 7])
             flat = '\n'.join(line for group in groups for line in group)
             self.assertIn('CRASHES: analysis_boom', flat)
             self.assertIn('::error title=Cargo trees::rendering failed', flat)
@@ -200,6 +201,38 @@ class WasmTests(NoNetwork):
         diff = evidence.compare_wasm(base, exp)
         self.assertEqual(diff['code']['differing_functions'], ['ponte::entry::h<hash>'])
         self.assertFalse(diff['code']['multiset_identical'])
+
+    def test_swapped_functions_are_order_changes_not_body_changes(self):
+        def two(first, second):
+            bodies = {'a': b'\x00\x20\x00\x0b', 'b': b'\x00\x41\x07\x0b'}
+            types = section(1, uleb(1) + b'\x60\x01\x7f\x01\x7f')
+            functions = section(3, uleb(2) + uleb(0) + uleb(0))
+            code = section(10, uleb(2) + b''.join(uleb(len(bodies[n])) + bodies[n] for n in (first, second)))
+            names = uleb(2) + uleb(0) + name(f'crate::{first}::h0123456789abcdef') + uleb(1) + name(f'crate::{second}::hfedcba9876543210')
+            custom = section(0, name('name') + b'\x01' + uleb(len(names)) + names)
+            return evidence.parse_wasm(b'\0asm\x01\0\0\0' + types + functions + code + custom)
+        diff = evidence.compare_wasm(two('a', 'b'), two('b', 'a'))
+        self.assertFalse(diff['code']['identical_in_order'])
+        self.assertTrue(diff['code']['multiset_identical'])
+        self.assertFalse(diff['code']['by_name']['order_identical'])
+        self.assertEqual(diff['code']['by_name']['positions_with_other_function'], 2)
+        self.assertEqual(diff['code']['by_name']['differing_count'], 0)
+        self.assertEqual(diff['code']['differing_positions'][0]['baseline'], 'crate::a::h<hash>')
+        self.assertTrue(diff['code']['differing_positions'][0]['experiment_body_found_in_baseline'])
+
+    def test_wat_blocks_separate_reordering_from_instruction_changes(self):
+        base = ('(module\n  (type (;0;) (func))\n  (func $a::h0123456789abcdef (type 0)\n    call $b::h1111111111111111)\n'
+                '  (func $b::h1111111111111111 (type 0)\n    i32.const 1\n    drop)\n  (export "a" (func $a::h0123456789abcdef)))\n')
+        moved = ('(module\n  (type (;0;) (func))\n  (func $b::h2222222222222222 (type 0)\n    i32.const 1\n    drop)\n'
+                 '  (func $a::h3333333333333333 (type 0)\n    call $b::h2222222222222222)\n  (export "a" (func $a::h3333333333333333)))\n')
+        reordered = evidence.compare_wat_blocks(base, moved)
+        self.assertEqual(reordered['differing_count'], 0)
+        self.assertFalse(reordered['order_identical'])
+        changed = evidence.compare_wat_blocks(base, base.replace('i32.const 1', 'i32.const 2'))
+        self.assertEqual(changed['differing_count'], 1)
+        self.assertEqual(changed['details'][0]['block'], 'func $b::h<hash>')
+        self.assertEqual(changed['details'][0]['diff'], ['-    i32.const 1', '+    i32.const 2'])
+        self.assertTrue(changed['order_identical'])
 
     def test_rejects_non_wasm_and_normalizes_wat(self):
         with self.assertRaises(ValueError):
