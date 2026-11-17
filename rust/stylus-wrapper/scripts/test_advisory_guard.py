@@ -106,6 +106,41 @@ class AdvisoryGuardTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(output.getvalue())['status'], 'error')
 
+    def test_strict_lockfile_and_semver_validation(self):
+        floating = self.root / 'floating.lock'
+        floating.write_text('version = 4.0\n[[package]]\nname = "lru"\nversion = "0.16.4"\n', encoding='utf-8')
+        unicode_digits = self.lock('unicode.lock', [('lru', '0.١٨.2', guard.REGISTRY)])
+        for path in (floating, unicode_digits):
+            with self.subTest(path=path), self.assertRaises(guard.GuardError):
+                guard.inspect([path])
+        limit = sys.get_int_max_str_digits()
+        if 0 < limit < 100000:
+            huge = self.lock('huge.lock', [('lru', '1.' + '1' * (limit + 1) + '.0', guard.REGISTRY)])
+            with self.assertRaises(guard.GuardError):
+                guard.inspect([huge])
+        loop = self.root / 'loop.lock'
+        loop.symlink_to(loop.name)
+        with self.assertRaises(guard.GuardError):
+            guard.inspect([loop])
+        readable = self.lock('unreadable.lock', [('lru', '0.16.4', guard.REGISTRY)])
+        with mock.patch.object(Path, 'open', side_effect=PermissionError('permission denied')):
+            with self.assertRaisesRegex(guard.GuardError, 'cannot read lockfile'):
+                guard.inspect([readable])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(guard.main(['--json', '--lockfile', str(readable)]), 2)
+
+    def test_discovers_root_and_deeply_nested_tracked_lockfiles(self):
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, capture_output=True)
+        tracked = ['Cargo.lock', 'one/Cargo.lock', 'deep/one/two/Cargo.lock']
+        for name in tracked + ['untracked/Cargo.lock', 'deep/NotCargo.lock']:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('version = 4\n[[package]]\nname = "other"\nversion = "1.0.0"\n', encoding='utf-8')
+        subprocess.run(['git', 'add', '--', *tracked], cwd=self.root, check=True, capture_output=True)
+        with mock.patch.object(guard, 'ROOT', self.root):
+            found = guard.tracked_lockfiles()
+        self.assertEqual([p.relative_to(self.root).as_posix() for p in found], sorted(tracked))
+
     def test_actual_baseline_and_release_gate(self):
         report = guard.inspect(guard.tracked_lockfiles())
         self.assertEqual(report['baseline_missing'], [])

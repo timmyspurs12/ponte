@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [arena/c2b1a150-ponte, arena/dc905f3a-ponte]
+    branches: [arena/c2b1a150-ponte]
 permissions:
   contents: read
 concurrency:

@@ -34,7 +34,7 @@ SCOPE = (
     "target-specific reachability or exploitability. This is not a complete audit."
 )
 SEMVER = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
@@ -54,7 +54,10 @@ def version_parts(version):
         for part in prerelease.split(".")
     ):
         raise GuardError(f"invalid prerelease version: {version!r}")
-    return tuple(int(match.group(i)) for i in (1, 2, 3)), prerelease
+    try:
+        return tuple(int(match.group(i)) for i in (1, 2, 3)), prerelease
+    except ValueError as exc:
+        raise GuardError(f"invalid package version: {version!r}") from exc
 
 
 def tracked_lockfiles():
@@ -74,8 +77,15 @@ def tracked_lockfiles():
     return paths
 
 
+def resolve_path(path):
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise GuardError(f"cannot resolve lockfile path {path}: {exc}") from exc
+
+
 def path_label(path):
-    resolved = path.resolve()
+    resolved = resolve_path(path)
     try:
         return resolved.relative_to(ROOT).as_posix()
     except ValueError:
@@ -90,7 +100,7 @@ def inspect(paths):
     observed = set()
     for path in paths:
         path = Path(path)
-        resolved = path.resolve()
+        resolved = resolve_path(path)
         if resolved in seen_paths:
             raise GuardError(f"duplicate lockfile path: {path_label(path)}")
         seen_paths.add(resolved)
@@ -101,7 +111,9 @@ def inspect(paths):
         except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
             raise GuardError(f"cannot read lockfile {label}: {exc}") from exc
         packages = lock.get("package")
-        if lock.get("version") not in (3, 4) or not isinstance(packages, list) or not packages:
+        format_version = lock.get("version")
+        if (type(format_version) is not int or format_version not in (3, 4)
+                or not isinstance(packages, list) or not packages):
             raise GuardError(f"invalid or unsupported Cargo lockfile: {label}")
         seen_packages = set()
         for package in packages:
