@@ -4,6 +4,7 @@ on:
     paths:
       - 'rust/stylus-wrapper/**'
       - 'rust/optimizer/**'
+      - '**/Cargo.lock'
       - 'scripts/phase2b/fixtures/**'
       - '.github/workflows/stylus-wrapper.yml'
   pull_request:
@@ -11,6 +12,7 @@ on:
     paths:
       - 'rust/stylus-wrapper/**'
       - 'rust/optimizer/**'
+      - '**/Cargo.lock'
       - 'scripts/phase2b/fixtures/**'
       - '.github/workflows/stylus-wrapper.yml'
   workflow_dispatch:
@@ -26,6 +28,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Check offline advisory guard and known baseline
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_advisory_guard.py' -v
+          python3 scripts/advisory_guard.py --check-baseline
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
