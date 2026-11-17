@@ -700,7 +700,7 @@ mod tests {
         let asset_at = request_at + read_word(args, request_at + 2 * 32);
         let string_at = asset_at + read_word(args, asset_at);
         let string_len = read_word(args, string_at);
-        assert!(string_len > 0 && string_len % 32 != 0);
+        assert!(string_len > 0 && !string_len.is_multiple_of(32));
         let call = |contract: &mut SyntheticOptimizer, input: &[u8]| {
             SyntheticOptimizer::route(contract, selector, input).expect("selector exists")
         };
@@ -731,6 +731,10 @@ mod tests {
             call(&mut contract, &length).is_err(),
             "out-of-bounds string length rejected"
         );
+        let array_at = request_at + read_word(args, request_at + 10 * 32);
+        let mut array_length = args.to_vec();
+        set_word(&mut array_length, array_at, 65);
+        assert!(call(&mut contract, &array_length).is_err(), "out-of-bounds array length rejected");
         let mut utf8 = args.to_vec();
         utf8[string_at + 32] = 0xff;
         assert!(
