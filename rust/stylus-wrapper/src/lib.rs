@@ -397,41 +397,59 @@ mod tests {
         let mut contract = SyntheticOptimizer::from(&vm);
         let (_, core, _) = fixture_requests().into_iter().next().unwrap();
         let expected = optimize_v1(&core);
-        let calldata = evaluateSyntheticCall { request: request(core) }.abi_encode();
+        let calldata = evaluateSyntheticCall {
+            request: request(core),
+        }
+        .abi_encode();
         let selector = u32::from_be_bytes(evaluateSyntheticCall::SELECTOR);
         let output = SyntheticOptimizer::route(&mut contract, selector, &calldata[4..])
-            .expect("known selector").expect("valid calldata");
+            .expect("known selector")
+            .expect("valid calldata");
         let decoded = evaluateSyntheticCall::abi_decode_returns(&output).unwrap();
         compare(&decoded, expected);
         assert!(SyntheticOptimizer::route(&mut contract, selector ^ 1, &calldata[4..]).is_none());
-        assert!(SyntheticOptimizer::route(&mut contract, selector, &[]).unwrap().is_err());
+        assert!(SyntheticOptimizer::route(&mut contract, selector, &[])
+            .unwrap()
+            .is_err());
     }
 
     #[test]
     fn candidate_limit_ties_and_maximum_widths_match_core() {
         let vm = TestVM::default();
         let contract = SyntheticOptimizer::from(&vm);
-        let (_, mut core, _) = fixture_requests().into_iter()
-            .find(|(_, r, _)| r.candidates.len() == 1 && optimize_v1(r).is_ok()).unwrap();
+        let (_, mut core, _) = fixture_requests()
+            .into_iter()
+            .find(|(_, r, _)| r.candidates.len() == 1 && optimize_v1(r).is_ok())
+            .unwrap();
         let candidate = core.candidates[0].clone();
-        core.candidates = (0..64).map(|i| {
-            let mut c = candidate.clone();
-            let mut id = [0u8; 32];
-            id[31] = i;
-            c.route_id = id.into();
-            c
-        }).collect();
+        core.candidates = (0..64)
+            .map(|i| {
+                let mut c = candidate.clone();
+                let mut id = [0u8; 32];
+                id[31] = i;
+                c.route_id = id.into();
+                c
+            })
+            .collect();
         let expected = optimize_v1(&core);
-        compare(&contract.evaluate_synthetic(request(core.clone())), expected);
+        compare(
+            &contract.evaluate_synthetic(request(core.clone())),
+            expected,
+        );
         core.amount_in = u128::MAX;
         core.user_min_out = u128::MAX;
         core.candidates[0].rate_numerator = u128::MAX;
         core.candidates[0].available_input = u128::MAX;
         core.candidates[0].available_output = u128::MAX;
         core.candidates[0].max_input = u128::MAX;
-        compare(&contract.evaluate_synthetic(request(core.clone())), optimize_v1(&core));
+        compare(
+            &contract.evaluate_synthetic(request(core.clone())),
+            optimize_v1(&core),
+        );
         core.candidates.clear();
-        compare(&contract.evaluate_synthetic(request(core.clone())), optimize_v1(&core));
+        compare(
+            &contract.evaluate_synthetic(request(core.clone())),
+            optimize_v1(&core),
+        );
     }
-
 }

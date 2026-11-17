@@ -1,7 +1,11 @@
 name: Local Stylus wrapper
 on:
   push:
-    branches: [arena/2f57c6df-ponte]
+    paths:
+      - 'rust/stylus-wrapper/**'
+      - 'rust/optimizer/**'
+      - 'scripts/phase2b/fixtures/**'
+      - '.github/workflows/stylus-wrapper.yml'
   pull_request:
     branches: [main]
     paths:
@@ -24,36 +28,15 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
-      - name: Bootstrap diagnostics
-        run: |
-          python3 - <<'PY'
-          import base64, gzip, io, pathlib, subprocess, tarfile
-          log = []
-          for cmd in [['cargo','generate-lockfile'], ['cargo','fmt'], ['cargo','test','--locked'], ['cargo','clippy','--locked','--all-targets','--','-D','warnings'], ['cargo','build','--locked','--release','--lib','--target','wasm32-unknown-unknown']]:
-              p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-              log.append('COMMAND ' + ' '.join(cmd) + ' EXIT ' + str(p.returncode) + '\n' + p.stdout)
-          out = io.BytesIO()
-          with tarfile.open(fileobj=out, mode='w:gz') as archive:
-              for f in [pathlib.Path('Cargo.lock'), *pathlib.Path('src').rglob('*.rs')]:
-                  if f.exists(): archive.add(f)
-          for title,data in [('SOURCE',out.getvalue()),('LOG',gzip.compress('\n'.join(log).encode()))]:
-              pathlib.Path('/tmp/stylus-'+title+'.b64').write_text(base64.b64encode(data).decode())
-          text=pathlib.Path('/tmp/stylus-LOG.b64').read_text()
-          for i in range(0,len(text),3800): print(f'::notice title=LOG_{i//3800}::{text[i:i+3800]}')
-          PY
-      - name: Extract source part one
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('/tmp/stylus-SOURCE.b64').read_text()
-          for n in range(10):
-              if 3800*n < len(s): print(f'::notice title=SOURCE_{n}::{s[3800*n:3800*(n+1)]}')
-          PY
-      - name: Extract source part two
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('/tmp/stylus-SOURCE.b64').read_text()
-          for n in range(10,20):
-              if 3800*n < len(s): print(f'::notice title=SOURCE_{n}::{s[3800*n:3800*(n+1)]}')
-          PY
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Native and SDK TestVM tests
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Generate SDK ABI
+        run: cargo run --locked --features export-abi > /tmp/ponte-synthetic-abi.sol && grep -q 'evaluateSynthetic' /tmp/ponte-synthetic-abi.sol
+      - name: Build local WASM
+        run: cargo build --locked --release --lib --target wasm32-unknown-unknown
+      - name: Inspect entrypoint and imports
+        run: python3 scripts/inspect_wasm.py target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
