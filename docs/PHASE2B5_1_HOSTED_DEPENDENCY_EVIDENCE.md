@@ -2,7 +2,7 @@
 
 ## Status
 
-**The hosted audit found advisories and failed; this is not a clean audit or deployment approval.** GitHub reports successful evidence uploads, but this sandbox could not download the archive or full logs because the artifact storage endpoint returned EOF. Run metadata and check annotations were independently inspected; the compiler-log observation below is user-supplied and was not independently checked here. No deployment, activation or RPC validation is in scope.
+**The hosted audit found advisories and failed; this is not a clean audit or deployment approval.** This sandbox could not download the archives or full logs because the artifact storage endpoint returned EOF. A later independent review of run 44106361911, supplied by the user, is recorded below; it is distinct from this sandbox's inspection of GitHub metadata and annotations. No deployment, activation or RPC validation is in scope.
 
 Baseline: this branch starts from `main` commit `666da3e602a4fff6838f64e939db4dd1c22b3bc0`. Three separate workspaces and lockfiles are covered: `rust/environment-check`, `rust/optimizer`, and `rust/stylus-wrapper`. The existing `stylus-wrapper.yml` release build is `cargo build --locked --release --lib --target wasm32-unknown-unknown`. No existing CI or release gate is changed.
 
@@ -65,7 +65,16 @@ The run again reported WASM **90,506 bytes**, SHA-256 `26f536e6e2ca6eb219b011b4f
 
 ## Open evidence
 
-- Inspect downloaded raw JSON, full build/feature/dev graphs, toolchain provenance and audit stderr; independently hash the uploaded WASM. Check yanked-index coverage.
-- Exploitability, full linked-crate inventory, chain/Nitro behavior and activation eligibility are **not established**.
+For run 44106361911, independent review has completed artifact retrieval, audit JSON and compiler-log inspection, and independent WASM hashing, as recorded below. Yanked-index coverage remains unresolved. Exploitability, runtime reachability, a full linked-crate inventory, Nitro behavior and activation eligibility are **not established**.
 
 Deployment/activation is not authorized by this evidence and remains blocked pending appropriate security review and separately authorized validation.
+
+## Independently reviewed PR merge-test run 44106361911
+
+The [PR-triggered evidence run](https://github.com/timmyspurs12/ponte/actions/runs/44106361911) corresponds to then-current branch head `b3dfd8ca78a11f325afd98a79ff50c9a337a44c1` and base `666da3e602a4fff6838f64e939db4dd1c22b3bc0`. Runner provenance recorded merge-test commit `43907ccf7c887bde2693bbfa016f5105d068663b`; this merge-test commit, not the branch head directly, was checked. This subsequent documentation update changes the PR head; these SHAs identify the historical run.
+
+The evidence job **failed specifically at the RustSec audit step**. The graph capture and WASM build succeeded, as did artifact upload. The [artifact](https://github.com/timmyspurs12/ponte/actions/runs/44106361911/artifacts/14338746775) is ID `14338746775`, named `ponte-dependency-evidence-44106361911-1`. GitHub's archive SHA-256 is `2c77b61376de27918aad0b76fa441c8b0ab7d56c4fd9136f80c735dcd174aba5`. The recorded WASM size is **90,506 bytes**, with SHA-256 `26f536e6e2ca6eb219b011b4f353d43222e4a09df12cc39397e383ede18fc67d`.
+
+According to the independent review supplied by the user, the archive was downloaded and inspected, its SHA-256 matched GitHub's artifact metadata, and the extracted WASM independently hashed to the recorded WASM SHA-256. All **45 recorded Cargo graph and metadata commands** exited successfully. Neither `crypto_bigint`, `crypto-bigint`, nor `lru` appeared in either verbose compiler-log file. The audit JSON confirmed zero findings for environment-check, one unmaintained warning for optimizer, and one vulnerability plus six warnings for stylus-wrapper, matching the findings documented above. This sandbox did not independently perform that download or inspection.
+
+Cargo dependency resolution, compiler build logs, linked binary contents and runtime reachability are different kinds of evidence. The graph and log observations do not establish general exploitability or provide a formal binary-level proof of unreachability; the unresolved limitations above still apply.
