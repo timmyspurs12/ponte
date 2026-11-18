@@ -3,6 +3,7 @@
 
 Subcommands (standard library only):
   record-command OUT NAME MODE STAGE CWD STARTED ENDED CODE -- ARGV...
+  excerpt COMMAND_BASE   (one-line failure excerpt of COMMAND_BASE.stderr/.stdout, escaped)
   check-tag LS_REMOTE_OUTPUT TAG EXPECTED_COMMIT
   dockerfile REPRODUCIBLE_RS BASE_IMAGE TOOLCHAIN
   assemble EVIDENCE_DIR
@@ -213,12 +214,36 @@ def classify_container_failure(text):
     return 'unclassified failure; see stderr in the artifact'
 
 
+ANSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+FAILURE_SIGNAL = re.compile(
+    r'error|caused by|failed|panicked|fatal|denied|not found|no such|could not|cannot|missing|unable', re.I)
+
+
+def plain_lines(text):
+    return [line.strip() for line in ANSI.sub('', text).splitlines() if line.strip()]
+
+
 def error_excerpt(text, limit=400):
     """The error lines of a command's stderr, for annotations (full output stays in the artifact)."""
-    lines = [line.strip() for line in text.splitlines()
-             if re.search(r'error|caused by|failed', line, re.I) and line.strip()]
+    lines = [line for line in plain_lines(text) if re.search(r'error|caused by|failed', line, re.I)]
     excerpt = ' | '.join(dict.fromkeys(lines))
     return excerpt[:limit] + ('…' if len(excerpt) > limit else '')
+
+
+def failure_excerpt(stderr, stdout='', limit=1000):
+    """Why a command failed, on one line, for its workflow annotation.
+
+    Workflow logs and artifacts are not always reachable by whoever has to diagnose a run, but
+    check-run annotations are, so a failed command's annotation carries its error-like lines
+    (stderr first, then stdout) and the last stderr lines. Long excerpts keep their head and tail.
+    """
+    err, out = plain_lines(stderr), plain_lines(stdout)
+    picked = [line for line in err + out if FAILURE_SIGNAL.search(line)] + err[-3:]
+    excerpt = ' | '.join(dict.fromkeys(picked or out[-3:])) or 'no output'
+    if len(excerpt) <= limit:
+        return excerpt
+    half = (limit - 3) // 2
+    return excerpt[:half] + ' … ' + excerpt[-half:]
 
 
 def check_tag(ls_remote_text, tag, expected):
@@ -565,6 +590,11 @@ def main(argv):
         Path(out).write_text(json.dumps({
             'name': name, 'mode': mode, 'stage': stage, 'argv': argv[11:], 'cwd': cwd,
             'started_utc': started, 'ended_utc': ended, 'exit_code': int(code)}, indent=2) + '\n')
+        return 0
+    if len(argv) == 3 and argv[1] == 'excerpt':
+        streams = [Path(f'{argv[2]}.{s}') for s in ('stderr', 'stdout')]
+        texts = [p.read_text(errors='replace') if p.is_file() else '' for p in streams]
+        print(escape_message(failure_excerpt(*texts)))
         return 0
     if len(argv) == 5 and argv[1] == 'check-tag':
         ok, resolved = check_tag(Path(argv[2]).read_text(), argv[3], argv[4])

@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: never
+      # No __pycache__ in the checkout: the init stage requires a clean worktree before the build.
+      PYTHONDONTWRITEBYTECODE: '1'
       TOOLCHAIN: 1.91.0
       SDK_REPOSITORY: OffchainLabs/stylus-sdk-rs
       SDK_RELEASE: v0.10.10

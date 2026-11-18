@@ -206,6 +206,29 @@ class AssembleTests(unittest.TestCase):
         self.assertEqual(prov.error_excerpt(text), 'error: failed to read `/optimizer/Cargo.toml` | Caused by:')
         self.assertTrue(prov.error_excerpt('error ' * 200).endswith('…'))
 
+    def test_failure_excerpt_for_annotations(self):
+        stderr = ('\x1b[1m\x1b[32m   Compiling\x1b[0m openssl-sys v0.9.116\n'
+                  'error: failed to run custom build command for `openssl-sys v0.9.116`\n'
+                  '  Could not find directory of OpenSSL installation\n'
+                  'warning: build failed, waiting for other jobs to finish...\n')
+        excerpt = prov.failure_excerpt(stderr, 'test result: FAILED. 1 passed; 1 failed\n')
+        self.assertTrue(excerpt.startswith('error: failed to run custom build command'))
+        self.assertIn('Could not find directory of OpenSSL installation', excerpt)
+        self.assertIn('test result: FAILED', excerpt)
+        self.assertNotIn('\x1b', excerpt)
+        self.assertEqual(prov.failure_excerpt('', 'only\nstdout\nlines\nhere\n'), 'stdout | lines | here')
+        self.assertEqual(prov.failure_excerpt('', ''), 'no output')
+        long = prov.failure_excerpt('\n'.join(f'error {i:04d}' for i in range(400)))
+        self.assertLessEqual(len(long), 1000)
+        self.assertTrue(long.startswith('error 0000') and long.endswith('error 0399') and ' … ' in long)
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / '007-cli-install'
+            base.with_suffix('.stderr').write_text('error: x\nCaused by:\n  y: z\n')
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(prov.main(['p', 'excerpt', str(base)]), 0)
+            self.assertEqual(out.getvalue(), 'error: x | Caused by: | y: z\n')
+
     def test_annotation_escaping(self):
         self.assertEqual(prov.escape_message('a%b\nc'), 'a%25b%0Ac')
         self.assertEqual(prov.escape('t:1,2'), 't%3A1%2C2')

@@ -68,11 +68,15 @@ record() {
   tail -n 150 "$base.stderr"
   echo '::endgroup::'
   if ((code != 0)); then
+    # The annotation carries the error lines: annotations stay readable through the API even
+    # where the run log and the artifact are not. Full output is in the artifact under commands/.
+    local why
+    why=$(python3 "$HERE/stylus_provenance.py" excerpt "$base") || why='(no excerpt)'
     if [[ $mode == gate ]]; then
-      echo "::error title=$name failed::exit $code (gating); full output is in the artifact under commands/"
+      echo "::error title=$name failed::exit $code (gating): $why"
       exit "$code"
     fi
-    echo "::warning title=$name (informational)::exit $code; recorded in the provenance, not gating"
+    echo "::warning title=$name (informational)::exit $code, recorded in the provenance, not gating: $why"
   fi
 }
 
