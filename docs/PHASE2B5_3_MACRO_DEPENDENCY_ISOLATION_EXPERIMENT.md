@@ -4,24 +4,36 @@
 
 **The single approved change was applied and verified. All pre-registered checks passed in four experiment runs, and the A/A control passed before the change.** This is experiment evidence only. It is not a merge decision, a deployment approval or an activation check. Nothing was merged or deployed; PR #11 was not touched; no RPC, chain, wallet, private-key, transaction, payment or settlement activity took place.
 
+The final change set is two files: the `rust/stylus-wrapper/Cargo.toml` move and this report. The temporary experiment harness was removed from it and can be inspected at the historical experiment commit `bbd384154e21467d61c329c4409d05e7eb449fcb` (see [Harness](#harness-temporary-not-in-the-final-change-set)).
+
 | Question | Result |
 | --- | --- |
 | Only the approved `Cargo.toml` move, exact `=1.5.7` kept? | Yes — 3 entries (and their comment) moved to `[dev-dependencies]`; enforced by the `rust_diff_scope` and `manifest` checks |
 | Lockfiles | Unchanged — all three SHA-256 values identical; unchanged after every build |
-| Resolved versions | `alloy-sol-macro`, `-expander`, `-input` resolve only to 1.5.7 on both sides; 471 packages both sides |
+| Resolved versions | `alloy-sol-macro`, `-expander`, `-input` resolve only to 1.5.7 on both sides in the existing lockfile; 471 packages both sides. Lockfile regeneration was not tested |
 | wasm32 release build | 14 fewer rustc units (57 → 43) and 2 fewer build-script runs (5 → 3); host unchanged (87 units, 13 build-script runs) |
 | ABI generation | SDK `export-abi` output byte-identical (SHA-256 `4308824f…aa7991`); `check_abi.py` verified on both sides |
 | Selector `0x31631981` | Verified on both sides (SDK declaration, keccak, client ABI, routed by the release WASM, 32 one-bit variants rejected) |
 | Offline WASM and CI tests | All pass on both sides |
 | Release WASM size | **90,506 bytes on both sides** |
-| Release WASM SHA-256 | **Changed**: `26f536e6…c67d` → `6fd9159d…fefd`; each side deterministic across four builds, including a fully cold rebuild |
-| Why the WASM hash changed | Proven equivalent up to symbol renaming and function order (all 137 functions and 31 other module fields identical after a one-to-one renaming); traced to Cargo's `-C metadata` of the root crate, which changed for exactly 1 of 130 compiler units |
+| Release WASM SHA-256 | **Changed**: `26f536e6…c67d` → `6fd9159d…fefd`; each side deterministic across four builds, including a fully cold rebuild. Values computed on the runner; not independently re-hashed |
+| Why the WASM hash changed | Structurally equivalent under the reported symbol-renaming and function-order analysis (all 137 functions and 31 other module fields identical after a one-to-one renaming); not a formal proof of runtime equivalence. Traced to Cargo's `-C metadata` of the root crate, which changed for exactly 1 of 130 compiler units |
 | RustSec (no suppressions) | Identical on both sides: environment-check 0 findings; optimizer 1; stylus-wrapper 7 (1 vulnerability, 6 warnings). **The change resolves no advisory** |
+| Security effect | **None.** The move improves build hygiene; it is not a security fix |
+| Not tested | Stylus/Nitro activation, ink and gas, live chain behavior; lockfile regeneration with the moved pins |
+
+### What this evidence does and does not establish
+
+- **WASM equivalence is structural, not formal.** The comparison establishes structural equivalence under the reported symbol-renaming and function-order analysis. It is not a formal proof of runtime equivalence.
+- **The artifacts were not independently re-hashed.** The original WASM artifacts were not downloaded and re-hashed in the reviewing sandbox. Every hash in this report is the value the runner computed and published in check-run annotations.
+- **The pins were verified only in the existing lockfile.** All three `=1.5.7` requirements are in the manifest, and the unchanged lockfile, used with `--locked` by every build, resolves the three crates only to 1.5.7. Lockfile regeneration was not tested.
+- **Build hygiene, not security.** The move removes 14 wasm32 compilations. It resolves no RustSec advisory and removes no crate from the lockfile or from the host build.
+- **No activation or chain testing.** Stylus/Nitro activation, ink and gas, and live chain behavior remain untested. All tests were offline, against host stubs.
 
 ## Scope, branches and constraints
 
 - The assigned branch `experiment/phase2b5-3-macro-isolation` was verified at `fe6e928bbacd23948fbe32c492ac42df4ef49b1b`. Following the session's branch rules, the work was committed to `arena/85bd8a06-ponte`, branched from that same commit. `experiment/phase2b5-3-macro-isolation` was not pushed to, and PR #11 (head `arena/962f31b7-ponte`) was not modified.
-- The worktree was clean at the start. The only change under `rust/` is the manifest move. Everything else is new evidence tooling under `scripts/phase2b/macro-isolation/`, a dedicated workflow, and this document. No existing file other than `rust/stylus-wrapper/Cargo.toml` was modified, and no existing CI or release gate was changed.
+- The worktree was clean at the start. The only change under `rust/` is the manifest move. The final change set contains only that manifest and this report. The temporary evidence harness (one workflow and five scripts under `scripts/phase2b/macro-isolation/`) was committed during the experiment and removed from the change set by the cleanup commit that follows `bbd3841`. No existing file other than `rust/stylus-wrapper/Cargo.toml` was modified, and no existing CI or release gate was changed.
 - Specification basis: these acceptance criteria are stated in the task request:
   1. Inspect and preserve existing work.
   2. Use a hosted Rust 1.91.0 runner with `wasm32-unknown-unknown`.
@@ -38,7 +50,7 @@
 
 The sandbox has no `cargo`, `rustc` or `rustup`, and cannot reach `static.rust-lang.org` or crates.io, so no local Rust build was possible. The experiment therefore runs on a GitHub-hosted `ubuntu-latest` runner. It installs Rust 1.91.0 with `rustup toolchain install 1.91.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown`. The runner launched without any permission or configuration change: the workflow needs only `contents: read`. The repository's Actions settings endpoints returned HTTP 403 to the sandbox integration, but this blocked nothing.
 
-As in Phase 2B.5.1, the sandbox cannot download Actions logs or artifacts, because the storage hosts are unreachable. All results below come from check-run annotations that the runner wrote and the sandbox read through `api.github.com`. Some long annotations are truncated; the complete data is in each run's `comparison.json` artifact (see [Runs](#runs)).
+As in Phase 2B.5.1, the sandbox cannot download Actions logs or artifacts, because the storage hosts are unreachable. All results below come from check-run annotations that the runner wrote and the sandbox read through `api.github.com`. **The original WASM artifacts were therefore not independently downloaded and re-hashed in the reviewing sandbox**; each reported hash is the runner's own value. Run, job, commit and artifact identifiers and artifact digests were cross-checked against the GitHub API. Some long annotations are truncated; the complete data is in each run's `comparison.json` artifact (see [Runs](#runs)).
 
 ## The change
 
@@ -63,20 +75,22 @@ As in Phase 2B.5.1, the sandbox cannot download Actions logs or artifacts, becau
  [features]
 ```
 
-The code uses `sol!` only through the `alloy_sol_types` re-export. `[dependencies]` keeps `ponte-optimizer` (path), `stylus-sdk =0.10.10` and `alloy-sol-types =1.5.7` with `default-features = false`. `Cargo.lock` was not regenerated or edited.
+The code uses `sol!` only through the `alloy_sol_types` re-export. `[dependencies]` keeps `ponte-optimizer` (path), `stylus-sdk =0.10.10` and `alloy-sol-types =1.5.7` with `default-features = false`. `Cargo.lock` was not regenerated or edited. The manifest is byte-identical at every later commit, including `bbd3841` and the cleanup commit.
 
 ## Method
 
-### Harness
+### Harness (temporary, not in the final change set)
 
-| File | Purpose |
+The harness was experiment-only tooling and is not part of the proposed change. It was removed from the final change set by the cleanup commit that follows the historical experiment commit **`bbd384154e21467d61c329c4409d05e7eb449fcb`**, where it can still be inspected ([browse the tree at that commit](https://github.com/timmyspurs12/ponte/tree/bbd384154e21467d61c329c4409d05e7eb449fcb)). At `bbd3841` the harness files are byte-identical to those at `a2eb24a`, the commit executed by the last experiment run. Each run's artifact also preserves the evidence the harness produced, until 2026-12-17.
+
+| File at `bbd3841` | Purpose |
 | --- | --- |
-| `.github/workflows/macro-isolation-experiment.yml` | Runs on push to this branch (wrapper manifest, harness or workflow paths) and on `workflow_dispatch` with input `base`, default `fe6e928…`. One job, `ubuntu-latest`, `contents: read`. |
-| `scripts/phase2b/macro-isolation/capture.sh SIDE OUT` | Captures one side from the checked-out commit and records argv, cwd, stdout, stderr and exit status of every command. |
-| `scripts/phase2b/macro-isolation/rustsec.sh OUT` | Runs unsuppressed `cargo audit` on the baseline and experiment lockfiles against one advisory-db snapshot. |
-| `scripts/phase2b/macro-isolation/selector_check.cjs` | Verifies the selector from the SDK ABI, keccak, client ABI and release WASM. |
-| `scripts/phase2b/macro-isolation/evidence.py` | Records the design, parses WASM sections, compares the two sides, writes notices and compares RustSec results. |
-| `scripts/phase2b/macro-isolation/test_evidence.py` | 20 offline unit tests of the parsers and comparisons. They run first in every job. |
+| [`.github/workflows/macro-isolation-experiment.yml`](https://github.com/timmyspurs12/ponte/blob/bbd384154e21467d61c329c4409d05e7eb449fcb/.github/workflows/macro-isolation-experiment.yml) | Ran on push to the experiment branches (wrapper manifest, harness or workflow paths) and on `workflow_dispatch` with input `base`, default `fe6e928…`. One job, `ubuntu-latest`, `contents: read`. |
+| [`scripts/phase2b/macro-isolation/capture.sh`](https://github.com/timmyspurs12/ponte/blob/bbd384154e21467d61c329c4409d05e7eb449fcb/scripts/phase2b/macro-isolation/capture.sh) `SIDE OUT` | Captures one side from the checked-out commit and records argv, cwd, stdout, stderr and exit status of every command. |
+| [`scripts/phase2b/macro-isolation/rustsec.sh`](https://github.com/timmyspurs12/ponte/blob/bbd384154e21467d61c329c4409d05e7eb449fcb/scripts/phase2b/macro-isolation/rustsec.sh) `OUT` | Runs unsuppressed `cargo audit` on the baseline and experiment lockfiles against one advisory-db snapshot. |
+| [`scripts/phase2b/macro-isolation/selector_check.cjs`](https://github.com/timmyspurs12/ponte/blob/bbd384154e21467d61c329c4409d05e7eb449fcb/scripts/phase2b/macro-isolation/selector_check.cjs) | Verifies the selector from the SDK ABI, keccak, client ABI and release WASM. |
+| [`scripts/phase2b/macro-isolation/evidence.py`](https://github.com/timmyspurs12/ponte/blob/bbd384154e21467d61c329c4409d05e7eb449fcb/scripts/phase2b/macro-isolation/evidence.py) | Records the design, parses WASM sections, compares the two sides, writes notices and compares RustSec results. |
+| [`scripts/phase2b/macro-isolation/test_evidence.py`](https://github.com/timmyspurs12/ponte/blob/bbd384154e21467d61c329c4409d05e7eb449fcb/scripts/phase2b/macro-isolation/test_evidence.py) | 20 offline unit tests of the parsers and comparisons. They ran first in every job. |
 
 The existing Phase 2B.5.1 script `scripts/phase2b/dependency-evidence.sh` is reused unchanged inside the capture.
 
@@ -91,11 +105,11 @@ The existing Phase 2B.5.1 script `scripts/phase2b/dependency-evidence.sh` is reu
 
 **The baseline was captured before the change.** The A/A control runs on harness commits `1647a79` and `ebde9d3` ran while `rust/` was identical to `fe6e928`. The manifest move was committed only after control run 44169483918 had passed with every compared item identical. Each experiment run also re-captures the baseline in the same job, so that both sides share one runner.
 
-The capture, RustSec and selector scripts have been unchanged since `1647a79`, and the workflow since `ebde9d3`. Every run from the passing control onward therefore collected evidence with identical commands. The later commits `a6b16a0`, `082ba10` and `a2eb24a` changed only the analysis in `evidence.py` and its tests.
+The capture, RustSec and selector scripts were unchanged from `1647a79`, and the workflow from `ebde9d3`, until the harness was removed after `bbd3841`. Every run from the passing control onward therefore collected evidence with identical commands. The later commits `a6b16a0`, `082ba10` and `a2eb24a` changed only the analysis in `evidence.py` and its tests.
 
 ### Commands per side
 
-All commands run with `CARGO_TERM_COLOR=never`, and wrapper commands run in `rust/stylus-wrapper`. `BUILD` is the exact release command used by `stylus-wrapper.yml` and `dependency-evidence.sh`: `cargo +1.91.0 build --locked --release --lib --target wasm32-unknown-unknown`.
+All commands run with `CARGO_TERM_COLOR=never`, and wrapper commands run in `rust/stylus-wrapper`. `BUILD` is the exact release command used by `stylus-wrapper.yml` and `dependency-evidence.sh`: `cargo +1.91.0 build --locked --release --lib --target wasm32-unknown-unknown`. `$HARNESS` is the frozen harness copy.
 
 ```sh
 rm -rf rust/stylus-wrapper/target                               # cold
@@ -169,10 +183,12 @@ All runs are on `ubuntu-latest` with Rust 1.91.0. Each run took about 8 minutes,
 | [44169483918](https://github.com/timmyspurs12/ponte/actions/runs/44169483918) (134344420738) | `ebde9d3` | control | **PASS 16/16** | Baseline evidence before the change. Identical WASM, all 13 sections, 131 code bodies, 137 names and the WAT; identical 144 + 18 compiler units, JSON inventories 162/354/139, package lists, trees and inverse trees. |
 | [44171151965](https://github.com/timmyspurs12/ponte/actions/runs/44171151965) (134350273360) | `0f970c4` | experiment | **PASS 12/12** | The Cargo.toml move. |
 | [44173225545](https://github.com/timmyspurs12/ponte/actions/runs/44173225545) (134357596137) | `a6b16a0` | experiment | **PASS 12/12** | Adds per-function attribution notices. |
-| [44175243662](https://github.com/timmyspurs12/ponte/actions/runs/44175243662) (134364736907) | `082ba10` | experiment | **PASS 12/12** | Adds the exact-renaming equivalence proof. |
+| [44175243662](https://github.com/timmyspurs12/ponte/actions/runs/44175243662) (134364736907) | `082ba10` | experiment | **PASS 12/12** | Adds the structural equivalence analysis (symbol renaming and function order). |
 | [44175556816](https://github.com/timmyspurs12/ponte/actions/runs/44175556816) (134365824832) | `a2eb24a` | experiment | **PASS 12/12** | Adds raw `-C metadata` reporting. |
 | [44171151876](https://github.com/timmyspurs12/ponte/actions/runs/44171151876) | `0f970c4` | `Local Stylus wrapper` | success | Existing wrapper CI on the changed manifest. |
 | [44171151888](https://github.com/timmyspurs12/ponte/actions/runs/44171151888) | `0f970c4` | `Dependency and release WASM evidence` | RustSec step failed (findings) | Existing 2B.5.1 workflow. Graph and WASM capture succeeded: WASM `6fd9159d…`, 90,506 bytes. RustSec is identical to the previous runs. |
+
+Every run above executed a commit that still contained the harness. The cleanup commit that removed it does not touch `rust/`: that directory is the same Git tree (`e08f527e7ab7c3a5d60fc67e7c5c51192f78263e`) at `0f970c4`, at every later experiment commit and at `bbd3841`. The experiment runs and wrapper CI run 44171151876 therefore evaluated exactly the Rust sources, manifest and lockfiles proposed for review.
 
 The four experiment runs share 26 notice titles. With commit SHAs and audit timestamps masked, 24 are identical. The other 2 are the notices whose format later commits extended ("macro packages and root" and "Other build inventories"). Their first-run content is unchanged: it is a prefix of the later text, or identical once the added fields are removed.
 
@@ -275,6 +291,7 @@ In the host `export-abi` build, the macro-chain libraries were previously compil
 **Reproducibility across runs:**
 - **Baseline hash:** found on both sides of both control runs, on the baseline side of all four experiment runs, and in Phase 2B.5.1 runs 44099488399, 44099896720, 44100241033 and 44106361911.
 - **Experiment hash:** found in all four experiment runs and in the separate `Dependency and release WASM evidence` run 44171151888, which uses the unchanged 2B.5.1 script.
+- **Provenance:** both hashes were computed on the runners and read from annotations. The binaries were not downloaded or re-hashed in the reviewing sandbox.
 
 The exact-CI and JSON builds that follow the verbose build are no-op rebuilds. The independent within-side reproduction is the second fully cold build.
 
@@ -287,16 +304,16 @@ The exact-CI and JSON builds that follow the verbose build are no-op rebuilds. T
   - 27 of 137 function names differ, 3 of them beyond legacy symbol hashes.
   - `wasm2wat` output is 34,663 lines on both sides, with 5 differing lines in each direction.
 
-### Release WASM attribution — equivalent up to symbol renaming and function order
+### Release WASM attribution — structural equivalence under symbol renaming and function order
 
-Runs 44175243662 and 44175556816 executed an informational exact-renaming proof. It is not one of the pre-registered checks. The steps:
+Runs 44175243662 and 44175556816 executed an informational structural comparison of the two binaries. It is not one of the pre-registered checks, and **it is not a formal proof of runtime equivalence** (see [What this establishes, and what it does not](#what-this-establishes-and-what-it-does-not)). The harness's annotation title ("Release WASM attribution (exact renaming proof)"), its code comments and the message of commit `082ba10` ("Prove WASM equivalence up to symbol renaming and function order") all use proof wording; this report deliberately uses the narrower term *structural equivalence*. The steps:
 1. Pair every function one-to-one across builds. A function's identity is its name with the legacy symbol hash and any ThinLTO `.llvm.N` suffix removed. Monomorphizations sharing an identity are paired by normalized content.
 2. Rename every baseline symbol to its paired experiment symbol.
 3. Compare the `wasm2wat` output **exactly**. This covers every function and every other module field (types, imports, table, memory, globals, exports, element and data segments, other custom sections).
 4. Attribute each differing binary body. A function that calls a moved function must have different call-index immediates; any other difference counts as "unexplained".
 
 Results (both runs):
-- `equivalent_up_to_renaming_and_order = True`.
+- `equivalent_up_to_renaming_and_order = True` (the harness's field name for the structural result).
 - **All 137 functions paired** (6 imported, 131 defined); none unpaired.
 - **27 symbols renamed.** After renaming, **137/137 functions and 31/31 other module fields are identical**. Only the debug `name` section differs.
 - **5 functions moved.** Positions count defined functions; the absolute index is position + 6.
@@ -332,7 +349,16 @@ Results (both runs):
 3. **rustc item order:** within a codegen unit, `items_in_deterministic_order` sorts by `(Option<Span>, SymbolName)`. Instances of upstream generics have no local span, so they sort by symbol name, hash included ([`rustc_middle/src/mir/mono.rs` L505–545](https://github.com/rust-lang/rust/blob/1.91.0/compiler/rustc_middle/src/mir/mono.rs#L505-L545)). This is consistent with the observation that every moved function is an instance of an upstream generic.
 4. **ThinLTO:** the wrapper has no `[profile]` overrides, so Cargo's default release profile applies: 16 codegen units with thin-local LTO. The promotion suffix on `finish_grow` depends on its containing module, so it is expected to change when that module's symbol names change.
 
-**What this establishes, and what it does not.** The two binaries are identical up to a consistent permutation of function indices and the contents of the debug `name` section. The renaming is applied to every call, export and element reference, and all are identical afterwards. A consistent index permutation does not change WebAssembly execution semantics, and the `name` section has none. The 14 removed wasm32 compilations contributed no code to the binary. It does **not** establish anything about Stylus activation, ink or gas pricing, or Nitro behavior, none of which was evaluated. The changed SHA-256 makes this a different artifact for any activation or code-hash purpose.
+#### What this establishes, and what it does not
+
+**Established: structural equivalence under the reported analysis.** Under the reported symbol renaming and function reordering, the two binaries are identical apart from a consistent permutation of function indices and the contents of the debug `name` section. The renaming is applied to every call, export and element reference, and all are identical afterwards; every differing binary body is accounted for. Under WebAssembly semantics, a consistent renumbering of function indices does not by itself change execution behavior, and the `name` section carries no semantics. The 14 removed wasm32 compilations contributed no code to the binary.
+
+**Not established: runtime equivalence.** This is not a formal proof of runtime equivalence:
+- The comparison relies on wabt's `wasm2wat` disassembly and on the harness's own pairing and comparison code. Neither was independently verified, and no mechanized proof was attempted.
+- Behavioral evidence is limited to the offline tests, which passed on both binaries for their fixed inputs against host stubs.
+- Nothing was evaluated about Stylus activation, ink or gas pricing, Nitro, or live chain behavior.
+
+The changed SHA-256 makes this a different artifact for any activation or code-hash purpose.
 
 ### ABI generation and selector
 
@@ -391,18 +417,19 @@ The lockfiles are byte-identical, so a lockfile-wide audit cannot differ.
 ## Interpretation
 
 1. **The isolation works at the declaration level.** The three macro crates are now dev-only direct dependencies. The wasm32 release build no longer compiles the expander/input chain: 144 → 130 rustc units, 18 → 16 build-script runs. The ABI, selector routing and all offline behavior are unchanged.
-2. **It cannot remove the macro from the normal graph.** `alloy-sol-types` 1.5.7 depends on `alloy-sol-macro` as a normal dependency. The proc-macro and its host dependencies are therefore still compiled, and the lockfile, package lists and RustSec findings do not change. The change gives build-graph hygiene; it brings no security improvement.
-3. **The WASM checksum changes for naming and order reasons only.** The binaries are proven equivalent up to symbol renaming and function order, and the cause is traced to the root crate's Cargo metadata. If the change is adopted, any record pinned to `26f536e6…c67d` (Phase 2B.5.1 and later evidence) must be updated to `6fd9159d…fefd`. Any activation would be for that new code hash.
-4. **The pins should keep protecting resolution, but this was not exercised.** Cargo resolves the dev-dependencies of workspace members into the same lockfile, and allows only one semver-compatible version of a package in a resolve. The `=1.5.7` dev-dependency pins should therefore still keep `alloy-sol-macro*` at 1.5.7 when the lockfile is re-resolved; this is the protection Phase 2B.2 added after macro 1.7.3 broke the build. No `cargo update` or lockfile regeneration was run, because unrelated changes were out of scope.
-5. Merging and deployment are not authorized by this evidence. Activation remains blocked pending the security review and separately authorized validation recorded in Phase 2B.5.1.
+2. **It cannot remove the macro from the normal graph, so it is a build-hygiene change, not a security fix.** `alloy-sol-types` 1.5.7 depends on `alloy-sol-macro` as a normal dependency. The proc-macro and its host dependencies are therefore still compiled, and the lockfile, package lists and RustSec findings do not change. No advisory is resolved, and no crate leaves the lockfile or the host build.
+3. **The WASM checksum change is fully accounted for by symbol renaming and function order in the structural analysis.** The binaries are structurally equivalent under that analysis, which is not a formal proof of runtime equivalence, and the observed cause is the root crate's Cargo metadata. If the change is adopted, any record pinned to `26f536e6…c67d` (Phase 2B.5.1 and later evidence) must be updated to `6fd9159d…fefd`. Any activation would be for that new code hash.
+4. **The `=1.5.7` pins are verified in the existing lockfile; lockfile regeneration was not tested.** The unchanged lockfile, used with `--locked` by every build, resolves the three crates only to 1.5.7. Cargo resolves the dev-dependencies of workspace members into the same lockfile, and allows only one semver-compatible version of a package in a resolve. The `=1.5.7` dev-dependency pins should therefore still keep `alloy-sol-macro*` at 1.5.7 when the lockfile is re-resolved; this is the protection Phase 2B.2 added after macro 1.7.3 broke the build. No `cargo update` or lockfile regeneration was run, because unrelated changes were out of scope.
+5. **Not authorized, and not tested on chain.** Merging and deployment are not authorized by this evidence. Stylus/Nitro activation and live chain behavior remain untested, and activation remains blocked pending the security review and separately authorized validation recorded in Phase 2B.5.1.
 
 ## Limitations
 
-- **Evidence access.** Every value in this report comes from annotations written by the runner and read here through the GitHub API. Logs and artifacts could not be downloaded, and the WASM binaries were not re-hashed independently in this sandbox. Some annotations are truncated; the complete data is in each run's `comparison.json`.
-- **Equivalence proof.**
+- **Evidence access.** Every value in this report comes from annotations written by the runner and read here through the GitHub API. Logs and artifacts could not be downloaded. **The original WASM artifacts were not independently downloaded and re-hashed in the reviewing sandbox**; the reported SHA-256 values are the runner's. Some annotations are truncated; the complete data is in each run's `comparison.json`.
+- **WASM equivalence analysis.**
+  - It establishes structural equivalence under the reported symbol-renaming and function-order analysis. **It is not a formal proof of runtime equivalence**, and it is not a statement about the toolchain in general.
   - It depends on wabt's `wasm2wat` from the Ubuntu archive (optional and non-gating) and on the harness's text comparison.
   - It is informational, not a pre-registered check, and was added after the first experiment run showed the hash change.
-  - It shows structural identity up to renaming and index permutation. It is not a statement about the toolchain in general.
+- **Lockfile regeneration.** The `=1.5.7` pins were verified in the existing lockfile only. Regenerating the lockfile, or running `cargo update`, with the pins in `[dev-dependencies]` was not tested.
 - **Compiler invocations.** These come from parsing Cargo's `-vv` output, with paths and hashes normalized. Raw `-C metadata` values are compared separately.
 - **Graph evidence.** Cargo trees and metadata are resolution views. They do not establish linkage, reachability or exploitability.
 - **RustSec.**
@@ -410,13 +437,23 @@ The lockfiles are byte-identical, so a lockfile-wide audit cannot differ.
   - Coverage of yanked crates under `--no-fetch` depends on the runner's local index cache and is unknown.
   - Freshness is tied to advisory-db `233155b4…` and the recorded audit times.
 - **Platform coverage.** Only `ubuntu-latest` x86-64 with Rust 1.91.0 and Cargo's default release profile was tested. The runner image version is recorded in each artifact's `provenance.txt`, which was not read here.
-- **Not evaluated:** Nitro or Stylus activation, ink or gas, on-chain behavior, advisory exploitability, and the behavior of `cargo update` or lockfile regeneration with the moved pins.
+- **Not evaluated:** Stylus/Nitro activation, ink or gas, live chain behavior, advisory exploitability, and the behavior of `cargo update` or lockfile regeneration with the moved pins.
+- **Harness availability.** The harness is not in the final change set. It remains inspectable at `bbd384154e21467d61c329c4409d05e7eb449fcb`, and its outputs remain in the run artifacts until 2026-12-17.
 
-## Reproducing
+## Inspecting and reproducing
+
+The temporary harness is not in the final change set. Inspect it at the historical experiment commit `bbd384154e21467d61c329c4409d05e7eb449fcb`:
 
 ```sh
-gh workflow run macro-isolation-experiment.yml --ref arena/85bd8a06-ponte            # base defaults to fe6e928…
-gh workflow run macro-isolation-experiment.yml --ref arena/85bd8a06-ponte -f base=<sha>
+git ls-tree -r --name-only bbd384154e21467d61c329c4409d05e7eb449fcb -- .github/workflows/macro-isolation-experiment.yml scripts/phase2b/macro-isolation
+git show bbd384154e21467d61c329c4409d05e7eb449fcb:scripts/phase2b/macro-isolation/evidence.py
+git worktree add --detach ../ponte-2b5-3 bbd384154e21467d61c329c4409d05e7eb449fcb   # full historical tree
 ```
 
-Results appear in three places: the job's step summary (`comparison.md`), check-run annotations ("Verification checks", "Release WASM attribution (exact renaming proof)", "RustSec comparison" and others), and the `ponte-macro-isolation-evidence-<run>-<attempt>` artifact. The artifact holds every command's argv, cwd, stdout, stderr and exit code, plus `comparison.json`, `wasm-sections.json`, `release.wat` and the RustSec JSON.
+Re-running the experiment needs a branch or tag that contains the workflow file: GitHub dispatches workflows by ref, and the final branch head no longer has it. A maintainer could create such a ref at `bbd3841` and run `gh workflow run macro-isolation-experiment.yml --ref <that ref> -f base=fe6e928bbacd23948fbe32c492ac42df4ef49b1b`. This was not done for this report.
+
+Each run published its results in three places: the job's step summary (`comparison.md`), check-run annotations ("Verification checks", "Release WASM attribution (exact renaming proof)", "RustSec comparison" and others), and the `ponte-macro-isolation-evidence-<run>-<attempt>` artifact. The artifact holds every command's argv, cwd, stdout, stderr and exit code, plus `comparison.json`, `wasm-sections.json`, `release.wat` and the RustSec JSON. The annotation title "exact renaming proof" is historical; the analysis it names is the structural comparison described in [Release WASM attribution](#release-wasm-attribution--structural-equivalence-under-symbol-renaming-and-function-order).
+
+## Revision note
+
+This report was first committed at `bbd384154e21467d61c329c4409d05e7eb449fcb`. The cleanup commit that follows it removed the temporary harness from the change set and clarified the evidence wording: structural rather than formal WASM equivalence, artifacts not independently re-hashed, pins verified only in the existing lockfile, build hygiene rather than security, and activation and live chain behavior untested. No result, run identifier, hash or limitation was removed.
