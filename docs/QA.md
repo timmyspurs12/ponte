@@ -1,5 +1,7 @@
 # Phase 1.1 QA handoff
 
+> Historical Phase 1.1 visual baseline. Current screenshots are listed in [HACKATHON_DEMO_EVIDENCE.md](HACKATHON_DEMO_EVIDENCE.md).
+
 Validated on 16 November 2026. The live Arena preview serves the production frontend build on port 3000. No public deployment, payment integration or Phase 2 implementation was initiated. Phase 1 screenshots remain as baselines; new Portuguese screenshots have the `phase1.1-pt-` prefix.
 
 ## Results

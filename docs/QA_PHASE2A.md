@@ -1,5 +1,7 @@
 # Phase 2A verification
 
+> Historical Phase 2A results. Current claim boundaries, CI links and current visual evidence are in [HACKATHON_DEMO_EVIDENCE.md](HACKATHON_DEMO_EVIDENCE.md).
+
 Date: 16 November 2026. This document records observed local checks; final-commit GitHub Actions results are attached to the Phase 2A PR handoff rather than assuming a workflow file proves success.
 
 ## Local environment and results

@@ -33,22 +33,22 @@ export const ptBR: Record<string, string> = {
     "Para negócios que vão além das fronteiras",
   "Local payments.": "Pagamentos locais.",
   "Global possibility.": "Possibilidades globais.",
-  "A clearer way from Brazilian reais to digital dollars. Connect Pix payments with intelligent USDG settlement, and keep your business moving.":
-    "Um caminho mais claro do real ao dólar digital. Conecte pagamentos Pix à liquidação inteligente em USDG e mantenha seus negócios em movimento.",
+  "A clearer way from Brazilian reais to digital dollars. Connect Pix payments with simulated USDG settlement, and keep your business moving.":
+    "Um caminho mais claro do real ao dólar digital. Conecte pagamentos Pix à liquidação simulada em USDG e mantenha seus negócios em movimento.",
   "Create an invoice": "Criar uma fatura",
   "See how it works": "Veja como funciona",
   "Interactive prototype": "Protótipo interativo",
   "No real funds moved": "Sem movimentação de dinheiro real",
   "The Brazil → global corridor": "Do Brasil para o mundo",
   "DEMO ROUTE": "ROTA DEMONSTRATIVA",
-  "Brazilian Pix payment flows through PONTE and optimized liquidity to an international supplier":
-    "Pagamento Pix no Brasil passa pela PONTE e pela liquidez otimizada até um fornecedor internacional",
+  "Brazilian Pix payment flows through PONTE and illustrative simulated routes to an international supplier":
+    "Pagamento Pix no Brasil passa pela PONTE e por rotas simuladas ilustrativas até um fornecedor internacional",
   "PONTE ENGINE": "MOTOR PONTE",
   "You pay locally": "Você paga no Brasil",
   "Pix · Brazil": "Pix · Brasil",
   "Your supplier receives": "Seu fornecedor recebe",
   "Digital dollars · Arbitrum": "Dólares digitais · Arbitrum",
-  "Optimised liquidity": "Liquidez otimizada",
+  "Illustrative routes": "Rotas ilustrativas",
   "3 routes compared": "3 rotas comparadas",
   "Local in. Global out. Every step visible.":
     "Origem local. Destino global. Tudo à vista.",
@@ -67,20 +67,20 @@ export const ptBR: Record<string, string> = {
   "Set the amount in reais, add your supplier and choose digital dollar settlement.":
     "Defina o valor em reais, adicione o fornecedor e escolha a liquidação em dólar digital.",
   "Pay the local way": "Pague do seu jeito",
-  "Share a payment link and follow a familiar Pix payment experience.":
-    "Compartilhe um link de pagamento e siga uma experiência familiar com Pix.",
+  "Open the workspace payment link and follow a familiar Pix simulation.":
+    "Abra o link de pagamento do ambiente e siga uma simulação familiar com Pix.",
   "Find a clearer route": "Encontre a melhor rota",
-  "Compare sample liquidity routes, fees and expected output before execution.":
-    "Compare rotas de liquidez ilustrativas, taxas e valores estimados antes da execução.",
+  "Compare illustrative routes, fees and expected output before confirming a simulated settlement.":
+    "Compare rotas ilustrativas, taxas e valores estimados antes de confirmar uma liquidação simulada.",
   "Close the loop": "Conclua o ciclo",
-  "Follow settlement from start to finish, with a clear receipt for your records.":
-    "Acompanhe a liquidação do início ao fim, com um comprovante claro para seus registros.",
-  "Intelligence, not guesswork": "Inteligência, sem adivinhação",
-  "A better route.": "Uma rota melhor.",
+  "Follow simulated settlement from start to finish, with a clear demo receipt for your records.":
+    "Acompanhe a liquidação simulada do início ao fim, com um comprovante demonstrativo claro para seus registros.",
+  "Clarity, not guesswork": "Clareza, sem adivinhação",
+  "Sample routes.": "Rotas de exemplo.",
   "In plain sight.": "Tudo às claras.",
   "Payments shouldn’t disappear into a black box. PONTE makes the journey visible—from the first real to the final digital dollar.":
     "Pagamentos não deveriam desaparecer em uma caixa-preta. A PONTE torna a jornada visível: do primeiro real ao último dólar digital.",
-  "Compare liquidity before you commit": "Compare a liquidez antes de decidir",
+  "Compare illustrative routes before you commit": "Compare rotas ilustrativas antes de decidir",
   "See fees and minimum output upfront":
     "Veja as taxas e o valor mínimo antes de continuar",
   "Track every step in one workspace": "Acompanhe cada etapa em um só lugar",
@@ -112,10 +112,10 @@ export const ptBR: Record<string, string> = {
     "Experiência local. Base programável.",
   "Built to bridge": "Uma ponte entre",
   "two financial worlds.": "dois mundos financeiros.",
-  "A frontend vision for Pix funding, USDG settlement and efficient execution on Arbitrum. Open interfaces. Clear integration boundaries.":
-    "Uma proposta de interface para aportes via Pix, liquidação em USDG e execução eficiente na Arbitrum. Interfaces abertas e integrações bem definidas.",
+  "A local simulation of Pix funding and USDG settlement, with a separately tested Rust optimizer and Stylus prototype for Arbitrum. Open interfaces. Clear integration boundaries.":
+    "Uma simulação local de aportes via Pix e liquidação em USDG, com um otimizador Rust e um protótipo Stylus separados e testados para a Arbitrum. Interfaces abertas e integrações bem definidas.",
   "Explore the architecture": "Explore a arquitetura",
-  "Stylus-ready design": "Arquitetura preparada para Stylus",
+  "Separate Stylus prototype": "Protótipo Stylus separado",
   "Phase 2 interface": "Interface da Fase 2",
   "Trust is in the details": "A confiança está nos detalhes",
   "Clarity at every layer.": "Clareza em cada camada.",
@@ -141,7 +141,7 @@ export const ptBR: Record<string, string> = {
     "Criada para o Arbitrum Open House São Paulo.",
   "Frontend concept · All payments are simulated.":
     "Conceito de frontend · Todos os pagamentos são simulados.",
-  "Developer overview · Phase 2A": "Visão para desenvolvedores · Fase 2A",
+  "Developer overview · current prototype": "Visão para desenvolvedores · protótipo atual",
   "One bridge.": "Uma ponte.",
   "Separate integration layers.": "Camadas de integração separadas.",
   "Invoices and simulated settlement are persisted through an authenticated PostgreSQL API. No contract, wallet or payment provider is connected.":
@@ -156,8 +156,8 @@ export const ptBR: Record<string, string> = {
   "Add wallet-provider and token adapters, network validation, recipient checks and explicit signing approval.":
     "Adicionar adaptadores de carteira e token, validação de rede, verificação de destinatário e aprovação explícita de assinatura.",
   "Arbitrum & Stylus": "Arbitrum e Stylus",
-  "Implement and test contracts separately. Benchmark the routing optimizer against deterministic fixtures before any onchain use.":
-    "Implementar e testar contratos separadamente. Avaliar o otimizador de rotas com dados determinísticos antes de qualquer uso onchain.",
+  "A separate synthetic Stylus evaluator and deterministic optimizer benchmarks exist. Neither is connected to the UI or used onchain.":
+    "Existem um avaliador Stylus sintético separado e benchmarks determinísticos do otimizador. Nenhum dos dois está conectado à interface ou usado onchain.",
   "Security & operations": "Segurança e operações",
   "Define KYB/AML requirements with qualified providers, audit contracts, rate-limit APIs, add observability and failure recovery.":
     "Definir requisitos de KYB/AML com provedores qualificados, auditar contratos, limitar requisições e adicionar observabilidade e recuperação de falhas.",
@@ -183,7 +183,6 @@ export const ptBR: Record<string, string> = {
   "Illustrative workflow": "Fluxo ilustrativo",
   "Brazilian reais": "Reais brasileiros",
   "Pix funding": "Aporte via Pix",
-  "Intelligent routing": "Roteamento inteligente",
   "3 sample routes": "3 rotas ilustrativas",
   "Digital dollars": "Dólares digitais",
   "USDG settlement": "Liquidação em USDG",
@@ -212,8 +211,8 @@ export const ptBR: Record<string, string> = {
   "Page not found": "Página não encontrada",
   "Return home": "Voltar ao início",
   "Invoice not found": "Fatura não encontrada",
-  "This demo link may belong to another browser. Demo records are stored locally.":
-    "Este link pode pertencer a outro navegador. Os registros de demonstração são armazenados localmente.",
+  "This invoice is unavailable in this workspace. Check that you are signed in to the correct demo workspace.":
+    "Esta fatura não está disponível neste ambiente. Verifique se você entrou com o ambiente de demonstração correto.",
   "Back to invoices": "Voltar às faturas",
   "Dismiss notification": "Fechar notificação",
   "All statuses": "Todos os status",
@@ -277,7 +276,7 @@ export const ptBR: Record<string, string> = {
     "Sua fatura reúne toda a jornada de pagamento.",
   "Share a demo payment link": "Compartilhe um link de demonstração",
   "Simulate Pix confirmation": "Simule a confirmação Pix",
-  "Compare liquidity routes": "Compare rotas de liquidez",
+  "Compare illustrative routes": "Compare rotas ilustrativas",
   "Generate a settlement receipt": "Gere um comprovante de liquidação",
   "This is a frontend demonstration. Never send real funds to a demo address.":
     "Esta é uma demonstração de frontend. Nunca envie dinheiro real para um endereço de demonstração.",
@@ -364,8 +363,8 @@ export const ptBR: Record<string, string> = {
   "Copy demo payment link": "Copiar link de pagamento demonstrativo",
   "Open demo payment page": "Abrir página de pagamento demonstrativo",
   "A safe space to explore.": "Um espaço seguro para explorar.",
-  "All payment confirmations, liquidity routes and settlements are simulated. Never transfer real funds to this prototype.":
-    "Todas as confirmações, rotas e liquidações são simuladas. Nunca transfira dinheiro real para este protótipo.",
+  "All payment confirmations, illustrative routes and settlements are simulated. Never transfer real funds to this prototype.":
+    "Todas as confirmações, rotas ilustrativas e liquidações são simuladas. Nunca transfira dinheiro real para este protótipo.",
   "Want to understand the foundations?": "Quer entender a estrutura?",
   "See the integration roadmap": "Veja o plano de integrações",
   "Simulate this settlement?": "Simular esta liquidação?",

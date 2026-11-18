@@ -38,7 +38,7 @@ function RouteAtlas() {
         viewBox="0 0 600 350"
         role="img"
         aria-label={t(
-          "Brazilian Pix payment flows through PONTE and optimized liquidity to an international supplier",
+          "Brazilian Pix payment flows through PONTE and illustrative simulated routes to an international supplier",
         )}
       >
         <defs>
@@ -123,7 +123,7 @@ function RouteAtlas() {
         <ArrowUpRight size={18} />
       </div>
       <div className="route-note">
-        <GitBranch size={13} /> {t("Optimised liquidity")}{" "}
+        <GitBranch size={13} /> {t("Illustrative routes")}{" "}
         <span>{t("3 routes compared")}</span>
       </div>
       <div className="atlas-bottom">
@@ -228,7 +228,7 @@ export function Marketing() {
             <p>
               {" "}
               {t(
-                "A clearer way from Brazilian reais to digital dollars. Connect Pix payments with intelligent USDG settlement, and keep your business moving.",
+                "A clearer way from Brazilian reais to digital dollars. Connect Pix payments with simulated USDG settlement, and keep your business moving.",
               )}{" "}
             </p>
             <div className="hero-actions">
@@ -296,21 +296,21 @@ export function Marketing() {
               {
                 title: t("Pay the local way"),
                 text: t(
-                  "Share a payment link and follow a familiar Pix payment experience.",
+                  "Open the workspace payment link and follow a familiar Pix simulation.",
                 ),
                 icon: Zap,
               },
               {
                 title: t("Find a clearer route"),
                 text: t(
-                  "Compare sample liquidity routes, fees and expected output before execution.",
+                  "Compare illustrative routes, fees and expected output before confirming a simulated settlement.",
                 ),
                 icon: GitBranch,
               },
               {
                 title: t("Close the loop"),
                 text: t(
-                  "Follow settlement from start to finish, with a clear receipt for your records.",
+                  "Follow simulated settlement from start to finish, with a clear demo receipt for your records.",
                 ),
                 icon: CheckCircle2,
               },
@@ -330,11 +330,11 @@ export function Marketing() {
           <div className="wrap product-split">
             <div>
               <span className="section-label">
-                {t("Intelligence, not guesswork")}
+                {t("Clarity, not guesswork")}
               </span>
               <h2>
                 {" "}
-                {t("A better route.")} <br /> {t("In plain sight.")}{" "}
+                {t("Sample routes.")} <br /> {t("In plain sight.")}{" "}
               </h2>
               <p>
                 {" "}
@@ -344,7 +344,7 @@ export function Marketing() {
               </p>
               <ul className="check-list">
                 <li>
-                  <Check /> {t("Compare liquidity before you commit")}{" "}
+                  <Check /> {t("Compare illustrative routes before you commit")}{" "}
                 </li>
                 <li>
                   <Check /> {t("See fees and minimum output upfront")}{" "}
@@ -468,7 +468,7 @@ export function Marketing() {
               <p>
                 {" "}
                 {t(
-                  "A frontend vision for Pix funding, USDG settlement and efficient execution on Arbitrum. Open interfaces. Clear integration boundaries.",
+                  "A local simulation of Pix funding and USDG settlement, with a separately tested Rust optimizer and Stylus prototype for Arbitrum. Open interfaces. Clear integration boundaries.",
                 )}{" "}
               </p>
               <Link className="text-link" href="/developers">
@@ -478,7 +478,7 @@ export function Marketing() {
               <div className="tech-tags">
                 <span>Arbitrum</span>
                 <span>USDG</span>
-                <span>{t("Stylus-ready design")}</span>
+                <span>{t("Separate Stylus prototype")}</span>
               </div>
             </div>
             <div className="code-window">

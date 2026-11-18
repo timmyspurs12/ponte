@@ -15,7 +15,7 @@ export function Developers() {
       </header>
       <main id="main" className="wrap section docs">
         <span className="section-label">
-          {t("Developer overview · Phase 2A")}
+          {t("Developer overview · current prototype")}
         </span>
         <h1>
           {" "}
@@ -49,7 +49,7 @@ export function Developers() {
           [
             t("Arbitrum & Stylus"),
             t(
-              "Implement and test contracts separately. Benchmark the routing optimizer against deterministic fixtures before any onchain use.",
+              "A separate synthetic Stylus evaluator and deterministic optimizer benchmarks exist. Neither is connected to the UI or used onchain.",
             ),
           ],
           [
