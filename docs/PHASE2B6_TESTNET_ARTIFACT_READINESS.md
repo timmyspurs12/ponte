@@ -11,6 +11,7 @@
 | Workflow | [`.github/workflows/stylus-testnet-artifact.yml`](../.github/workflows/stylus-testnet-artifact.yml): `workflow_dispatch` only, `contents: read`, no secrets, pinned action SHAs. Registered with GitHub from this branch (workflow ID `422931157`) without any change to `main` ([§4](#4-the-workflow)) |
 | **Candidate artifact run** | **Succeeded.** [Run 44367877896](https://github.com/timmyspurs12/ponte/actions/runs/44367877896), `workflow_dispatch` on `arena/7643001c-ponte` at commit `735445f04255ae5ec5d43041d69db8338eba5361`: all 17 steps passed and the provenance record is `complete` ([§5](#5-artifact-run-results)) |
 | **Artifact** | [`ponte-stylus-unactivated-candidate-735445f04255ae5ec5d43041d69db8338eba5361-44367877896-1`](https://github.com/timmyspurs12/ponte/actions/runs/44367877896/artifacts/14457443066), artifact ID `14457443066`, 334,403-byte zip, digest `sha256:df20469a2bd1d2d1cf7293706f1de47e4accabadedaa6af094d40c7605c1f739`, expires 2027-02-16 |
+| Confirmation run | [Run 44370571297](https://github.com/timmyspurs12/ponte/actions/runs/44370571297) on the documentation-only commit `0d2a5e610523699ccea52d841bebe2c0b9656165` reproduced every recorded result exactly. Artifact ID `14459786175`, digest `sha256:664698aa89b11f7797f35944d089cff600ace8b2a048c04f9de66e46588c9b31`, expires 2027-02-16 |
 | **Raw WASM** | 90,506 bytes, SHA-256 **`6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`**: identical to `main`'s baseline, to this branch's dependency-evidence build and to the pinned CLI's own `cargo stylus build` ([§5](#5-artifact-run-results)) |
 | Configuration change | `rust/stylus-wrapper/Stylus.toml` gains the `[workspace]` table that cargo-stylus 0.10.10 requires, plus a declarative `arbitrum-sepolia` network entry. **Confirmed by the pinned CLI:** `cargo stylus build` succeeds; the former file fails with ``missing field `workspace` `` ([§6](#6-stylustoml-configuration-change)) |
 | Reproducible Docker path | The base image `offchainlabs/cargo-stylus-base:0.10.10` exists (digest recorded), but the CLI's container path **fails for the current layout** on the `../optimizer` path dependency. This blocks a verified `deploy` ([§7](#7-reproducibility-findings)) |
@@ -86,7 +87,7 @@ Each workflow run uploads `ponte-stylus-unactivated-candidate-<commit>-<run>-<at
 **Installation and invocation**, checked in the pinned source and exercised by the candidate run:
 - **Install:** `cargo +1.91.0 install --locked --path ./cargo-stylus --root <dir>`, run from the SDK checkout root (about 3 minutes on the runner). Upstream CI (`smoke-test.yml`, `integration.yml`) uses the same command. The README's `install.sh` does not exist at this commit.
 - **Invoke:** the binary is used as `cargo stylus …` from `rust/stylus-wrapper`, whose `rust-toolchain.toml` selects 1.91.0.
-- **Binary hash:** recorded per run, but it is **not stable across runs**: `63e0d259f4cf96d3d0bfcda14fe7f6e9b2c2e487deef6f07d4e87f6c190a4688` in run 44365360692 and `2593325f5dd651951807a5ebe79c90fd603ac5e3162deb9e9d582ffa2d6eb522` in run 44367877896, from the same source, lockfile and toolchain. The CLI is therefore identified by its source commit, lockfile and toolchain, not by its binary hash. The cause was not investigated.
+- **Binary hash:** `2593325f5dd651951807a5ebe79c90fd603ac5e3162deb9e9d582ffa2d6eb522` in runs 44367877896 and 44370571297. Superseded run 44365360692, which had `rust-src` installed, produced `63e0d259f4cf96d3d0bfcda14fe7f6e9b2c2e487deef6f07d4e87f6c190a4688` from the same source and lockfile. That is consistent with the `rust-src` path effect described in [§7](#7-reproducibility-findings), which applies to any binary built with the toolchain, but it was not separately verified. The CLI is identified primarily by its source commit, lockfile and toolchain.
 
 **Toolchain** (candidate run):
 - `rustc 1.91.0 (f8297e351 2025-10-28)`, commit `f8297e351a40c1439a467bbbb6879088047f50b3`, host `x86_64-unknown-linux-gnu`; `cargo 1.91.0 (ea2d97820 2025-10-10)`; on GitHub-hosted `ubuntu-24.04`.
@@ -172,8 +173,9 @@ cargo stylus export-abi --output <file>                 # informational; lockfil
 | --- | --- | --- | --- | --- |
 | [44365360692](https://github.com/timmyspurs12/ponte/actions/runs/44365360692) (superseded) | `38f395c` | success; record complete | 90,775 bytes, `d690eb6b9598ab80baec31cd5f84a7d4efb05436792a8b9501f9411750c01d20` (built with `rust-src` installed) | ID `14456029933`, `sha256:9d4a6a8fd79eb007141d24509ddeb4ecf699528697a4791db9e8ee9230f487d9`, expires 2027-02-16 |
 | **[44367877896](https://github.com/timmyspurs12/ponte/actions/runs/44367877896) (candidate)** | **`735445f`** | **success, 17/17 steps; record complete** | **90,506 bytes, `6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`** | **ID `14457443066`, `sha256:df20469a2bd1d2d1cf7293706f1de47e4accabadedaa6af094d40c7605c1f739`, expires 2027-02-16** |
+| [44370571297](https://github.com/timmyspurs12/ponte/actions/runs/44370571297) (confirmation) | `0d2a5e6` (documentation only) | success, 17/17 steps; record complete; every notice and warning identical to the candidate run apart from the commit | 90,506 bytes, `6fd9159d…2c8fefd` | ID `14459786175`, `sha256:664698aa89b11f7797f35944d089cff600ace8b2a048c04f9de66e46588c9b31`, expires 2027-02-16 |
 
-Both are `workflow_dispatch` runs on `arena/7643001c-ponte`, attempt 1, on `ubuntu-24.04`. The candidate run took 8 minutes 20 seconds (2026-11-18T18:16:25Z to 18:24:45Z). Commits after `735445f` change only this document.
+All three are `workflow_dispatch` runs on `arena/7643001c-ponte`, attempt 1, on `ubuntu-24.04`. The candidate run took 8 minutes 20 seconds (2026-11-18T18:16:25Z to 18:24:45Z). Commits after `735445f` change only this document.
 
 **Candidate run, step by step:**
 
@@ -358,7 +360,7 @@ These are unsuppressed and unchanged by this branch. They come from `main`'s pos
 - **Reproducibility.**
   - The raw WASM is reproducible only for the same checkout path, `CARGO_HOME` and toolchain components.
   - The CLI's own reproducible path does not work for the current layout ([§7](#7-reproducibility-findings)).
-  - The CLI binary hash differs between runs.
+  - The CLI binary hash depends on the toolchain components in the same way ([§3](#3-provenance)).
 - **Toolchain.** The CLI image used for reproducible builds comes from Docker Hub by tag. Upstream's base-image `Dockerfile` builds `cargo-stylus` without `--locked` from a floating `rust:1.91` image.
 
 ## 12. Remaining blockers
