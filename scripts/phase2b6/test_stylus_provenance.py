@@ -190,6 +190,7 @@ class AssembleTests(unittest.TestCase):
 
     def test_prefix_probe_and_baseline_are_recorded(self):
         self.command('probe-manifest-sha256', stdout=f"{'6e21' * 16}  /tmp/probe/Stylus.toml\n")
+        self.command('probe-wasm-exists')
         self.command('prefix-manifest-probe', 1, stderr=(
             'error: toml read error: TOML parse error at line 1, column 1\n'
             '  |\n1 | [contract]\n  | ^\nmissing field `workspace`\n'))
@@ -200,8 +201,64 @@ class AssembleTests(unittest.TestCase):
         self.assertIn('[workspace]', probe['failure'])
         self.assertIn('toml read error', probe['error_excerpt'])
         self.assertEqual(probe['stylus_toml_sha256'], '6e21' * 16)
+        self.assertTrue(probe['wasm_exists'])
         self.assertTrue(record['raw_wasm']['matches_main_baseline'])
         self.assertIn(': True.', output)
+
+    def test_no_manifest_probe_records_exit_zero_without_wasm(self):
+        self.command('no-manifest-absent')
+        self.command('no-manifest-build')
+        self.command('no-manifest-no-wasm')
+        record, output = self.run_assemble()
+        probe = record['cargo_stylus_build_path']['no_manifest_probe']
+        self.assertEqual(probe['build_exit_code'], 0)
+        self.assertTrue(probe['contract_manifest_absent'])
+        self.assertTrue(probe['no_wasm_produced'])
+        self.assertIn('no WASM produced True', output)
+
+    def test_project_hash_files_strips_ansi_and_keeps_order(self):
+        text = ('\x1b[0;0m\x1b[90mFile used for deployment hash: /source/Cargo.toml\x1b[0;0m\n'
+                'File used for deployment hash: /source/optimizer/src/lib.rs\r\n'
+                'Compiling ponte-stylus-wrapper\n')
+        self.assertEqual(prov.project_hash_files(text), {
+            'count': 2,
+            'files': ['/source/Cargo.toml', '/source/optimizer/src/lib.rs'],
+        })
+        self.assertEqual(prov.project_hash_files(''), {'count': 0, 'files': []})
+
+    def test_project_hash_reads_cli_line(self):
+        text = '\x1b[0;0m\x1b[90mproject metadata hash computed on deployment: "' + 'a' * 64 + '"\x1b[0;0m\n'
+        self.assertEqual(prov.project_hash(text), 'a' * 64)
+        self.assertIsNone(prov.project_hash('no hash here'))
+
+    def test_workspace_root_two_container_builds_and_initcode(self):
+        self.command('workspace-root', stdout=json.dumps({'workspace_root': '/tmp/ponte/rust'}))
+        code = initcode(bytes.fromhex('eff00000') + b'x' * 100)
+        (self.root / 'docker' / 'official-container-1.wasm').write_bytes(module())
+        (self.root / 'docker' / 'official-container-2.wasm').write_bytes(module())
+        (self.root / 'docker' / 'initcode.hex').write_text(code + '\n')
+        self.command('official-path-build-2')
+        self.command('official-path-wasm-exists')
+        self.command('official-path-wasm-exists-2')
+        self.command('official-path-identical')
+        self.command('container-get-initcode', stdout=(
+            'File used for deployment hash: /source/Cargo.toml\n'
+            'File used for deployment hash: /source/optimizer/src/lib.rs\n'
+            f'project metadata hash computed on deployment: "{"b" * 64}"\n'))
+        self.command('container-initcode-copy')
+        record, output = self.run_assemble()
+        self.assertEqual(record['source']['cargo_metadata_workspace_root'], '/tmp/ponte/rust')
+        d = record['reproducible_docker_path']
+        self.assertEqual(d['official_path']['second_build_exit_code'], 0)
+        self.assertTrue(d['official_path']['wasm_exists'])
+        self.assertTrue(d['official_path']['second_wasm_exists'])
+        self.assertTrue(d['official_path']['identical'])
+        self.assertEqual(d['get_initcode']['project_hash_files']['count'], 2)
+        self.assertEqual(d['get_initcode']['project_hash'], 'b' * 64)
+        self.assertEqual(d['get_initcode']['brotli_compressed_wasm_bytes'], 100)
+        self.assertTrue(d['get_initcode']['fits_single_contract_limit'])
+        self.assertIn('identical True', output)
+        self.assertIn('hashed files 2', output)
 
     def test_error_excerpt_keeps_error_lines_only(self):
         text = 'Compiling x\nerror: failed to read `/optimizer/Cargo.toml`\n\nCaused by:\n  No such file\n'

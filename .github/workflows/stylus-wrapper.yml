@@ -4,6 +4,9 @@ on:
     paths:
       - 'rust/stylus-wrapper/**'
       - 'rust/optimizer/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Stylus.toml'
+      - 'rust/rust-toolchain.toml'
       - '**/Cargo.lock'
       - 'scripts/phase2b/fixtures/**'
       - '.github/workflows/stylus-wrapper.yml'
@@ -12,6 +15,9 @@ on:
     paths:
       - 'rust/stylus-wrapper/**'
       - 'rust/optimizer/**'
+      - 'rust/Cargo.toml'
+      - 'rust/Stylus.toml'
+      - 'rust/rust-toolchain.toml'
       - '**/Cargo.lock'
       - 'scripts/phase2b/fixtures/**'
       - '.github/workflows/stylus-wrapper.yml'
@@ -58,7 +64,7 @@ jobs:
       - name: Inspect entrypoint and imports
         run: |
           set +e
-          python3 scripts/inspect_wasm.py target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm > /tmp/inspection.log 2>&1
+          python3 scripts/inspect_wasm.py ../target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm > /tmp/inspection.log 2>&1
           result=$?
           cat /tmp/inspection.log
           while IFS= read -r line; do echo "::notice title=WASM inspection::$line"; done < /tmp/inspection.log
@@ -66,6 +72,6 @@ jobs:
       - name: Execute release WASM offline with host stubs
         run: |
           node --version
-          node scripts/test_wasm_entrypoint.cjs target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
+          node scripts/test_wasm_entrypoint.cjs ../target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
       - name: Verify client ABI against fixture calls through release WASM
-        run: node abi-tools/test-wasm.cjs target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
+        run: node abi-tools/test-wasm.cjs ../target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm

@@ -39,8 +39,13 @@ REQUIRED = [
     'cli-check-help', 'cli-deploy-help', 'advisory-guard-tests', 'advisory-guard-baseline',
     'abi-tools-install', 'client-abi-check', 'client-abi-tests', 'cargo-fmt', 'cargo-test',
     'cargo-clippy', 'sdk-abi-export', 'sdk-abi-check', 'release-build', 'wasm-inspection',
-    'wasm-entrypoint-test', 'client-abi-wasm-test', 'cli-build', 'docker-derived-build',
-    'lockfiles-unchanged', 'tracked-files-unchanged',
+    'wasm-entrypoint-test', 'client-abi-wasm-test', 'cli-build', 'cli-build-wasm-exists',
+    'probe-wasm-exists', 'no-manifest-export', 'no-manifest-absent', 'no-manifest-build',
+    'no-manifest-no-wasm', 'workspace-root', 'docker-derived-build', 'official-path-export',
+    'official-path-export-2', 'official-container-wasm-sha256', 'official-path-build-2',
+    'official-path-wasm-exists',
+    'official-path-wasm-exists-2', 'official-path-identical', 'container-get-initcode',
+    'container-initcode-copy', 'lockfiles-unchanged', 'tracked-files-unchanged',
 ]
 TESTS = [
     'advisory-guard-tests', 'advisory-guard-baseline', 'client-abi-check', 'client-abi-tests',
@@ -295,6 +300,26 @@ def key_values(text):
     return dict(line.split(': ', 1) for line in text.splitlines() if ': ' in line)
 
 
+ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def project_hash_files(text):
+    """Read the CLI's own list of hashed files, stripping its grey ANSI colour codes."""
+    files = []
+    for line in text.splitlines():
+        match = re.search(r'File used for deployment hash: (.+?)\s*$', ANSI_ESCAPE.sub('', line))
+        if match:
+            files.append(match.group(1))
+    return {'count': len(files), 'files': files}
+
+
+def project_hash(text):
+    """Read the Keccak-256 project hash printed by the CLI's hash_project()."""
+    match = re.search(r'project metadata hash computed on deployment:\s*"([0-9a-f]{64})"',
+                      ANSI_ESCAPE.sub('', text))
+    return match.group(1) if match else None
+
+
 class Evidence:
     def __init__(self, directory):
         self.dir = Path(directory)
@@ -332,9 +357,14 @@ def assemble(directory):
             'image_version': 'ImageVersion'}.items()},
     }
     inputs = sha256sum_lines(ev.out('input-hashes'))
+    try:
+        workspace_root = json.loads(ev.out('workspace-root'))['workspace_root']
+    except (ValueError, KeyError, TypeError):
+        workspace_root = None
     record['source'] = {
         'ponte_commit': ev.out('ponte-head').strip() or None,
         'worktree_clean_before_build': ev.exit('ponte-worktree') == 0 and not ev.out('ponte-worktree').strip(),
+        'cargo_metadata_workspace_root': workspace_root,
         'input_sha256': inputs,
     }
     tag_ok, tag_commit = check_tag(ev.out('sdk-tag'), os.environ.get('SDK_RELEASE', 'v0.10.10'),
@@ -401,13 +431,22 @@ def assemble(directory):
     if ev.exit('cli-build') not in (None, 0):
         cli_build['failure'] = classify_container_failure(ev.out('cli-build', 'stderr'))
         cli_build['error_excerpt'] = failure_excerpt(ev.out('cli-build', 'stderr'), ev.out('cli-build'), 600)
-    probe = {'description': "cargo stylus build with main's former one-line `[contract]` Stylus.toml",
+    probe = {'description': ('Control: the contract keeps a minimal `[contract]` Stylus.toml while '
+                             'the [workspace] table lives at the Cargo workspace root'),
              'stylus_toml_sha256': next(iter(sha256sum_lines(ev.out('probe-manifest-sha256')).values()), None),
-             'exit_code': ev.exit('prefix-manifest-probe')}
+             'exit_code': ev.exit('prefix-manifest-probe'),
+             'wasm_exists': ev.exit('probe-wasm-exists') == 0 if ev.exit('probe-wasm-exists') is not None else None}
     if probe['exit_code'] not in (None, 0):
         probe['failure'] = classify_container_failure(ev.out('prefix-manifest-probe', 'stderr'))
         probe['error_excerpt'] = failure_excerpt(ev.out('prefix-manifest-probe', 'stderr'), ev.out('prefix-manifest-probe'), 600)
     cli_build['prefix_manifest_probe'] = probe
+    cli_build['no_manifest_probe'] = {
+        'description': ('Contract::is_contract() only checks for a Stylus.toml beside the package: '
+                        'with that file removed the CLI finds zero contracts, exits 0 and builds no WASM'),
+        'build_exit_code': ev.exit('no-manifest-build'),
+        'contract_manifest_absent': ev.exit('no-manifest-absent') == 0 if ev.exit('no-manifest-absent') is not None else None,
+        'no_wasm_produced': ev.exit('no-manifest-no-wasm') == 0 if ev.exit('no-manifest-no-wasm') is not None else None,
+    }
     initcode = {'command': ev.by_name.get('cli-get-initcode', {}).get('argv'), 'exit_code': ev.exit('cli-get-initcode'),
                 'note': ('Host-path-dependent: cargo-stylus hashes absolute source paths into the '
                          'project_hash section, so this is not the reproducible deployment payload.')}
@@ -456,10 +495,28 @@ def assemble(directory):
         'container_rustc': (ev.out('container-rust-version').splitlines() or [None])[0],
         'official_path': {
             'description': ('Same image, --network host, --workdir /source and single '
-                            '<cargo workspace root>:/source volume as cargo-stylus run_in_container(); '
-                            'offline `cargo stylus build` instead of deploy/verify; --rm added.'),
+                            '<cargo metadata workspace root>:/source volume as cargo-stylus '
+                            'run_in_container(); offline `cargo stylus build` instead of deploy/verify; '
+                            '--rm added. Two clean exports of rust/ are built independently.'),
             'command': ev.by_name.get('official-path-build', {}).get('argv'),
             'exit_code': ev.exit('official-path-build'),
+            'second_build_exit_code': ev.exit('official-path-build-2'),
+            'wasm_exists': ev.exit('official-path-wasm-exists') == 0
+            if ev.exit('official-path-wasm-exists') is not None else None,
+            'second_wasm_exists': ev.exit('official-path-wasm-exists-2') == 0
+            if ev.exit('official-path-wasm-exists-2') is not None else None,
+            'raw_wasm_sha256': ev.file_sha('docker/official-container-1.wasm'),
+            'second_raw_wasm_sha256': ev.file_sha('docker/official-container-2.wasm'),
+            'identical': ev.exit('official-path-identical') == 0
+            if ev.exit('official-path-identical') is not None else None,
+        },
+        'get_initcode': {
+            'description': ('Offline `cargo stylus get-initcode` in the same /source container; '
+                            'the CLI prints every absolute path it feeds into the project hash.'),
+            'command': ev.by_name.get('container-get-initcode', {}).get('argv'),
+            'exit_code': ev.exit('container-get-initcode'),
+            'project_hash_files': project_hash_files(ev.out('container-get-initcode')),
+            'project_hash': project_hash(ev.out('container-get-initcode')),
         },
         'diagnostic_full_repository_build': {
             'description': 'Diagnostic only, not a cargo-stylus code path: whole repository mounted read-only at /ponte.',
@@ -471,6 +528,14 @@ def assemble(directory):
     if docker['official_path']['exit_code'] not in (None, 0):
         docker['official_path']['failure'] = classify_container_failure(ev.out('official-path-build', 'stderr'))
         docker['official_path']['error_excerpt'] = failure_excerpt(ev.out('official-path-build', 'stderr'), ev.out('official-path-build'), 600)
+    if docker['official_path']['second_build_exit_code'] not in (None, 0):
+        docker['official_path']['second_failure'] = classify_container_failure(ev.out('official-path-build-2', 'stderr'))
+    container_hex = ev.dir / 'docker' / 'initcode.hex'
+    if docker['get_initcode']['exit_code'] == 0 and container_hex.is_file():
+        try:
+            docker['get_initcode'].update(initcode_summary(container_hex.read_text()))
+        except ValueError as exc:
+            docker['get_initcode']['parse_error'] = str(exc)
     diag = docker['diagnostic_full_repository_build']
     diag['identical_to_host_build'] = None if diag['raw_wasm_sha256'] is None else diag['raw_wasm_sha256'] == artifact.get('sha256')
     if diag['exit_code'] not in (None, 0):
@@ -526,9 +591,11 @@ def annotate(r):
                   f"client ABI JSON {ab['client_abi_json_sha256']}; interface {ab['client_interface_sol_sha256']}.")
     notice('Offline tests', '; '.join(f"{t['name']}={t['exit_code']}" for t in r['tests']))
     b = r['cargo_stylus_build_path']
-    pr = b['prefix_manifest_probe']
+    pr, nm = b['prefix_manifest_probe'], b['no_manifest_probe']
     notice('cargo-stylus offline build path',
-           f"pre-fix Stylus.toml probe (SHA-256 {short(pr['stylus_toml_sha256'])}) exit {pr['exit_code']}: "
+           f"minimal contract Stylus.toml control (SHA-256 {short(pr['stylus_toml_sha256'])}) exit "
+           f"{pr['exit_code']}, WASM produced {pr['wasm_exists']}; no-Stylus.toml probe exit "
+           f"{nm['build_exit_code']}, no WASM produced {nm['no_wasm_produced']}; "
            f"{pr.get('error_excerpt') or pr.get('failure') or 'no error'}; "
            f"cargo stylus build (fresh target dir) exit {b['exit_code']}{'; ' + b['failure'] if b.get('failure') else ''}; "
            f"raw WASM identical to direct build: {b['identical_to_direct_build']}; get-initcode: "
@@ -543,12 +610,18 @@ def annotate(r):
            f"fresh target dir identical: {rp['fresh_target_dir_identical']}; with rust-src added: exit "
            f"{rs['build_exit_code']}, identical {rs['identical']}, SHA-256 {rs['sha256']}, paths {rs_paths}; "
            f"artifact embedded absolute paths {paths}; examples {examples}.")
-    op, dg = d['official_path'], d['diagnostic_full_repository_build']
+    op, dg, ci = d['official_path'], d['diagnostic_full_repository_build'], d['get_initcode']
     notice('Reproducible Docker path',
            f"{d['base_image']}: on Docker Hub {d['published_on_docker_hub']}, source {d['base_image_source']}, "
            f"{d['base_image_id_and_digests']}; container CLI {d['container_cli_version']}; "
-           f"CLI-equivalent run (workspace root only at /source) exit {op['exit_code']}"
-           f"{' - ' + op['failure'] if op.get('failure') else ''}; diagnostic full-repository build exit "
+           f"CLI-equivalent runs (cargo metadata workspace root at /source) exit "
+           f"{op['exit_code']}/{op['second_build_exit_code']}, identical {op['identical']}, raw WASM "
+           f"SHA-256 {op['raw_wasm_sha256']}"
+           f"{' - ' + op['failure'] if op.get('failure') else ''}; container get-initcode exit "
+           f"{ci['exit_code']}, hashed files {ci['project_hash_files']['count']}, project hash "
+           f"{ci['project_hash']}, compressed "
+           f"{ci.get('brotli_compressed_wasm_bytes')} bytes, fits single contract "
+           f"{ci.get('fits_single_contract_limit')}; diagnostic full-repository build exit "
            f"{dg['exit_code']}, SHA-256 {dg['raw_wasm_sha256']}, identical to host {dg['identical_to_host_build']}.")
     if r['status'] != 'complete':
         notice('Provenance record incomplete',
@@ -571,6 +644,7 @@ def render_markdown(r):
         f"| SHA-256 | `{a.get('sha256')}` |",
         f"| Build command | `{' '.join(a.get('build_command') or [])}` in `{a.get('build_cwd')}` |",
         f"| PONTE commit | `{r['source']['ponte_commit']}` |",
+        f"| Cargo workspace root | `{r['source']['cargo_metadata_workspace_root']}` |",
         f"| Exports | {code_list(a.get('exports', []), 'name', 'kind')} |",
         f"| `vm_hooks` imports | {', '.join('`%s`' % h for h in a.get('vm_hooks') or [])} |",
         f"| Custom sections | {code_list(a.get('custom_sections', []), 'name', 'size', ' B') or 'none'} |",

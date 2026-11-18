@@ -17,7 +17,7 @@ cd "$ROOT"
   rustc +1.91.0 --version --verbose
   cargo +1.91.0 --version --verbose
   rustup target list --toolchain 1.91.0 --installed
-  sha256sum rust/environment-check/Cargo.lock rust/optimizer/Cargo.lock rust/stylus-wrapper/Cargo.lock
+  sha256sum rust/environment-check/Cargo.lock rust/optimizer/Cargo.lock rust/Cargo.lock
 } > "$OUT/provenance.txt"
 cat "$OUT/provenance.txt"
 python3 rust/stylus-wrapper/scripts/advisory_guard.py --json --check-baseline > "$OUT/offline-baseline.json"
@@ -71,7 +71,7 @@ done
 # -vv changes logging, not the release profile or features. Run the exact CI
 # command afterward and check that it leaves the same bytes.
 cd "$ROOT/rust/stylus-wrapper"
-wasm=target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
+wasm=../target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm
 printf '%s\n' 'cargo +1.91.0 build --locked --release --lib --target wasm32-unknown-unknown -vv' > "$OUT/build.command"
 cargo +1.91.0 build --locked --release --lib --target wasm32-unknown-unknown -vv > "$OUT/build.verbose.stdout" 2> "$OUT/build.verbose.stderr"
 sha256sum "$wasm" > "$OUT/wasm-before-ci-command.sha256"
@@ -83,7 +83,7 @@ wc -c < "$wasm" > "$OUT/wasm.size"
 cp "$wasm" "$OUT/ponte_stylus_wrapper.wasm"
 python3 scripts/inspect_wasm.py "$wasm" > "$OUT/wasm-inspection.txt"
 cd "$ROOT"
-git diff --exit-code -- rust/environment-check/Cargo.lock rust/optimizer/Cargo.lock rust/stylus-wrapper/Cargo.lock
+git diff --exit-code -- rust/environment-check/Cargo.lock rust/optimizer/Cargo.lock rust/Cargo.lock
 python3 scripts/phase2b/summarize-dependency-evidence.py graph "$OUT"
 if (( failed != 0 )); then
   echo 'One or more graph commands failed; evidence is incomplete.' >&2
