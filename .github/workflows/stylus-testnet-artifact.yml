@@ -7,12 +7,6 @@ name: Stylus testnet artifact (unactivated candidate)
 # See docs/PHASE2B6_TESTNET_ARTIFACT_READINESS.md.
 on:
   workflow_dispatch:
-  # TEMPORARY, reverted by the next commit: GitHub accepts a manual dispatch only for a
-  # workflow it has registered. This push trigger, limited to this branch and this file,
-  # registers the workflow without any change to main. The job is skipped for push events.
-  push:
-    branches: [arena/7643001c-ponte]
-    paths: [.github/workflows/stylus-testnet-artifact.yml]
 
 permissions:
   contents: read
@@ -24,8 +18,6 @@ concurrency:
 jobs:
   candidate:
     name: Build unactivated candidate artifact
-    # TEMPORARY, reverted by the next commit: the push-triggered registration run builds nothing.
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
