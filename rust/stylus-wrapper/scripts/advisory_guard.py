@@ -25,8 +25,8 @@ RULES = {
 }
 # This records observed identities, NOT a vulnerability waiver or a release approval.
 BASELINE = {
-    ("rust/stylus-wrapper/Cargo.lock", "crypto-bigint", "0.5.5", REGISTRY),
-    ("rust/stylus-wrapper/Cargo.lock", "lru", "0.16.4", REGISTRY),
+    ("rust/Cargo.lock", "crypto-bigint", "0.5.5", REGISTRY),
+    ("rust/Cargo.lock", "lru", "0.16.4", REGISTRY),
 }
 SCOPE = (
     "Only RUSTSEC-2026-0387 and RUSTSEC-2026-0253 are checked using pinned "

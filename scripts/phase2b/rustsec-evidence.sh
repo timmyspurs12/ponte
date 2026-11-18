@@ -38,7 +38,13 @@ echo "::notice title=RustSec database::revision=$(cat "$OUT/advisory-db.commit")
 # Audits must run for all three locks even when an earlier one has findings.
 # --deny warnings includes unsound/unmaintained/yanked; no ID or target is ignored.
 for workspace in environment-check optimizer stylus-wrapper; do
-  lock="$ROOT/rust/$workspace/Cargo.lock"
+  # The wrapper's lockfile moved to the new Cargo workspace root; the other two crates keep
+  # their own isolated workspaces and lockfiles.
+  if [[ $workspace == stylus-wrapper ]]; then
+    lock="$ROOT/rust/Cargo.lock"
+  else
+    lock="$ROOT/rust/$workspace/Cargo.lock"
+  fi
   cmd=("$AUDIT" audit --file "$lock" --db "$TMP/advisory-db" --no-fetch --deny warnings --json)
   printf '%q ' "${cmd[@]}" > "$OUT/$workspace.command"
   printf '\n' >> "$OUT/$workspace.command"

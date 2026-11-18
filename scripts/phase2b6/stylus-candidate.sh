@@ -15,7 +15,8 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 : "${EVIDENCE_DIR:?}" "${PONTE_DIR:?}" "${SDK_DIR:?}" "${CLI_ROOT:?}" "${TOOLCHAIN:?}"
 : "${SDK_REPOSITORY:?}" "${SDK_RELEASE:?}" "${SDK_COMMIT:?}" "${CLI_VERSION:?}"
 COMMANDS=$EVIDENCE_DIR/commands
-WASM_REL=target/wasm32-unknown-unknown/release
+WASM_REL=../target/wasm32-unknown-unknown/release
+DEPS_WASM_REL=wasm32-unknown-unknown/release/deps/ponte_stylus_wrapper.wasm
 mkdir -p "$COMMANDS"
 LAST=''
 LAST_CODE=0
@@ -93,15 +94,19 @@ unauthenticated, so its output is not an executable quote, verified liquidity or
 See provenance.json and docs/PHASE2B6_TESTNET_ARTIFACT_READINESS.md.
 EOF
   cd "$PONTE_DIR"
-  mkdir -p "$EVIDENCE_DIR/inputs"
-  cp rust/stylus-wrapper/Cargo.toml rust/stylus-wrapper/Cargo.lock rust/stylus-wrapper/Stylus.toml \
-    rust/stylus-wrapper/rust-toolchain.toml "$EVIDENCE_DIR/inputs/"
+  mkdir -p "$EVIDENCE_DIR/inputs/stylus-wrapper"
+  # The Cargo workspace root moved from rust/stylus-wrapper to rust/. Keep the same basenames
+  # apart so both workspace and package inputs remain identifiable in the artifact.
+  cp rust/Cargo.toml rust/Cargo.lock rust/Stylus.toml rust/rust-toolchain.toml \
+    "$EVIDENCE_DIR/inputs/"
+  cp rust/stylus-wrapper/Cargo.toml rust/stylus-wrapper/Stylus.toml \
+    "$EVIDENCE_DIR/inputs/stylus-wrapper/"
   record gate ponte-head git rev-parse HEAD
   [[ $(< "$LAST.stdout") == "$GITHUB_SHA" ]] || fail "checked-out PONTE commit differs from GITHUB_SHA"
   record gate ponte-worktree git status --porcelain=v1 --untracked-files=all
   [[ ! -s $LAST.stdout ]] || fail "PONTE worktree is not clean before the build"
-  record gate input-hashes sha256sum rust/stylus-wrapper/Cargo.toml rust/stylus-wrapper/Cargo.lock \
-    rust/stylus-wrapper/Stylus.toml rust/stylus-wrapper/rust-toolchain.toml \
+  record gate input-hashes sha256sum rust/Cargo.toml rust/Cargo.lock rust/Stylus.toml \
+    rust/rust-toolchain.toml rust/stylus-wrapper/Cargo.toml rust/stylus-wrapper/Stylus.toml \
     rust/optimizer/Cargo.toml rust/optimizer/Cargo.lock
   record info runner-kernel uname -a
   record info runner-image printenv ImageOS ImageVersion
@@ -204,21 +209,35 @@ stage_release_wasm() {
 
 stage_cli_build() {
   export PATH="$CLI_ROOT/bin:$PATH"
-  # Pre-fix probe: the CLI against a copy whose Stylus.toml is main's former one-line `[contract]`
-  # file, to record the exact error that motivated the [workspace] configuration.
+  # Control probe: the contract's own Stylus.toml is now the minimal `[contract]` file, while the
+  # [workspace] table lives at rust/Stylus.toml. This must still find and build the contract.
   local probe=$RUNNER_TEMP/prefix-manifest-probe
   mkdir -p "$probe"
   cd "$PONTE_DIR"
-  record gate probe-export bash -c "git archive --format=tar HEAD rust/optimizer rust/stylus-wrapper | tar -x -C '$probe'"
-  printf '[contract]\n' > "$probe/rust/stylus-wrapper/Stylus.toml"
+  record gate probe-export bash -c "git archive --format=tar HEAD rust | tar -x -C '$probe'"
   record gate probe-manifest-sha256 sha256sum "$probe/rust/stylus-wrapper/Stylus.toml"
   cd "$probe/rust/stylus-wrapper"
   record info prefix-manifest-probe env CARGO_TARGET_DIR="$RUNNER_TEMP/probe-target" cargo stylus build
+  record gate probe-wasm-exists test -f "$RUNNER_TEMP/probe-target/$DEPS_WASM_REL"
+
+  # Contract detection only checks for a Stylus.toml beside the package. With none, the CLI finds
+  # zero contracts, exits 0 and builds nothing: gate on the WASM file, not just the exit status.
+  local absent=$RUNNER_TEMP/no-manifest-probe
+  mkdir -p "$absent"
+  cd "$PONTE_DIR"
+  record gate no-manifest-export bash -c "git archive --format=tar HEAD rust | tar -x -C '$absent'"
+  rm -f "$absent/rust/stylus-wrapper/Stylus.toml"
+  record gate no-manifest-absent test ! -f "$absent/rust/stylus-wrapper/Stylus.toml"
+  cd "$absent/rust/stylus-wrapper"
+  record info no-manifest-build env CARGO_TARGET_DIR="$RUNNER_TEMP/no-manifest-target" cargo stylus build
+  record gate no-manifest-no-wasm test ! -f "$RUNNER_TEMP/no-manifest-target/$DEPS_WASM_REL"
+
   cd "$PONTE_DIR/rust/stylus-wrapper"
   # A fresh target directory makes the CLI compile from scratch instead of reusing the build above.
   local fresh=$RUNNER_TEMP/cargo-stylus-build-target
   record gate cli-build env CARGO_TARGET_DIR="$fresh" cargo stylus build
-  cp "$fresh/wasm32-unknown-unknown/release/deps/ponte_stylus_wrapper.wasm" "$EVIDENCE_DIR/cli/cargo-stylus-build.wasm"
+  record gate cli-build-wasm-exists test -f "$fresh/$DEPS_WASM_REL"
+  cp "$fresh/$DEPS_WASM_REL" "$EVIDENCE_DIR/cli/cargo-stylus-build.wasm"
   record info cli-build-identical cmp "$EVIDENCE_DIR/ponte_stylus_wrapper.wasm" "$EVIDENCE_DIR/cli/cargo-stylus-build.wasm"
   # Offline processing: strip metadata, add project_hash, Brotli-compress, wrap in deployment init code.
   record info cli-get-initcode cargo stylus get-initcode --output "$EVIDENCE_DIR/cli/initcode.hex"
@@ -231,7 +250,7 @@ stage_reproducibility() {
   local alt=$RUNNER_TEMP/relocated-checkout/ponte
   mkdir -p "$alt"
   cd "$PONTE_DIR"
-  record gate relocated-export bash -c "git archive --format=tar HEAD rust/optimizer rust/stylus-wrapper | tar -x -C '$alt'"
+  record gate relocated-export bash -c "git archive --format=tar HEAD rust | tar -x -C '$alt'"
   cd "$alt/rust/stylus-wrapper"
   record info relocated-build env CARGO_TARGET_DIR="$RUNNER_TEMP/relocated-target" \
     cargo "+$TOOLCHAIN" build --locked --release --lib --target wasm32-unknown-unknown
@@ -260,7 +279,7 @@ stage_docker() {
   local base="offchainlabs/cargo-stylus-base:$CLI_VERSION"
   local image="cargo-stylus-base-$CLI_VERSION-toolchain-$TOOLCHAIN" # the name create_image() uses
   local work=$RUNNER_TEMP/docker-path
-  mkdir -p "$work/context" "$work/workspace-root" "$work/repository" "$work/target"
+  mkdir -p "$work/context" "$work/repository" "$work/target"
   record gate docker-version docker version
   # The CLI checks Docker Hub with `docker manifest inspect` before building its derived image.
   record info docker-hub-manifest docker manifest inspect "$base"
@@ -281,25 +300,53 @@ stage_docker() {
   record gate docker-derived-inspect docker image inspect --format '{{.Id}}' "$image"
   record gate container-cli-version docker run --rm "$image" cargo stylus --version
   record gate container-rust-version docker run --rm "$image" rustc --version --verbose
+  # run_in_container() mounts cargo metadata's workspace_root at /source. Derive it from that
+  # command rather than assuming it is the package directory, and verify the layout under test.
+  cd "$PONTE_DIR/rust/stylus-wrapper"
+  record gate workspace-root cargo "+$TOOLCHAIN" metadata --no-deps --format-version 1
+  local root
+  root=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["workspace_root"])' < "$LAST.stdout")
+  [[ $root == "$PONTE_DIR/rust" ]] || fail "cargo metadata workspace root is $root, expected $PONTE_DIR/rust"
   cd "$PONTE_DIR"
-  # (1) What run_in_container() does: mount only the Cargo workspace root at /source, host network.
-  record gate official-path-export bash -c "git archive --format=tar HEAD:rust/stylus-wrapper | tar -x -C '$work/workspace-root'"
-  record info official-path-build docker run --rm --network host --workdir /source \
-    --volume "$work/workspace-root:/source" "$image" cargo stylus build
+
+  # (1) Exactly what run_in_container() mounts, twice from two clean exports: a fresh rust/
+  # workspace root at /source. The CLI uses --network host for RPC commands; this build is offline.
+  local root1=$work/workspace-root-1 root2=$work/workspace-root-2
+  mkdir -p "$root1" "$root2"
+  record gate official-path-export bash -c "git archive --format=tar HEAD rust | tar -x -C '$root1'"
+  record gate official-path-export-2 bash -c "git archive --format=tar HEAD rust | tar -x -C '$root2'"
+  record gate official-path-build docker run --rm --network host --workdir /source \
+    --volume "$root1/rust:/source" "$image" cargo stylus build
+  record gate official-path-wasm-exists test -f "$root1/rust/target/$DEPS_WASM_REL"
+  cp "$root1/rust/target/$DEPS_WASM_REL" "$EVIDENCE_DIR/docker/official-container-1.wasm"
+  record gate official-container-wasm-sha256 sha256sum "$EVIDENCE_DIR/docker/official-container-1.wasm"
+  record gate official-path-build-2 docker run --rm --network host --workdir /source \
+    --volume "$root2/rust:/source" "$image" cargo stylus build
+  record gate official-path-wasm-exists-2 test -f "$root2/rust/target/$DEPS_WASM_REL"
+  cp "$root2/rust/target/$DEPS_WASM_REL" "$EVIDENCE_DIR/docker/official-container-2.wasm"
+  record gate official-path-identical cmp "$EVIDENCE_DIR/docker/official-container-1.wasm" \
+    "$EVIDENCE_DIR/docker/official-container-2.wasm"
+
+  # The same container path computes and embeds the project hash. Capture the init code and the
+  # CLI's own list of every file it hashed (absolute /source paths inside the container).
+  record info container-get-initcode docker run --rm --network host --workdir /source \
+    --volume "$root1/rust:/source" "$image" cargo stylus get-initcode --output /source/initcode.hex
+  record gate container-initcode-copy cp "$root1/rust/initcode.hex" "$EVIDENCE_DIR/docker/initcode.hex"
+
   # (2) Diagnostic only (not a cargo-stylus code path): whole repository, read-only, fixed path.
   record gate diagnostic-export bash -c "git archive --format=tar HEAD | tar -x -C '$work/repository'"
   record info diagnostic-container-build docker run --rm --network host --workdir /ponte/rust/stylus-wrapper \
     --volume "$work/repository:/ponte:ro" --volume "$work/target:/target" --env CARGO_TARGET_DIR=/target \
     "$image" cargo stylus build
   if ((LAST_CODE == 0)); then
-    cp "$work/target/wasm32-unknown-unknown/release/deps/ponte_stylus_wrapper.wasm" "$EVIDENCE_DIR/docker/diagnostic-container.wasm"
+    cp "$work/target/$DEPS_WASM_REL" "$EVIDENCE_DIR/docker/diagnostic-container.wasm"
     record info diagnostic-identical cmp "$EVIDENCE_DIR/ponte_stylus_wrapper.wasm" "$EVIDENCE_DIR/docker/diagnostic-container.wasm"
   fi
 }
 
 stage_integrity() {
   cd "$PONTE_DIR"
-  record gate lockfiles-unchanged git diff --exit-code -- rust/stylus-wrapper/Cargo.lock \
+  record gate lockfiles-unchanged git diff --exit-code -- rust/Cargo.lock \
     rust/optimizer/Cargo.lock rust/environment-check/Cargo.lock
   record gate tracked-files-unchanged git diff --exit-code --stat
   cd "$SDK_DIR"
