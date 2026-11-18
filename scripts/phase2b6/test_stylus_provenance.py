@@ -82,9 +82,11 @@ class WasmTests(unittest.TestCase):
     def test_embedded_path_categories(self):
         blob = (b'\0/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ruint-1.21.1/src/lib.rs'
                 b'\0/rustc/f8297e351a40c1439a467bbbb6879088047f50b3/library/core/src/panic.rs'
-                b'\0/home/runner/work/ponte/ponte/rust/optimizer/src/optimizer.rs\0src/lib.rs\0')
+                b'\0/home/runner/work/ponte/ponte/rust/optimizer/src/optimizer.rs\0src/lib.rs\0'
+                b'/home/runner/.rustup/toolchains/1.91.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/slice.rs\0')
         found = prov.embedded_paths(blob)
         self.assertEqual(found['cargo registry source (CARGO_HOME-dependent)']['count'], 1)
+        self.assertEqual(found['rust-src component (local library source path)']['count'], 1)
         self.assertEqual(found['rust-std (/rustc/<commit>, toolchain-remapped)']['count'], 1)
         self.assertEqual(found['host home or checkout directory']['examples'],
                          ['/home/runner/work/ponte/ponte/rust/optimizer/src/optimizer.rs'])
@@ -205,6 +207,27 @@ class AssembleTests(unittest.TestCase):
         text = 'Compiling x\nerror: failed to read `/optimizer/Cargo.toml`\n\nCaused by:\n  No such file\n'
         self.assertEqual(prov.error_excerpt(text), 'error: failed to read `/optimizer/Cargo.toml` | Caused by:')
         self.assertTrue(prov.error_excerpt('error ' * 200).endswith('…'))
+
+    def test_rust_src_probe_and_release_components(self):
+        self.command('release-components', stdout=(
+            'cargo-x86_64-unknown-linux-gnu\nclippy-x86_64-unknown-linux-gnu\n'
+            'rust-std-wasm32-unknown-unknown\nrustc-x86_64-unknown-linux-gnu\n'))
+        (self.root / 'reproducibility' / 'with-rust-src.wasm').write_bytes(
+            module() + b'\0/home/runner/.rustup/toolchains/1.91.0-x86_64-unknown-linux-gnu'
+            b'/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs\0')
+        self.command('rust-src-build')
+        record, output = self.run_assemble()
+        probe = record['reproducibility']['with_rust_src']
+        self.assertEqual(probe['build_exit_code'], 0)
+        self.assertFalse(probe['identical'])
+        self.assertEqual(probe['embedded_absolute_paths']['rust-src component (local library source path)']['count'], 1)
+        self.assertFalse(record['toolchain']['rust_src_at_release_build'])
+        self.assertIn('clippy-x86_64-unknown-linux-gnu', record['toolchain']['components_at_release_build'])
+        self.assertIn('with rust-src added: exit 0, identical False', output)
+        self.assertIn('(rust-src: False)', output)
+        self.command('release-components', stdout='rust-src\n')
+        record, _ = self.run_assemble()
+        self.assertTrue(record['toolchain']['rust_src_at_release_build'])
 
     def test_failure_excerpt_for_annotations(self):
         stderr = ('\x1b[1m\x1b[32m   Compiling\x1b[0m openssl-sys v0.9.116\n'

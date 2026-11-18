@@ -123,8 +123,11 @@ EOF
 
 stage_toolchain() {
   record gate rustup-version rustup --version
+  # The component set of stylus-wrapper.yml, which builds the main baseline. Not rust-src: with
+  # rust-src installed, rustc embeds the local library source path instead of /rustc/<commit>/library
+  # in the WASM (the reproducibility stage measures that separately).
   record gate rust-toolchain-install rustup toolchain install "$TOOLCHAIN" --profile minimal \
-    --component rustfmt --component clippy --component rust-src --target wasm32-unknown-unknown
+    --component rustfmt --component clippy --target wasm32-unknown-unknown
   record gate rustc-version rustc "+$TOOLCHAIN" --version --verbose
   record gate cargo-version cargo "+$TOOLCHAIN" --version --verbose
   record gate installed-targets rustup target list --toolchain "$TOOLCHAIN" --installed
@@ -132,9 +135,12 @@ stage_toolchain() {
   cd "$PONTE_DIR/rust/stylus-wrapper"
   record gate wrapper-toolchain rustup show active-toolchain
   grep -q "^$TOOLCHAIN-" "$LAST.stdout" || fail "rust/stylus-wrapper does not select $TOOLCHAIN"
+  # Read the pinned SDK's toolchain file instead of resolving it with rustup inside the checkout:
+  # the file lists rust-src, which rustup could add to the shared toolchain. The CLI is built with
+  # an explicit +$TOOLCHAIN, which bypasses that file.
   cd "$SDK_DIR"
-  record gate sdk-toolchain rustup show active-toolchain
-  grep -q "^$TOOLCHAIN-" "$LAST.stdout" || fail "the pinned SDK checkout does not select $TOOLCHAIN"
+  record gate sdk-toolchain-file cat rust-toolchain.toml
+  grep -qxF "channel = \"$TOOLCHAIN\"" "$LAST.stdout" || fail "the pinned SDK's rust-toolchain.toml does not pin $TOOLCHAIN"
 }
 
 stage_cli() {
@@ -185,6 +191,7 @@ stage_wrapper_tests() {
 
 stage_release_wasm() {
   cd "$PONTE_DIR/rust/stylus-wrapper"
+  record gate release-components rustup component list --toolchain "$TOOLCHAIN" --installed
   # The exact release command of stylus-wrapper.yml and dependency-evidence.sh.
   record gate release-build cargo "+$TOOLCHAIN" build --locked --release --lib --target wasm32-unknown-unknown
   local wasm=$WASM_REL/ponte_stylus_wrapper.wasm
@@ -234,6 +241,19 @@ stage_reproducibility() {
     record info relocated-identical cmp "$EVIDENCE_DIR/ponte_stylus_wrapper.wasm" \
       "$EVIDENCE_DIR/reproducibility/relocated-checkout.wasm"
   fi
+  # Same checkout path, CARGO_HOME and toolchain, plus the rust-src component, which the CLI's
+  # reproducible Docker image installs. Removed again afterwards; no later stage builds on the host.
+  record info rust-src-add rustup component add rust-src --toolchain "$TOOLCHAIN"
+  cd "$PONTE_DIR/rust/stylus-wrapper"
+  record info rust-src-build env CARGO_TARGET_DIR="$RUNNER_TEMP/rust-src-target" \
+    cargo "+$TOOLCHAIN" build --locked --release --lib --target wasm32-unknown-unknown
+  if ((LAST_CODE == 0)); then
+    cp "$RUNNER_TEMP/rust-src-target/wasm32-unknown-unknown/release/ponte_stylus_wrapper.wasm" \
+      "$EVIDENCE_DIR/reproducibility/with-rust-src.wasm"
+    record info rust-src-identical cmp "$EVIDENCE_DIR/ponte_stylus_wrapper.wasm" \
+      "$EVIDENCE_DIR/reproducibility/with-rust-src.wasm"
+  fi
+  record info rust-src-remove rustup component remove rust-src --toolchain "$TOOLCHAIN"
 }
 
 stage_docker() {

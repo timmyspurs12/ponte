@@ -35,7 +35,7 @@ WASM_NAME = 'ponte_stylus_wrapper.wasm'
 REQUIRED = [
     'ponte-head', 'ponte-worktree', 'input-hashes', 'sdk-head', 'sdk-tag', 'sdk-input-hashes',
     'rust-toolchain-install', 'rustc-version', 'cargo-version', 'installed-targets',
-    'wrapper-toolchain', 'cli-install', 'sdk-tree-unchanged', 'cli-binary-sha256', 'cli-version',
+    'wrapper-toolchain', 'release-components', 'cli-install', 'sdk-tree-unchanged', 'cli-binary-sha256', 'cli-version',
     'cli-check-help', 'cli-deploy-help', 'advisory-guard-tests', 'advisory-guard-baseline',
     'abi-tools-install', 'client-abi-check', 'client-abi-tests', 'cargo-fmt', 'cargo-test',
     'cargo-clippy', 'sdk-abi-export', 'sdk-abi-check', 'release-build', 'wasm-inspection',
@@ -157,6 +157,8 @@ ABSOLUTE_PATH = re.compile(r'/(?:[A-Za-z0-9_.+@-]+/)+[A-Za-z0-9_.+@-]+')
 def path_category(path):
     if path.startswith('/rustc/'):
         return 'rust-std (/rustc/<commit>, toolchain-remapped)'
+    if '/lib/rustlib/src/rust/library/' in path:
+        return 'rust-src component (local library source path)'
     if '/registry/src/' in path:
         return 'cargo registry source (CARGO_HOME-dependent)'
     if path.startswith(('/home/', '/Users/')):
@@ -356,6 +358,9 @@ def assemble(directory):
         'cargo': (ev.out('cargo-version').splitlines() or [None])[0], 'cargo_commit': cargo.get('commit-hash'),
         'installed_targets': ev.out('installed-targets').split(),
         'wrapper_active_toolchain': ev.out('wrapper-toolchain').strip() or None,
+        'components_at_release_build': ev.out('release-components').split(),
+        'rust_src_at_release_build': any(c == 'rust-src' or c.startswith('rust-src-')
+                                         for c in ev.out('release-components').split()),
         'rustup': (ev.out('rustup-version').splitlines() or [None])[0],
     }
     artifact = {'file': WASM_NAME, 'present': wasm_path.is_file()}
@@ -395,13 +400,13 @@ def assemble(directory):
     }
     if ev.exit('cli-build') not in (None, 0):
         cli_build['failure'] = classify_container_failure(ev.out('cli-build', 'stderr'))
-        cli_build['error_excerpt'] = error_excerpt(ev.out('cli-build', 'stderr'))
+        cli_build['error_excerpt'] = failure_excerpt(ev.out('cli-build', 'stderr'), ev.out('cli-build'), 600)
     probe = {'description': "cargo stylus build with main's former one-line `[contract]` Stylus.toml",
              'stylus_toml_sha256': next(iter(sha256sum_lines(ev.out('probe-manifest-sha256')).values()), None),
              'exit_code': ev.exit('prefix-manifest-probe')}
     if probe['exit_code'] not in (None, 0):
         probe['failure'] = classify_container_failure(ev.out('prefix-manifest-probe', 'stderr'))
-        probe['error_excerpt'] = error_excerpt(ev.out('prefix-manifest-probe', 'stderr'))
+        probe['error_excerpt'] = failure_excerpt(ev.out('prefix-manifest-probe', 'stderr'), ev.out('prefix-manifest-probe'), 600)
     cli_build['prefix_manifest_probe'] = probe
     initcode = {'command': ev.by_name.get('cli-get-initcode', {}).get('argv'), 'exit_code': ev.exit('cli-get-initcode'),
                 'note': ('Host-path-dependent: cargo-stylus hashes absolute source paths into the '
@@ -417,15 +422,25 @@ def assemble(directory):
         initcode['failure'] = ('compressed program exceeds the 24,576-byte single-contract limit; '
                                'cargo-stylus would deploy it as fragments' if 'fragmented' in stderr
                                else classify_container_failure(stderr))
-        initcode['error_excerpt'] = error_excerpt(stderr)
+        initcode['error_excerpt'] = failure_excerpt(stderr, ev.out('cli-get-initcode'), 600)
     cli_build['get_initcode'] = initcode
     record['cargo_stylus_build_path'] = cli_build
     relocated_sha = ev.file_sha('reproducibility/relocated-checkout.wasm')
+    rust_src_sha = ev.file_sha('reproducibility/with-rust-src.wasm')
     record['reproducibility'] = {
         'relocated_checkout_build_exit_code': ev.exit('relocated-build'),
         'relocated_checkout_sha256': relocated_sha,
         'relocated_checkout_identical': None if relocated_sha is None else relocated_sha == artifact.get('sha256'),
         'fresh_target_dir_identical': cli_build['identical_to_direct_build'],
+        'with_rust_src': {
+            'description': ('Same checkout path, CARGO_HOME and toolchain with the rust-src component '
+                            'added (the CLI reproducible image installs it); fresh target directory.'),
+            'build_exit_code': ev.exit('rust-src-build'),
+            'sha256': rust_src_sha,
+            'identical': None if rust_src_sha is None else rust_src_sha == artifact.get('sha256'),
+            'embedded_absolute_paths': embedded_paths((ev.dir / 'reproducibility' / 'with-rust-src.wasm').read_bytes())
+            if rust_src_sha else None,
+        },
     }
     base_inspect = ev.out('docker-base-inspect').strip()
     docker = {
@@ -455,12 +470,12 @@ def assemble(directory):
     }
     if docker['official_path']['exit_code'] not in (None, 0):
         docker['official_path']['failure'] = classify_container_failure(ev.out('official-path-build', 'stderr'))
-        docker['official_path']['error_excerpt'] = error_excerpt(ev.out('official-path-build', 'stderr'))
+        docker['official_path']['error_excerpt'] = failure_excerpt(ev.out('official-path-build', 'stderr'), ev.out('official-path-build'), 600)
     diag = docker['diagnostic_full_repository_build']
     diag['identical_to_host_build'] = None if diag['raw_wasm_sha256'] is None else diag['raw_wasm_sha256'] == artifact.get('sha256')
     if diag['exit_code'] not in (None, 0):
         diag['failure'] = classify_container_failure(ev.out('diagnostic-container-build', 'stderr'))
-        diag['error_excerpt'] = error_excerpt(ev.out('diagnostic-container-build', 'stderr'))
+        diag['error_excerpt'] = failure_excerpt(ev.out('diagnostic-container-build', 'stderr'), ev.out('diagnostic-container-build'), 600)
     record['reproducible_docker_path'] = docker
     record['integrity'] = {n: ev.exit(n) for n in ('lockfiles-unchanged', 'tracked-files-unchanged', 'sdk-tree-unchanged')}
     missing = [n for n in REQUIRED if ev.exit(n) is None]
@@ -497,7 +512,9 @@ def annotate(r):
            f"{cli['install_exit_code']}; help exits {cli['help_checked']}.")
     notice('Rust toolchain',
            f"{tc['rustc']} (commit {tc['rustc_commit']}); {tc['cargo']}; host {tc['host']}; installed targets "
-           f"{', '.join(tc['installed_targets'])}; wrapper selects {tc['wrapper_active_toolchain']}.")
+           f"{', '.join(tc['installed_targets'])}; wrapper selects {tc['wrapper_active_toolchain']}; "
+           f"components at the release build {tc['components_at_release_build']} "
+           f"(rust-src: {tc['rust_src_at_release_build']}).")
     notice('Source inputs (SHA-256)', '; '.join(f'{k} {v}' for k, v in r['source']['input_sha256'].items()) or 'missing')
     notice('WASM exports and VM hooks',
            f"exports {[(e['name'], e['kind']) for e in a.get('exports', [])]}; vm_hooks imports {a.get('vm_hooks')}; "
@@ -517,16 +534,19 @@ def annotate(r):
            f"raw WASM identical to direct build: {b['identical_to_direct_build']}; get-initcode: "
            + json.dumps({k: v for k, v in b['get_initcode'].items() if k not in ('command', 'note')}))
     rp = r['reproducibility']
+    rs = rp['with_rust_src']
     paths = {k: v['count'] for k, v in a.get('embedded_absolute_paths', {}).items()}
-    examples = [e for v in a.get('embedded_absolute_paths', {}).values() for e in v['examples'][:2]]
+    examples = {k: v['examples'][:3] for k, v in a.get('embedded_absolute_paths', {}).items()}
+    rs_paths = {k: v['count'] for k, v in (rs['embedded_absolute_paths'] or {}).items()}
     notice('Build-path reproducibility',
            f"relocated checkout identical: {rp['relocated_checkout_identical']} (SHA-256 {rp['relocated_checkout_sha256']}); "
-           f"fresh target dir identical: {rp['fresh_target_dir_identical']}; embedded absolute paths {paths}; "
-           f"examples {examples[:6]}.")
+           f"fresh target dir identical: {rp['fresh_target_dir_identical']}; with rust-src added: exit "
+           f"{rs['build_exit_code']}, identical {rs['identical']}, SHA-256 {rs['sha256']}, paths {rs_paths}; "
+           f"artifact embedded absolute paths {paths}; examples {examples}.")
     op, dg = d['official_path'], d['diagnostic_full_repository_build']
     notice('Reproducible Docker path',
            f"{d['base_image']}: on Docker Hub {d['published_on_docker_hub']}, source {d['base_image_source']}, "
-           f"{short(d['base_image_id_and_digests'], 160)}; container CLI {d['container_cli_version']}; "
+           f"{d['base_image_id_and_digests']}; container CLI {d['container_cli_version']}; "
            f"CLI-equivalent run (workspace root only at /source) exit {op['exit_code']}"
            f"{' - ' + op['failure'] if op.get('failure') else ''}; diagnostic full-repository build exit "
            f"{dg['exit_code']}, SHA-256 {dg['raw_wasm_sha256']}, identical to host {dg['identical_to_host_build']}.")
@@ -559,6 +579,7 @@ def render_markdown(r):
         f"| rustc | `{tc['rustc']}` (commit `{tc['rustc_commit']}`), host `{tc['host']}` |",
         f"| cargo | `{tc['cargo']}` |",
         f"| Installed targets | {', '.join('`%s`' % t for t in tc['installed_targets'])} |",
+        f"| Components at the release build | {', '.join('`%s`' % c for c in tc['components_at_release_build'])} |",
         f"| cargo-stylus | `{cli['reported_version']}` from `{cli['repository']}` `{cli['release']}` at `{cli['checked_out_commit']}` |",
         f"| Release tag resolves to | `{cli['release_tag_resolves_to']}` (match: {cli['release_tag_matches']}) |",
         f"| CLI binary SHA-256 | `{cli['binary_sha256']}` |",
