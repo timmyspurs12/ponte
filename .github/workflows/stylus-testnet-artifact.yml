@@ -27,6 +27,8 @@ jobs:
       SDK_RELEASE: v0.10.10
       SDK_COMMIT: 76f8b055ec0bf421edd542b164dc2917c9e4e0bd
       CLI_VERSION: 0.10.10
+      # Raw release WASM of main at 2049497 (run 44268381103); compared, not gating.
+      BASELINE_WASM_SHA256: 6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd
     steps:
       - name: Check out PONTE source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0

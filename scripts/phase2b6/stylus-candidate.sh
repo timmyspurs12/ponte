@@ -89,6 +89,9 @@ unauthenticated, so its output is not an executable quote, verified liquidity or
 See provenance.json and docs/PHASE2B6_TESTNET_ARTIFACT_READINESS.md.
 EOF
   cd "$PONTE_DIR"
+  mkdir -p "$EVIDENCE_DIR/inputs"
+  cp rust/stylus-wrapper/Cargo.toml rust/stylus-wrapper/Cargo.lock rust/stylus-wrapper/Stylus.toml \
+    rust/stylus-wrapper/rust-toolchain.toml "$EVIDENCE_DIR/inputs/"
   record gate ponte-head git rev-parse HEAD
   [[ $(< "$LAST.stdout") == "$GITHUB_SHA" ]] || fail "checked-out PONTE commit differs from GITHUB_SHA"
   record gate ponte-worktree git status --porcelain=v1 --untracked-files=all
@@ -190,6 +193,16 @@ stage_release_wasm() {
 
 stage_cli_build() {
   export PATH="$CLI_ROOT/bin:$PATH"
+  # Pre-fix probe: the CLI against a copy whose Stylus.toml is main's former one-line `[contract]`
+  # file, to record the exact error that motivated the [workspace] configuration.
+  local probe=$RUNNER_TEMP/prefix-manifest-probe
+  mkdir -p "$probe"
+  cd "$PONTE_DIR"
+  record gate probe-export bash -c "git archive --format=tar HEAD rust/optimizer rust/stylus-wrapper | tar -x -C '$probe'"
+  printf '[contract]\n' > "$probe/rust/stylus-wrapper/Stylus.toml"
+  record gate probe-manifest-sha256 sha256sum "$probe/rust/stylus-wrapper/Stylus.toml"
+  cd "$probe/rust/stylus-wrapper"
+  record info prefix-manifest-probe env CARGO_TARGET_DIR="$RUNNER_TEMP/probe-target" cargo stylus build
   cd "$PONTE_DIR/rust/stylus-wrapper"
   # A fresh target directory makes the CLI compile from scratch instead of reusing the build above.
   local fresh=$RUNNER_TEMP/cargo-stylus-build-target

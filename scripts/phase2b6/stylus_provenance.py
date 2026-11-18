@@ -213,6 +213,14 @@ def classify_container_failure(text):
     return 'unclassified failure; see stderr in the artifact'
 
 
+def error_excerpt(text, limit=400):
+    """The error lines of a command's stderr, for annotations (full output stays in the artifact)."""
+    lines = [line.strip() for line in text.splitlines()
+             if re.search(r'error|caused by|failed', line, re.I) and line.strip()]
+    excerpt = ' | '.join(dict.fromkeys(lines))
+    return excerpt[:limit] + ('…' if len(excerpt) > limit else '')
+
+
 def check_tag(ls_remote_text, tag, expected):
     refs = {}
     for line in ls_remote_text.splitlines():
@@ -338,6 +346,9 @@ def assemble(directory):
         except ValueError as exc:
             artifact['parse_error'] = str(exc)
         artifact['embedded_absolute_paths'] = embedded_paths(blob)
+        baseline = os.environ.get('BASELINE_WASM_SHA256')
+        artifact['main_baseline_sha256'] = baseline
+        artifact['matches_main_baseline'] = None if not baseline else artifact['sha256'] == baseline
     record['raw_wasm'] = artifact
     abi = {
         'sdk_export_sha256': ev.file_sha('abi/ponte-synthetic-abi.sol'),
@@ -359,6 +370,14 @@ def assemble(directory):
     }
     if ev.exit('cli-build') not in (None, 0):
         cli_build['failure'] = classify_container_failure(ev.out('cli-build', 'stderr'))
+        cli_build['error_excerpt'] = error_excerpt(ev.out('cli-build', 'stderr'))
+    probe = {'description': "cargo stylus build with main's former one-line `[contract]` Stylus.toml",
+             'stylus_toml_sha256': next(iter(sha256sum_lines(ev.out('probe-manifest-sha256')).values()), None),
+             'exit_code': ev.exit('prefix-manifest-probe')}
+    if probe['exit_code'] not in (None, 0):
+        probe['failure'] = classify_container_failure(ev.out('prefix-manifest-probe', 'stderr'))
+        probe['error_excerpt'] = error_excerpt(ev.out('prefix-manifest-probe', 'stderr'))
+    cli_build['prefix_manifest_probe'] = probe
     initcode = {'command': ev.by_name.get('cli-get-initcode', {}).get('argv'), 'exit_code': ev.exit('cli-get-initcode'),
                 'note': ('Host-path-dependent: cargo-stylus hashes absolute source paths into the '
                          'project_hash section, so this is not the reproducible deployment payload.')}
@@ -373,6 +392,7 @@ def assemble(directory):
         initcode['failure'] = ('compressed program exceeds the 24,576-byte single-contract limit; '
                                'cargo-stylus would deploy it as fragments' if 'fragmented' in stderr
                                else classify_container_failure(stderr))
+        initcode['error_excerpt'] = error_excerpt(stderr)
     cli_build['get_initcode'] = initcode
     record['cargo_stylus_build_path'] = cli_build
     relocated_sha = ev.file_sha('reproducibility/relocated-checkout.wasm')
@@ -410,10 +430,12 @@ def assemble(directory):
     }
     if docker['official_path']['exit_code'] not in (None, 0):
         docker['official_path']['failure'] = classify_container_failure(ev.out('official-path-build', 'stderr'))
+        docker['official_path']['error_excerpt'] = error_excerpt(ev.out('official-path-build', 'stderr'))
     diag = docker['diagnostic_full_repository_build']
     diag['identical_to_host_build'] = None if diag['raw_wasm_sha256'] is None else diag['raw_wasm_sha256'] == artifact.get('sha256')
     if diag['exit_code'] not in (None, 0):
         diag['failure'] = classify_container_failure(ev.out('diagnostic-container-build', 'stderr'))
+        diag['error_excerpt'] = error_excerpt(ev.out('diagnostic-container-build', 'stderr'))
     record['reproducible_docker_path'] = docker
     record['integrity'] = {n: ev.exit(n) for n in ('lockfiles-unchanged', 'tracked-files-unchanged', 'sdk-tree-unchanged')}
     missing = [n for n in REQUIRED if ev.exit(n) is None]
@@ -441,6 +463,7 @@ def annotate(r):
     a, cli, tc, d = r['raw_wasm'], r['stylus_cli'], r['toolchain'], r['reproducible_docker_path']
     notice('Unactivated candidate artifact',
            f"{LABEL} Raw WASM {a.get('bytes')} bytes, SHA-256 {a.get('sha256')}. "
+           f"Matches main 2049497 baseline {a.get('main_baseline_sha256')}: {a.get('matches_main_baseline')}. "
            f"PONTE commit {r['source']['ponte_commit']}. Record status: {r['status']}.")
     notice('Stylus CLI (pinned source)',
            f"cargo stylus --version: {cli['reported_version']}; {cli['repository']} {cli['release']} commit "
@@ -461,7 +484,10 @@ def annotate(r):
                   f"client ABI JSON {ab['client_abi_json_sha256']}; interface {ab['client_interface_sol_sha256']}.")
     notice('Offline tests', '; '.join(f"{t['name']}={t['exit_code']}" for t in r['tests']))
     b = r['cargo_stylus_build_path']
+    pr = b['prefix_manifest_probe']
     notice('cargo-stylus offline build path',
+           f"pre-fix Stylus.toml probe (SHA-256 {short(pr['stylus_toml_sha256'])}) exit {pr['exit_code']}: "
+           f"{pr.get('error_excerpt') or pr.get('failure') or 'no error'}; "
            f"cargo stylus build (fresh target dir) exit {b['exit_code']}{'; ' + b['failure'] if b.get('failure') else ''}; "
            f"raw WASM identical to direct build: {b['identical_to_direct_build']}; get-initcode: "
            + json.dumps({k: v for k, v in b['get_initcode'].items() if k not in ('command', 'note')}))

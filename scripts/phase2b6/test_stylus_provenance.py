@@ -186,6 +186,26 @@ class AssembleTests(unittest.TestCase):
         record, _ = self.run_assemble()
         self.assertIn('24,576-byte', record['cargo_stylus_build_path']['get_initcode']['failure'])
 
+    def test_prefix_probe_and_baseline_are_recorded(self):
+        self.command('probe-manifest-sha256', stdout=f"{'6e21' * 16}  /tmp/probe/Stylus.toml\n")
+        self.command('prefix-manifest-probe', 1, stderr=(
+            'error: toml read error: TOML parse error at line 1, column 1\n'
+            '  |\n1 | [contract]\n  | ^\nmissing field `workspace`\n'))
+        sha = prov.sha256_bytes(module())
+        with mock.patch.dict(os.environ, {'BASELINE_WASM_SHA256': sha}):
+            record, output = self.run_assemble()
+        probe = record['cargo_stylus_build_path']['prefix_manifest_probe']
+        self.assertIn('[workspace]', probe['failure'])
+        self.assertIn('toml read error', probe['error_excerpt'])
+        self.assertEqual(probe['stylus_toml_sha256'], '6e21' * 16)
+        self.assertTrue(record['raw_wasm']['matches_main_baseline'])
+        self.assertIn(': True.', output)
+
+    def test_error_excerpt_keeps_error_lines_only(self):
+        text = 'Compiling x\nerror: failed to read `/optimizer/Cargo.toml`\n\nCaused by:\n  No such file\n'
+        self.assertEqual(prov.error_excerpt(text), 'error: failed to read `/optimizer/Cargo.toml` | Caused by:')
+        self.assertTrue(prov.error_excerpt('error ' * 200).endswith('…'))
+
     def test_annotation_escaping(self):
         self.assertEqual(prov.escape_message('a%b\nc'), 'a%25b%0Ac')
         self.assertEqual(prov.escape('t:1,2'), 't%3A1%2C2')
