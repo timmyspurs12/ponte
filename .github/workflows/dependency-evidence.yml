@@ -1,0 +1,50 @@
+name: Dependency and release WASM evidence
+on:
+  push:
+    paths:
+      - 'rust/**'
+      - '**/Cargo.lock'
+      - 'scripts/phase2b/dependency-evidence.sh'
+      - 'scripts/phase2b/rustsec-evidence.sh'
+      - 'scripts/phase2b/summarize-dependency-evidence.py'
+      - 'scripts/phase2b/test_dependency_evidence.py'
+      - '.github/workflows/dependency-evidence.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rust/**'
+      - '**/Cargo.lock'
+      - 'scripts/phase2b/dependency-evidence.sh'
+      - 'scripts/phase2b/rustsec-evidence.sh'
+      - 'scripts/phase2b/summarize-dependency-evidence.py'
+      - 'scripts/phase2b/test_dependency_evidence.py'
+      - '.github/workflows/dependency-evidence.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Test evidence summarization
+        run: python3 -m unittest discover -s scripts/phase2b -p 'test_dependency_evidence.py' -v
+      - name: Install pinned Rust toolchain and WASM target
+        id: toolchain
+        run: rustup toolchain install 1.91.0 --profile minimal --target wasm32-unknown-unknown
+      - name: Capture locked graphs and reproduce release WASM
+        run: bash scripts/phase2b/dependency-evidence.sh "$RUNNER_TEMP/ponte-dependency-evidence/graphs"
+      - name: Audit all lockfiles with RustSec
+        if: always() && steps.toolchain.outcome == 'success'
+        run: bash scripts/phase2b/rustsec-evidence.sh "$RUNNER_TEMP/ponte-dependency-evidence/rustsec"
+      - name: Upload evidence, including on audit failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ponte-dependency-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ponte-dependency-evidence/
+          if-no-files-found: error
+          retention-days: 30
