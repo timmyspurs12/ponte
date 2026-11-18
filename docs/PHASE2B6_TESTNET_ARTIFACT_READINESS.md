@@ -8,12 +8,14 @@
 | --- | --- |
 | Contract | The existing synthetic-only evaluator in `rust/stylus-wrapper`. Rust source, `Cargo.toml` and `Cargo.lock` are unchanged from `main` `2049497485364e1ad4e11644d0972820a9b4ce06` |
 | Stylus CLI | `cargo-stylus` 0.10.10 built from `cargo-stylus/` of the official [`OffchainLabs/stylus-sdk-rs` `v0.10.10`](https://github.com/OffchainLabs/stylus-sdk-rs/tree/76f8b055ec0bf421edd542b164dc2917c9e4e0bd/cargo-stylus) at commit `76f8b055ec0bf421edd542b164dc2917c9e4e0bd`, with the SDK workspace lockfile and `--locked`. The archived standalone `OffchainLabs/cargo-stylus` (v0.6.3) is not used |
-| Workflow | [`.github/workflows/stylus-testnet-artifact.yml`](../.github/workflows/stylus-testnet-artifact.yml): `workflow_dispatch` only, `contents: read`, no secrets, pinned action SHAs |
-| First artifact run | **Not run yet.** GitHub only dispatches a `workflow_dispatch`-only workflow whose file is on the default branch, or one that has already run. Dispatching it on this branch returned HTTP 404. The maintainer will put the workflow on `main` through their own process; the branch run follows |
-| Configuration change | `rust/stylus-wrapper/Stylus.toml` gains the `[workspace]` table that cargo-stylus 0.10.10 requires, plus a declarative `arbitrum-sepolia` network entry ([§5](#5-stylustoml-configuration-change)) |
-| Raw WASM | **Unchanged**: 90,506 bytes, SHA-256 `6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd` on this branch's commit `993b4ed`, identical to `main` ([§5](#5-stylustoml-configuration-change)) |
-| Arbitrum Sepolia | **Not checked.** Chain ID `421614`, published RPC `https://sepolia-rollup.arbitrum.io/rpc` ([§7](#7-path-to-arbitrum-sepolia-documented-not-performed)) |
-| Activation | Paused on Arbitrum One and Nova. The pending activation AIP says Arbitrum Sepolia will follow the same audited, signed process. Must be freshly verified ([§8](#8-activation-policy-as-read-on-2026-11-18)) |
+| Workflow | [`.github/workflows/stylus-testnet-artifact.yml`](../.github/workflows/stylus-testnet-artifact.yml): `workflow_dispatch` only, `contents: read`, no secrets, pinned action SHAs. Registered with GitHub from this branch (workflow ID `422931157`) without any change to `main` ([§4](#4-the-workflow)) |
+| **Candidate artifact run** | **Succeeded.** [Run 44367877896](https://github.com/timmyspurs12/ponte/actions/runs/44367877896), `workflow_dispatch` on `arena/7643001c-ponte` at commit `735445f04255ae5ec5d43041d69db8338eba5361`: all 17 steps passed and the provenance record is `complete` ([§5](#5-artifact-run-results)) |
+| **Artifact** | [`ponte-stylus-unactivated-candidate-735445f04255ae5ec5d43041d69db8338eba5361-44367877896-1`](https://github.com/timmyspurs12/ponte/actions/runs/44367877896/artifacts/14457443066), artifact ID `14457443066`, 334,403-byte zip, digest `sha256:df20469a2bd1d2d1cf7293706f1de47e4accabadedaa6af094d40c7605c1f739`, expires 2027-02-16 |
+| **Raw WASM** | 90,506 bytes, SHA-256 **`6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`**: identical to `main`'s baseline, to this branch's dependency-evidence build and to the pinned CLI's own `cargo stylus build` ([§5](#5-artifact-run-results)) |
+| Configuration change | `rust/stylus-wrapper/Stylus.toml` gains the `[workspace]` table that cargo-stylus 0.10.10 requires, plus a declarative `arbitrum-sepolia` network entry. **Confirmed by the pinned CLI:** `cargo stylus build` succeeds; the former file fails with ``missing field `workspace` `` ([§6](#6-stylustoml-configuration-change)) |
+| Reproducible Docker path | The base image `offchainlabs/cargo-stylus-base:0.10.10` exists (digest recorded), but the CLI's container path **fails for the current layout** on the `../optimizer` path dependency. This blocks a verified `deploy` ([§7](#7-reproducibility-findings)) |
+| Arbitrum Sepolia | **Not checked.** Chain ID `421614`, published RPC `https://sepolia-rollup.arbitrum.io/rpc` ([§8](#8-path-to-arbitrum-sepolia-documented-not-performed)) |
+| Activation | Paused on Arbitrum One and Nova. The pending activation AIP says Arbitrum Sepolia will follow the same audited, signed process. Must be freshly verified ([§9](#9-activation-policy-as-read-on-2026-11-18)) |
 
 ## 1. What the artifact is, and what it is not
 
@@ -23,7 +25,7 @@ Each workflow run uploads `ponte-stylus-unactivated-candidate-<commit>-<run>-<at
 - `provenance.json` and `provenance.md`: the record described in [§3](#3-provenance);
 - `UNACTIVATED-CANDIDATE.txt`: the label stated below;
 - `commands/`: argv, working directory, UTC start and end times, exit status, stdout and stderr of every command;
-- `inputs/` (the contract's `Cargo.toml`, `Cargo.lock`, `Stylus.toml`, `rust-toolchain.toml`), `abi/` (SDK export, committed client ABI, the CLI's ABI export), `cli/` (help texts, the CLI-built WASM, `get-initcode` output when produced), `reproducibility/` and `docker/`.
+- `inputs/` (the contract's `Cargo.toml`, `Cargo.lock`, `Stylus.toml`, `rust-toolchain.toml`), `abi/` (SDK export, committed client ABI, the CLI's ABI export), `cli/` (help texts, the CLI-built WASM, `get-initcode` output), `reproducibility/` (relocated-checkout and rust-src builds) and `docker/` (rendered Dockerfile, base-image source, diagnostic container build).
 
 **Label:** a locally built, unactivated candidate artifact. It is **not** deployed, activated or checked against Arbitrum Sepolia or any other network, and it has **not** passed a Sepolia compatibility check. Passing local tests says nothing about Nitro activation, ink or gas, or live chain behavior.
 
@@ -48,8 +50,8 @@ Each workflow run uploads `ponte-stylus-unactivated-candidate-<commit>-<run>-<at
    - For the known selector, a no-allocation bounds-and-alignment preflight checks the dynamic ABI parts (≤ 64 candidates, strings ≤ 64 bytes) before Alloy decodes them.
    - It is not full canonical ABI validation, and unknown or short selectors go to the SDK router.
 4. **Generated ABI.** The SDK 0.10.10 export omits the input-only structs, so it is not a compilable Solidity interface. The committed client ABI (`abi/`) is generated and checked by `abi-tools` ([Phase 2B.3.3](PHASE2B3_3_CLIENT_ABI.md)).
-5. **WASM imports and exports.**
-   - **Exports:** `user_entrypoint` (function), `memory`, `__heap_base` and `__data_end`.
+5. **WASM imports and exports**, as measured in the candidate run:
+   - **Exports:** `memory`, `user_entrypoint` (function), `__heap_base` and `__data_end`.
    - **Imports:** six `vm_hooks`: `pay_for_memory_grow`, `msg_reentrant`, `msg_value`, `storage_flush_cache`, `write_result` and `read_args`. `scripts/inspect_wasm.py` fails closed on any other hook.
 
 ## 3. Provenance
@@ -57,9 +59,9 @@ Each workflow run uploads `ponte-stylus-unactivated-candidate-<commit>-<run>-<at
 **Source:**
 - The branch is based on `main` `2049497485364e1ad4e11644d0972820a9b4ce06`.
 - Each run records the exact commit it built (`GITHUB_SHA`, checked against `git rev-parse HEAD`) and confirms the worktree was clean beforehand.
-- The PONTE checkout keeps the absolute path existing CI uses, so raw hashes stay comparable.
+- The PONTE checkout keeps the absolute path existing CI uses (`/home/runner/work/ponte/ponte`), so raw hashes stay comparable ([§7](#7-reproducibility-findings)).
 
-| Input | SHA-256 on this branch |
+| Input | SHA-256 (candidate run) |
 | --- | --- |
 | `rust/stylus-wrapper/Cargo.toml` | `3c00c3d92225c97f9e9886b1d78a62108b1e77cb863a83b5143e8f2f7e09a13d` |
 | `rust/stylus-wrapper/Cargo.lock` | `a8e5be8a261b729008383353d4f6aaa11fff5763263ef6923771e4c32d842f50` |
@@ -71,7 +73,7 @@ Each workflow run uploads `ponte-stylus-unactivated-candidate-<commit>-<run>-<at
 **Stylus SDK/CLI:**
 - Release `v0.10.10` was published on 2026-10-02. Its tag is lightweight and points directly at commit `76f8b055ec0bf421edd542b164dc2917c9e4e0bd` (`Merge pull request #459 from OffchainLabs/rel/0.10.10`, signature verified by GitHub).
 - `cargo-stylus` takes the workspace version 0.10.10 and requires Rust 1.91.0 or later. The SDK's own `rust-toolchain.toml` pins 1.91.0.
-- Each run re-checks the commit and the tag with `git ls-remote`.
+- Each run re-checks the commit and the tag with `git ls-remote`. The candidate run confirmed both, and `cargo stylus --version` reported `stylus 0.10.10`.
 
 | Pinned SDK file | SHA-256 |
 | --- | --- |
@@ -81,14 +83,15 @@ Each workflow run uploads `ponte-stylus-unactivated-candidate-<commit>-<run>-<at
 | `Dockerfile` (the `cargo-stylus-base` image) | `33bbf0762ad1ea591d6783faf649f671061ed62037e3c488975e19fea9433bff` |
 | `stylus-tools/src/core/build/reproducible.rs` | `47092f653f3b04d512a188150db9a1a42babaaf70a3cbd2c3850cd567dc1bbda` |
 
-**Installation and invocation**, checked in the pinned source:
-- **Install:** `cargo +1.91.0 install --locked --path ./cargo-stylus --root <dir>`, run from the SDK checkout root. Upstream CI (`smoke-test.yml`, `integration.yml`) uses the same command. The README's `install.sh` does not exist at this commit.
+**Installation and invocation**, checked in the pinned source and exercised by the candidate run:
+- **Install:** `cargo +1.91.0 install --locked --path ./cargo-stylus --root <dir>`, run from the SDK checkout root (about 3 minutes on the runner). Upstream CI (`smoke-test.yml`, `integration.yml`) uses the same command. The README's `install.sh` does not exist at this commit.
 - **Invoke:** the binary is used as `cargo stylus …` from `rust/stylus-wrapper`, whose `rust-toolchain.toml` selects 1.91.0.
-- **Recorded per run:** the binary SHA-256 and `cargo stylus --version`.
+- **Binary hash:** recorded per run, but it is **not stable across runs**: `63e0d259f4cf96d3d0bfcda14fe7f6e9b2c2e487deef6f07d4e87f6c190a4688` in run 44365360692 and `2593325f5dd651951807a5ebe79c90fd603ac5e3162deb9e9d582ffa2d6eb522` in run 44367877896, from the same source, lockfile and toolchain. The CLI is therefore identified by its source commit, lockfile and toolchain, not by its binary hash. The cause was not investigated.
 
-**Toolchain:**
-- Rust 1.91.0 installed with `rustup` (minimal profile plus `rustfmt`, `clippy`, `rust-src` and the `wasm32-unknown-unknown` target) on `ubuntu-24.04`.
-- Each run records `rustc -vV`, `cargo -vV`, the installed targets, the active toolchain per directory, and the runner image version.
+**Toolchain** (candidate run):
+- `rustc 1.91.0 (f8297e351 2025-10-28)`, commit `f8297e351a40c1439a467bbbb6879088047f50b3`, host `x86_64-unknown-linux-gnu`; `cargo 1.91.0 (ea2d97820 2025-10-10)`; on GitHub-hosted `ubuntu-24.04`.
+- Installed with `rustup` exactly as `stylus-wrapper.yml` does it: minimal profile plus `rustfmt`, `clippy` and the `wasm32-unknown-unknown` target.
+- Components present at the release build, recorded by the run: `cargo`, `clippy`, `rust-std` (`wasm32-unknown-unknown` and `x86_64-unknown-linux-gnu`), `rustc` and `rustfmt`. **No `rust-src`.** Installing it changes the WASM ([§7](#7-reproducibility-findings)).
 
 **Build and test commands.** Each is recorded with its exit code and timestamps:
 
@@ -102,6 +105,7 @@ cargo +1.91.0 fmt --all -- --check
 cargo +1.91.0 test --locked
 cargo +1.91.0 clippy --locked --all-targets -- -D warnings
 cargo +1.91.0 run --locked --features export-abi        # SDK ABI, checked by scripts/check_abi.py
+rustup component list --toolchain 1.91.0 --installed    # components at the release build
 cargo +1.91.0 build --locked --release --lib --target wasm32-unknown-unknown   # the artifact
 python3 scripts/inspect_wasm.py <wasm>
 node scripts/test_wasm_entrypoint.cjs <wasm>
@@ -112,40 +116,108 @@ cargo stylus export-abi --output <file>                 # informational; lockfil
 ```
 
 **Per-run provenance record** (`provenance.json`):
-- the PONTE commit and the SDK/CLI commit, tag resolution and reported version;
-- Rust and Cargo versions and the installed targets;
+- the PONTE commit and the SDK/CLI commit, tag resolution, binary hash and reported version;
+- Rust and Cargo versions, the installed targets and the components present at the release build;
 - SHA-256 of the manifest, lockfile, `Stylus.toml` and toolchain file;
 - every command with exit code and timestamps;
 - raw WASM size and SHA-256, compared with `main`'s `6fd9159d…`;
-- exports, `vm_hooks` imports and custom sections;
+- exports, `vm_hooks` imports, custom sections and embedded absolute paths;
 - ABI hashes and test outcomes;
-- the reproducibility and Docker results described in [§6](#6-reproducibility-findings).
+- the reproducibility and Docker results in [§7](#7-reproducibility-findings).
 
 ## 4. The workflow
 
 | Stage | What it does | Gating |
 | --- | --- | --- |
-| Provenance tooling tests | Offline unit tests of `scripts/phase2b6/stylus_provenance.py` | yes |
+| Provenance tooling tests | 16 offline unit tests of `scripts/phase2b6/stylus_provenance.py` | yes |
 | `init` | Checks the source commit and clean worktree; hashes inputs; clones the SDK at the exact commit and verifies the tag | yes |
-| `toolchain` | Installs Rust 1.91.0 with `wasm32-unknown-unknown`; checks that both trees select 1.91.0 | yes |
+| `toolchain` | Installs Rust 1.91.0 with the baseline component set and `wasm32-unknown-unknown`; checks that the wrapper selects 1.91.0 and that the SDK's toolchain file pins it | yes |
 | `cli` | Installs `cargo-stylus` from the pinned source with `--locked`; checks the SDK tree is unchanged | yes |
 | `verify-cli` | `cargo stylus --version`, `check --help`, `deploy --help`, `build --help`, `get-initcode --help` | yes |
 | `wrapper-tests` | The existing `stylus-wrapper.yml` checks, in the same order | yes |
-| `release-wasm` | Exact release build; WASM inspection; host-stub entrypoint tests; client ABI tests | yes |
+| `release-wasm` | Records the toolchain components; exact release build; WASM inspection; host-stub entrypoint tests; client ABI tests | yes |
 | `cli-build` | Pre-fix manifest probe (informational); `cargo stylus build` into a fresh target directory (gating) and byte comparison; `get-initcode`; `export-abi` | build only |
-| `reproducibility` | Rebuild from a relocated checkout and target directory; byte comparison | no |
+| `reproducibility` | Rebuilds from a relocated checkout, then with the `rust-src` component added (removed again afterwards); byte comparisons | no |
 | `docker` | Base image availability and digest; the CLI's derived image; the CLI-equivalent container run; a diagnostic full-repository container build | images only |
 | `integrity` | All lockfiles and tracked files unchanged; SDK still at the pinned commit | yes |
 
-**Safety properties:**
-- Permissions are `contents: read`.
-- No secrets are used, and checkouts do not persist credentials.
+**Safety properties** (re-validated for this run):
+- The only trigger is `workflow_dispatch`, so the workflow runs only when someone with write access starts it. Permissions are `contents: read`.
+- No secrets are used, checkouts do not persist credentials, and nothing is pushed.
 - Every action is pinned by SHA: `checkout` v5.1.0, `setup-node` v5.0.0 and `upload-artifact` v6.0.0.
 - `record()` in `scripts/phase2b6/stylus-candidate.sh` refuses any `cargo stylus` argument vector outside an offline allowlist, including one nested in `docker run`. The allowlist is `--version`, the four `--help` forms above, `build`, `get-initcode --output <file>` and `export-abi --output <file>`. `check`, `deploy`, `activate`, `verify`, `cache` and the rest cannot run.
+- A failed command's annotation carries its error lines, because check-run annotations stay readable through the GitHub API even where run logs and artifacts are not. The full output stays in the artifact.
 
-**Dispatching.** Once the file is on `main`, dispatch the branch run with `gh workflow run stylus-testnet-artifact.yml --ref arena/7643001c-ponte`. GitHub reads the workflow file from that ref.
+**Registration without changing `main`.** GitHub dispatches only workflows it has registered, and dispatching this file earlier returned HTTP 404. The usual fix is to put the file on the default branch. That needs a separate bootstrap branch and pull request, which the session that prepared this branch could not create. GitHub also registers a workflow the first time it runs from any branch: the Phase 2B.5.3 `macro-isolation-experiment.yml` (workflow ID `421818583`) was registered that way from a feature branch. So:
 
-## 5. `Stylus.toml` configuration change
+1. Commit `bb87fd5` temporarily added a `push` trigger limited to this branch and to this workflow file, plus a job condition `github.event_name == 'workflow_dispatch'`.
+2. Pushing it created [registration run 44365215853](https://github.com/timmyspurs12/ponte/actions/runs/44365215853). Its conclusion is `skipped`: one job, zero steps, no runner. GitHub registered the workflow as ID `422931157`.
+3. Commit `38f395c` reverted `bb87fd5`. Its tree is identical to `5317414`, so the workflow is `workflow_dispatch`-only again.
+4. Dispatches against this branch then returned HTTP 204.
+
+`main` was not changed. To dispatch again: `gh workflow run stylus-testnet-artifact.yml --ref arena/7643001c-ponte`, or the REST dispatch endpoint with workflow ID `422931157`. GitHub reads the workflow file from that ref.
+
+**Fixes made while preparing and running the workflow** (no change to Rust sources, manifests, lockfiles or `Stylus.toml`):
+
+| Commit | Fix | Why |
+| --- | --- | --- |
+| `5317414` | `PYTHONDONTWRITEBYTECODE=1` for the job | The provenance unit tests ran before `init` and wrote `scripts/phase2b6/__pycache__/*.pyc`. That directory is not gitignored, so `init`'s clean-worktree gate would have failed on every run (reproduced locally before the first run) |
+| `5317414` | Error lines in failure annotations (`excerpt` subcommand) | Run logs and artifacts were not reachable from the environment that diagnosed the runs; annotations were |
+| `f28e99a` | Baseline toolchain components; SDK toolchain file read instead of resolved by rustup; components recorded; `rust-src` probe; full base-image digest | Run 44365360692 built `d690eb6b…` instead of the baseline, because this workflow had added `rust-src` ([§5](#5-artifact-run-results)) |
+| `735445f` | Removed a Python bytecode file that `f28e99a` added by mistake | Not a source file; the workflow never writes bytecode |
+
+## 5. Artifact run results
+
+| Run | Commit | Result | Raw WASM | Artifact |
+| --- | --- | --- | --- | --- |
+| [44365360692](https://github.com/timmyspurs12/ponte/actions/runs/44365360692) (superseded) | `38f395c` | success; record complete | 90,775 bytes, `d690eb6b9598ab80baec31cd5f84a7d4efb05436792a8b9501f9411750c01d20` (built with `rust-src` installed) | ID `14456029933`, `sha256:9d4a6a8fd79eb007141d24509ddeb4ecf699528697a4791db9e8ee9230f487d9`, expires 2027-02-16 |
+| **[44367877896](https://github.com/timmyspurs12/ponte/actions/runs/44367877896) (candidate)** | **`735445f`** | **success, 17/17 steps; record complete** | **90,506 bytes, `6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`** | **ID `14457443066`, `sha256:df20469a2bd1d2d1cf7293706f1de47e4accabadedaa6af094d40c7605c1f739`, expires 2027-02-16** |
+
+Both are `workflow_dispatch` runs on `arena/7643001c-ponte`, attempt 1, on `ubuntu-24.04`. The candidate run took 8 minutes 20 seconds (2026-11-18T18:16:25Z to 18:24:45Z). Commits after `735445f` change only this document.
+
+**Candidate run, step by step:**
+
+| Stage | Outcome |
+| --- | --- |
+| Provenance tooling | 16 unit tests passed |
+| `init` | Commit `735445f04255ae5ec5d43041d69db8338eba5361` checked against `GITHUB_SHA`; worktree clean; SDK at `76f8b055…`; tag `v0.10.10` resolves to it |
+| `toolchain` | Rust 1.91.0 as in [§3](#3-provenance); the wrapper selects `1.91.0-x86_64-unknown-linux-gnu`; the SDK's toolchain file pins 1.91.0 |
+| `cli` | `cargo install --locked` exit 0; SDK tree unchanged; binary SHA-256 `2593325f…6eb522` |
+| `verify-cli` | `stylus 0.10.10`; `check --help` documents `--endpoint`; `deploy --help` documents `--no-activate` and `--no-verify` |
+| `wrapper-tests` | All passed: advisory-guard tests and baseline, client ABI check and tests, `cargo fmt`, `cargo test`, `cargo clippy -D warnings`, SDK ABI export and `check_abi.py` |
+| `release-wasm` | Release build exit 0; WASM inspection, host-stub entrypoint tests and client ABI WASM tests passed |
+| `cli-build` | Pre-fix probe failed as expected; `cargo stylus build` exit 0, byte-identical to the direct build; `get-initcode` and `export-abi` exit 0 |
+| `reproducibility` | Relocated checkout and `rust-src` builds both differ, as explained below |
+| `docker` | Published base image pulled; derived image built; container CLI `stylus 0.10.10`; CLI-equivalent run failed as predicted; diagnostic container build succeeded |
+| `integrity` | All lockfiles and tracked files unchanged; SDK still pinned |
+
+**The raw WASM, cross-checked:**
+
+| Build | Run | SHA-256 |
+| --- | --- | --- |
+| `main` baseline (`2049497`), dependency evidence | [44268381103](https://github.com/timmyspurs12/ponte/actions/runs/44268381103) | `6fd9159d…2c8fefd` |
+| This branch (`735445f`), dependency evidence | [44367870528](https://github.com/timmyspurs12/ponte/actions/runs/44367870528) | `6fd9159d…2c8fefd` |
+| **Candidate artifact** (direct release build) | 44367877896 | **`6fd9159d…2c8fefd`** |
+| `cargo stylus build`, fresh target directory | 44367877896 | identical |
+| Same build with `rust-src` added | 44367877896 | `d690eb6b…c01d20` (same as superseded run 44365360692) |
+| Relocated checkout (`/home/runner/work/_temp/relocated-checkout/ponte`) | 44367877896 | `304e882c3530707b29caf757ef0d12d1647b532461be01792b6fa0468698fce0` |
+| Whole repository in the CLI's image at `/ponte` (diagnostic) | 44365360692 and 44367877896 | `ea7da59380a64625ede15cecd74a458d7d5cc95ad7e17ed961ce8120dc6a18aa` in both runs |
+
+**Other measured values (candidate run):**
+- **Custom sections:** `name` (11,210 bytes), `producers` (77) and `target_features` (148).
+- **ABI:** the SDK export SHA-256 is `4308824fc1b641a1395da5f0a58106b9e337ae5b7a6cc3a2ae541bc520aa7991`, and `cargo stylus export-abi` is byte-identical. Committed client ABI JSON: `15d6ff23d699e84b2841b69b5cababeedb3fa66fac353ba3c6c36fe44141b38b`; interface: `6a67311b65d364c6a1b4a634caa7cd0c22eea2317dca34131f3f044e417bac99`.
+- **Offline processing (`get-initcode`), host build:**
+  - Init code is 24,169 bytes, SHA-256 `d8e89984f33ac0b1b0c29a59a812fbab949f6beed17e046986cd81d6c3b7b040`.
+  - Deployed code is 24,126 bytes, SHA-256 `558967431fec39aad87ad01fa1ff2ab40315b33e883cb9544a537633829da1af`: the 4-byte `EFF00000` prefix plus 24,122 bytes of Brotli.
+  - That fits the 24,576-byte single-contract limit with 450 bytes to spare, so it is **not fragmented**.
+  - It embeds a host-path-dependent `project_hash`, so it is **not** the reproducible deployment payload ([§7](#7-reproducibility-findings)).
+- **Docker base image:** `offchainlabs/cargo-stylus-base:0.10.10`, image ID `sha256:f35f28e7201ae429952c0a7c62f67c3ebfe624120692ff50b20ab3a11d2aa5a8`, repository digest `offchainlabs/cargo-stylus-base@sha256:7ec994ea0d065859389d3e433b7a1efc163ad5415d40bb4ed9b323ddc636c57d`.
+
+**Pull request checks on `735445f`:** Application quality, Local Stylus wrapper and Rust optimizer validation passed. Dependency and release WASM evidence is red only at its RustSec step, by design ([§10](#10-known-rustsec-findings)).
+
+**How these results were read.** They come from the runs' check-run annotations and the GitHub REST API, which show every step, notice and warning. The artifact itself was not downloaded and re-hashed independently: run logs and artifacts are served from a storage host the preparing environment could not reach. GitHub's artifact digest above is the integrity anchor for a later download.
+
+## 6. `Stylus.toml` configuration change
 
 **Problem.** The pinned CLI loads the `Stylus.toml` at the Cargo workspace root as a `WorkspaceManifest` (`stylus-tools/src/core/project/workspace.rs` L65–72), and its types require a `[workspace]` table with a `networks` map:
 
@@ -155,7 +227,7 @@ pub struct TomlWorkspace { pub networks: HashMap<String, TomlNetwork> }
 pub struct TomlNetwork { pub endpoint: String }
 ```
 
-`rust/stylus-wrapper` is its own Cargo workspace, and its `Stylus.toml` contained only `[contract]`. Every project command (`build`, `get-initcode`, `check`, `deploy`, `verify`) therefore stops while loading the project. The SDK's own examples carry the same one-line file, but they sit under the SDK's root `Stylus.toml`, which has the tables. The workflow's pre-fix probe records the exact CLI error against the old file.
+`rust/stylus-wrapper` is its own Cargo workspace, and its `Stylus.toml` contained only `[contract]`. Every project command (`build`, `get-initcode`, `check`, `deploy`, `verify`) therefore stopped while loading the project. The SDK's own examples carry the same one-line file, but they sit under the SDK's root `Stylus.toml`, which has the tables.
 
 **Change.** This is the only change under `rust/`:
 
@@ -171,44 +243,55 @@ endpoint = "https://sepolia-rollup.arbitrum.io/rpc"
 A three-line comment explains its scope. The existing `[contract]` table is preserved.
 
 **Checked against the pinned v0.10.10 source and template:**
-- **Shape:** the file deserializes into the types above. Unknown top-level keys such as `[contract]` are ignored, because the types carry no `deny_unknown_fields`.
+- **Shape:** the file deserializes into the types above. Unknown top-level keys such as `[contract]` are ignored, because the types carry no `deny_unknown_fields`. The `ContractManifest` type, whose `deployments` field would be required, is never loaded by any 0.10.10 code path; `[contract]` only marks the package as a contract (`Contract::is_contract` checks that the file exists).
 - **Template:** the official contract template (`stylus-tools/templates/contract/Stylus.toml`) uses the same `[workspace]`, `[workspace.networks]` and `[contract]` layout, with an empty networks table.
 - **Network entry:** no fixture in the pinned repository has an `endpoint` key. **No code reads the parsed workspace manifest or its networks.** Commands that use RPC take only `--endpoint`, which defaults to `http://localhost:8547`. The entry is declarative, makes no command contact Sepolia, and changes no default.
-- **No deployment data:** no deployment record, deployer address, key or activation setting was added. The unused `TomlDeployment` type would hold such data.
+- **No deployment data:** no deployment record, deployer address, key or activation setting was added.
 
 **Scope:**
 - Rust source, `Cargo.toml`, `Cargo.lock` and `rust-toolchain.toml` are unchanged.
 - `Stylus.toml` is not a cargo build input.
 - It is not part of the cargo-stylus project hash, which covers `.rs` files, `Cargo.toml`, `Cargo.lock` and `rust-toolchain.toml` (`stylus-tools/src/core/project/hash.rs`).
 - It has no `[wasm-opt]` table, so no optimization step is enabled.
-- The compiled WASM should therefore not change. The checks below confirm this.
 
-**Validation on this branch.** Commit `993b4ed` triggered both of these runs:
+**Validation:**
+- **Pinned CLI, candidate run 44367877896:**
+  - Against the former one-line file (SHA-256 `6e21fc54…`), `cargo stylus build` exits 1 with ``error: toml read error: TOML parse error at line 1, column 1 … missing field `workspace` ``.
+  - With the new file, `cargo stylus build` exits 0 and its WASM is byte-identical to the direct release build. `get-initcode` and `export-abi` also exit 0.
+- **WASM unchanged:** 90,506 bytes, `6fd9159d…`, the same as `main` ([§5](#5-artifact-run-results)). Earlier branch runs agree: [Local Stylus wrapper 44357382168](https://github.com/timmyspurs12/ponte/actions/runs/44357382168) (all 18 steps) and [dependency evidence 44357382273](https://github.com/timmyspurs12/ponte/actions/runs/44357382273) on commit `993b4ed`, whose Cargo graph output was also identical to `main`'s.
 
-- **[Local Stylus wrapper run 44357382168](https://github.com/timmyspurs12/ponte/actions/runs/44357382168): success on all 18 steps.**
-  - Covers the advisory guard, client ABI checks, formatting, tests, Clippy, SDK ABI export and check, release build, WASM inspection, host-stub entrypoint tests, and client ABI tests through the WASM.
-  - WASM is 90,506 bytes, with the same exports and six `vm_hooks` imports.
-- **[Dependency and release WASM evidence run 44357382273](https://github.com/timmyspurs12/ponte/actions/runs/44357382273): graph capture, release build and artifact upload succeeded.**
-  - Release WASM SHA-256 is `6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`, 90,506 bytes, **unchanged** from `main` `2049497` ([run 44268381103](https://github.com/timmyspurs12/ponte/actions/runs/44268381103)).
-  - Cargo graph output is identical to `main`'s.
-  - The RustSec step is red by design, with findings identical to [§9](#9-known-rustsec-findings).
+## 7. Reproducibility findings
 
-The pinned CLI's acceptance of the new file will be confirmed by the artifact workflow's `cargo stylus build` step once that runs. Until then, the evidence is the source-level check above.
+Each of these was measured by the candidate run unless stated otherwise.
 
-## 6. Reproducibility findings
+1. **The raw WASM depends on the build environment, not only on the source.** The binary scan of the candidate WASM finds 16 absolute file-path strings, the kind panic locations embed:
+   - 7 cargo registry sources under `CARGO_HOME`, for example `/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/alloy-sol-types-1.5.7/src/abi/encoder.rs`;
+   - 1 checkout path, `/home/runner/work/ponte/ponte/rust/optimizer/src/optimizer.rs`, from the `../optimizer` path dependency;
+   - 5 standard-library paths `/rustc/f8297e351a40c1439a467bbbb6879088047f50b3/library/…`;
+   - 3 path fragments such as `/alloc/src/string.rs`.
 
-These come from the pinned source; the workflow measures each one.
-
-1. **The CLI's Docker path is only used by `deploy` and `verify`** (`run_reproducible`; `build`, `get-initcode` and `check` run on the host).
-   - **Base image:** it builds a derived image from `offchainlabs/cargo-stylus-base:0.10.10` on Docker Hub, using the template in `reproducible.rs`, which installs the toolchain named in `rust-toolchain.toml`.
+   Consequences:
+   - The hash matches only when the checkout path, `CARGO_HOME` and toolchain components all match: same path and same toolchain give the same hash across runs and workflows ([§5](#5-artifact-run-results)), and a fresh target directory changes nothing.
+   - A relocated checkout gives a different hash (`304e882c…`).
+2. **The `rust-src` component changes the WASM.** With `rust-src` installed, rustc embeds the local library source path (`/home/runner/.rustup/toolchains/1.91.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/…`) instead of `/rustc/<commit>/library/…`. The same build with `rust-src` added gives 90,775 bytes and `d690eb6b…`.
+   - This is what made superseded run 44365360692 miss the baseline: that version of the workflow installed `rust-src`, and the baseline CI does not.
+   - **The CLI's reproducible Docker image installs `rust-src`**, so container builds differ from host builds without it.
+3. **The CLI's Docker path is only used by `deploy` and `verify`** (`run_reproducible`; `build`, `get-initcode` and `check` run on the host).
+   - **Base image:** the derived image comes from `offchainlabs/cargo-stylus-base:0.10.10`, which is published on Docker Hub. Its digest is in [§5](#5-artifact-run-results).
+   - **Template:** the derived image uses the template in `reproducible.rs` and installs the toolchain named in `rust-toolchain.toml`, plus `rust-src` and `wasm32-unknown-unknown`.
    - **Container run:** `docker run --network host --workdir /source --volume <cargo workspace root>:/source <image> cargo stylus <cmd> --no-verify`.
    - **What the workflow does:** builds the same image from the CLI's own template and runs the offline `cargo stylus build` with the same mount. It never runs `deploy` or `verify`.
-2. **Only the Cargo workspace root is mounted.** For this contract that is `rust/stylus-wrapper`, while its path dependency `ponte-optimizer` is `../optimizer`, outside the mount. A reproducible `deploy` or `verify` is therefore expected to fail in the container. The workflow records the actual outcome as the CLI-equivalent container run. Fixing it needs a separately reviewed layout change, for example a Cargo workspace that contains both crates or a non-path dependency, which would change lockfile placement or content.
-3. **The init code is path-dependent.** The `project_hash` section that `cargo-stylus` adds hashes the cargo version string and **absolute** source paths of the current directory (`hash_project`). The verifiable deployment payload therefore comes only from the fixed container path, and a host `get-initcode` is not the reproducible payload.
-4. **The raw WASM may embed absolute paths** of path dependencies and registry sources in panic-location strings. The workflow rebuilds from a relocated checkout, rebuilds into a fresh target directory, scans the binary for absolute paths, and makes a diagnostic container build of the whole repository at a fixed path.
-5. **Size.** `get-initcode` and `check` split programs whose Brotli-compressed code plus the 4-byte `EFF00000` prefix exceeds 24,576 bytes into fragments, and `get-initcode` refuses fragmented programs. A fragmented `deploy` sends fragment transactions plus a root, and requires the chain's `getMaxStylusContractFragments`. The [check/deploy guide](https://developer.arbitrum.io/stylus/cli-tools/check-and-deploy) gives a decompressed `MaxWasmSize` of 128 KB by default and 256 KB from ArbOS 61. The 90,506-byte raw WASM is below that before processing.
+4. **The CLI's container path fails for this repository layout.** Only the Cargo workspace root is mounted: for this contract that is `rust/stylus-wrapper`, while the path dependency `ponte-optimizer` is `../optimizer`, outside the mount. The CLI-equivalent run fails with ``cargo metadata error: … failed to load manifest for dependency `ponte-optimizer` … failed to read `/optimizer/Cargo.toml` … No such file or directory (os error 2)``.
+   - A reproducible `deploy` or `verify` would fail the same way.
+   - Fixing it needs a separately reviewed layout change, for example a Cargo workspace that contains both crates or a non-path dependency. Either would change lockfile placement or content, and the WASM's embedded paths.
+5. **Container builds are deterministic, but not equal to host builds.** With the whole repository mounted at `/ponte` (a diagnostic, not a cargo-stylus code path), the container build succeeded and gave `ea7da593…` in both runs, with the same image digest. It differs from the host build because of the path, `CARGO_HOME` and `rust-src` differences above. An auditor rebuilding "with cargo stylus" ([§9](#9-activation-policy-as-read-on-2026-11-18)) would compare container builds with the deployed code, so the deployed program must itself come from the container path.
+6. **The init code is path-dependent.** The `project_hash` section that `cargo-stylus` adds hashes the cargo version string and **absolute** source paths of the current directory (`hash_project`). A host `get-initcode` is therefore not the verifiable deployment payload.
+7. **Size.** The host build's compressed code is 24,126 bytes with prefix, under the 24,576-byte limit at which `cargo-stylus` splits programs into fragments, with 450 bytes to spare.
+   - A container build or any code growth must be re-measured. Above the limit, `get-initcode` refuses the program, and `deploy` sends fragment transactions plus a root, which needs the chain's `getMaxStylusContractFragments`.
+   - The [check/deploy guide](https://developer.arbitrum.io/stylus/cli-tools/check-and-deploy) gives a decompressed `MaxWasmSize` of 128 KB by default and 256 KB from ArbOS 61. The 90,506-byte raw WASM is below that before processing.
+8. **The upstream base image is mutable.** It is referenced by tag, and upstream's `Dockerfile` builds `cargo-stylus` without `--locked` from a floating `rust:1.91` image. The digest recorded here must be compared before relying on it.
 
-## 7. Path to Arbitrum Sepolia (documented, not performed)
+## 8. Path to Arbitrum Sepolia (documented, not performed)
 
 **Network** ([official chain information](https://developer.arbitrum.io/chain-info)):
 - Arbitrum Sepolia, chain ID **`421614`**, published RPC **`https://sepolia-rollup.arbitrum.io/rpc`**.
@@ -218,8 +301,8 @@ These come from the pinned source; the workflow measures each one.
 | Operation | What it does | Needs | Changes chain state? |
 | --- | --- | --- | --- |
 | **Read-only `cargo stylus check`** | Builds and processes on the host. Then `eth_call`s ArbWasm `activateProgram` (`0x…71`) with a state override that spoofs the code and a funded sender, to validate activation and estimate the data fee. Reports `ActivationsPaused` when activation gas is raised | An RPC that supports `eth_call` state overrides. No key | No |
-| **Unactivated deployment** (`cargo stylus deploy --no-activate`) | Runs the same check first, checks the balance against the estimated data fee, then sends a contract-creation transaction with the init code (plus fragment transactions if fragmented). The program **cannot be called until activated** | A funded key; by default the reproducible Docker path ([§6](#6-reproducibility-findings)) | **Yes**, one or more transactions |
-| **Activation** (`cargo stylus activate --address …`) | A transaction to ArbWasm `activateProgram` paying the data fee. It compiles the program onchain and makes it callable for a limited period (365 days by default, renewable with `codehashKeepalive`) | A funded key and **whatever activation policy applies on Sepolia at that time** ([§8](#8-activation-policy-as-read-on-2026-11-18)) | **Yes** |
+| **Unactivated deployment** (`cargo stylus deploy --no-activate`) | Runs the same check first, checks the balance against the estimated data fee, then sends a contract-creation transaction with the init code (plus fragment transactions if fragmented). The program **cannot be called until activated** | A funded key; by default the reproducible Docker path, which fails for the current layout ([§7](#7-reproducibility-findings)) | **Yes**, one or more transactions |
+| **Activation** (`cargo stylus activate --address …`) | A transaction to ArbWasm `activateProgram` paying the data fee. It compiles the program onchain and makes it callable for a limited period (365 days by default, renewable with `codehashKeepalive`) | A funded key and **whatever activation policy applies on Sepolia at that time** ([§9](#9-activation-policy-as-read-on-2026-11-18)) | **Yes** |
 
 **Later read-only check.** This is a separate step that needs approval:
 
@@ -229,10 +312,10 @@ cargo stylus check --endpoint https://sepolia-rollup.arbitrum.io/rpc
 ```
 
 - **Always pass `--endpoint`.** The [check/deploy guide](https://developer.arbitrum.io/stylus/cli-tools/check-and-deploy) says `check` defaults to Sepolia, but the pinned 0.10.10 source defaults to `http://localhost:8547`.
-- **It rebuilds on the host.** Compare its build with this artifact's hash first.
+- **It rebuilds on the host.** With the same checkout path, `CARGO_HOME` and component set (no `rust-src`), the rebuild should hash to `6fd9159d…`. Compare before trusting the result.
 - **`--wasm-file <artifact>` checks the exact artifact bytes first**, and then still checks the workspace's contracts when run inside the project.
 
-## 8. Activation policy, as read on 2026-11-18
+## 9. Activation policy, as read on 2026-11-18
 
 Re-verify this before any network step.
 
@@ -247,10 +330,10 @@ Re-verify this before any network step.
 - **Implications for PONTE:**
   - Sepolia activation may require the audited, signed process, and Sepolia activations may also be paused.
   - A read-only check would show `ActivationsPaused` if so, and `deploy --no-activate` would then also stop at its built-in check.
-  - Codehash matching makes the reproducible build path in [§6](#6-reproducibility-findings) a prerequisite.
+  - Codehash matching makes a working reproducible build path a prerequisite ([§7](#7-reproducibility-findings), findings 4 and 5).
   - Any submission or contact is a separate decision; none was made.
 
-## 9. Known RustSec findings
+## 10. Known RustSec findings
 
 These are unsuppressed and unchanged by this branch. They come from `main`'s post-merge [Dependency and release WASM evidence run 44268381103](https://github.com/timmyspurs12/ponte/actions/runs/44268381103) (commit `2049497`): `cargo-audit` 0.23.0, advisory-db `233155b4025b854c68a4b199c0e32d7fd53291a2`, audited 2026-11-18T08:36:41Z, `--deny warnings`, no ignores.
 
@@ -261,34 +344,37 @@ These are unsuppressed and unchanged by this branch. They come from `main`'s pos
 | `rust/stylus-wrapper` | **vulnerability** `RUSTSEC-2026-0387` (`crypto-bigint` 0.5.5); **unsound** `RUSTSEC-2026-0253` (`lru` 0.16.4); unmaintained `RUSTSEC-2024-0370` (`proc-macro-error` 1.0.4), `RUSTSEC-2024-0388` (`derivative` 2.2.0), `RUSTSEC-2024-0436` (`paste` 1.0.15), `RUSTSEC-2026-0173` (`proc-macro-error2` 2.0.1), `RUSTSEC-2026-0543` (`chrono` 0.4.45) |
 
 - **Scope:** findings cover each whole lockfile. Phase 2B.5.1 observed that `crypto-bigint` and `lru` resolve only through host dev-dependency paths. That is a Cargo graph observation, not proof of absence from the binary or of non-exploitability.
-- **Newer advisory database:** on this branch, [run 44357382273](https://github.com/timmyspurs12/ponte/actions/runs/44357382273) audited the same lockfiles against advisory-db `472a4c9a785030434f15d7da84964d60fbe789ab` (1,533 advisories, 2026-11-18T17:20:27Z) and found exactly the same findings.
+- **Newer advisory database:** on this branch, [run 44357382273](https://github.com/timmyspurs12/ponte/actions/runs/44357382273) (`993b4ed`) and [run 44367870528](https://github.com/timmyspurs12/ponte/actions/runs/44367870528) (`735445f`, audited 2026-11-18T18:17:25Z) used advisory-db `472a4c9a785030434f15d7da84964d60fbe789ab` (1,533 advisories) and found exactly the same findings.
 - **Check status:** the evidence check stays red by design.
-- **Offline guard:** `advisory_guard.py --check-baseline` (run by this workflow) tracks the two advisories offline.
+- **Offline guard:** `advisory_guard.py --check-baseline` (run by this workflow, passed) tracks the two advisories offline.
 
-## 10. Limitations
+## 11. Limitations
 
 - **Synthetic evaluator.** Its inputs, including the as-of time, are unauthenticated and replayable. It reads no environment timestamp and verifies no price, liquidity or asset metadata. ABI decoding still allocates dynamic data inside the 25,572-byte cap. Nothing about gas, ink, memory high-water marks or throughput is measured.
 - **Manual entrypoint design.** The contract depends on hand-written lifecycle code and an `unsafe` marker whose correctness is argued, not proven ([§2](#2-the-contract-being-prepared)). The SDK's ABI export omits the input structs.
 - **Evidence.**
   - Host-stub WASM tests, native and TestVM tests and import inspection do not reproduce Nitro activation or metering.
-  - Results in this repository are read from check-run annotations. Artifacts are not independently downloaded and re-hashed by the sandbox that prepared this branch.
-  - The first artifact run is still pending.
-- **Toolchain.** The CLI image used for reproducible builds comes from Docker Hub. Upstream's base-image `Dockerfile` builds `cargo-stylus` without `--locked` from a floating `rust:1.91` image, so the image digest must be recorded and compared.
+  - Results were read from check-run annotations and the REST API, not from an independently downloaded artifact ([§5](#5-artifact-run-results)).
+- **Reproducibility.**
+  - The raw WASM is reproducible only for the same checkout path, `CARGO_HOME` and toolchain components.
+  - The CLI's own reproducible path does not work for the current layout ([§7](#7-reproducibility-findings)).
+  - The CLI binary hash differs between runs.
+- **Toolchain.** The CLI image used for reproducible builds comes from Docker Hub by tag. Upstream's base-image `Dockerfile` builds `cargo-stylus` without `--locked` from a floating `rust:1.91` image.
 
-## 11. Remaining blockers
+## 12. Remaining blockers
 
 **Before a read-only Sepolia check:**
-1. Put the workflow on `main` (maintainer), dispatch it on this branch, and review a successful run's provenance and artifact.
-2. Get explicit approval for a read-only RPC step, including the endpoint and where it runs.
+1. Review the candidate run's provenance and artifact ([§5](#5-artifact-run-results)). The run itself succeeded; the earlier blocker, getting the workflow dispatched, is resolved.
+2. Get explicit approval for a read-only RPC step, including the endpoint and where it runs (for example, a separate manually dispatched job with no keys or secrets).
 3. Freshly verify Sepolia's chain ID, ArbOS and Stylus versions, activation status and size limits, and the endpoint's support for `eth_call` state overrides.
-4. Decide whether to check the exact artifact bytes (`--wasm-file`) or the host rebuild, and compare hashes first.
+4. Decide whether to check the exact artifact bytes (`--wasm-file`) or the host rebuild, and compare hashes with `6fd9159d…` first ([§8](#8-path-to-arbitrum-sepolia-documented-not-performed)).
 
 **Before an unactivated deployment:**
 1. Get explicit approval for Sepolia transactions, and set a key-management policy: no keys in CI or the repository, plus a funded testnet account for gas and the data-fee balance check.
 2. A successful, reviewed read-only check.
-3. A working reproducible build. The CLI's container path is expected to fail for the current layout ([§6](#6-reproducibility-findings)), and `--no-verify` would bypass reproducibility, which is not acceptable here.
-4. The `cargo-stylus-base:0.10.10` image is available and its digest recorded.
-5. The fragmentation outcome is understood, and multi-transaction deployment is planned if needed.
+3. **A working reproducible build.** The CLI's container path fails for the current layout ([§7](#7-reproducibility-findings), finding 4), and `--no-verify` would bypass reproducibility, which is not acceptable here. This needs a separately reviewed layout change, after which the artifact, its hashes and its size must be re-measured.
+4. Pin the base image by the recorded digest, or record the digest at deployment time and compare it.
+5. Re-measure the compressed size for the container build. The host build fits the single-contract limit by 450 bytes; plan multi-transaction deployment if a later build does not.
 6. Sepolia activations are not paused. If they are, the pinned CLI stops before deploying even with `--no-activate`.
 
 **Activation policy and security:**
@@ -298,11 +384,12 @@ These are unsuppressed and unchanged by this branch. They come from `main`'s pos
 4. Triage the RustSec findings, especially `RUSTSEC-2026-0387` and `RUSTSEC-2026-0253`.
 5. Define a data-provenance and replay policy before any non-synthetic use.
 6. Plan for expiry (365 days), keepalive and reactivation after Stylus version changes.
+7. **Protect `main`.** On 2026-11-18 it had no branch protection and no rulesets, so anyone with write access could push to it directly. Provenance claims about "the commit on `main`" depend on that being controlled.
 
-## 12. Not performed
+## 13. Not performed
 
 - `cargo stylus check` against any endpoint, `deploy` (with or without `--no-activate`), `activate`, `verify`, `cache` or `codehash-keepalive`.
 - Any transaction or signature; wallet creation, import or funding; key generation.
 - Token transfers, payments or settlement; Vercel, Render or other hosting deployments.
 - Contact with the Arbitrum Foundation, an auditor or anyone else.
-- Changes to `main`, Rust source, `Cargo.toml`, `Cargo.lock` or existing workflows and scripts.
+- Changes to `main`, Rust source, `Cargo.toml`, `Cargo.lock` or existing workflows and scripts. The registration trigger lived only on this branch and was reverted.
