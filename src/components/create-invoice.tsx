@@ -214,7 +214,7 @@ export function CreateInvoice({
           <ol>
             <li>{t("Share a demo payment link")}</li>
             <li>{t("Simulate Pix confirmation")}</li>
-            <li>{t("Compare liquidity routes")}</li>
+            <li>{t("Compare illustrative routes")}</li>
             <li>{t("Generate a settlement receipt")}</li>
           </ol>
           <div className="notice">

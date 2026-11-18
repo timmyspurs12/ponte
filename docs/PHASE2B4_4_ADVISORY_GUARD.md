@@ -4,8 +4,10 @@ This narrowly scoped guard checks **tracked Cargo.lock files** against two pinne
 
 | Package | Advisory / issued | Fixed according to the pinned rule | Documented baseline |
 |---|---|---|---|
-| `crypto-bigint` | [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html), 2026-10-23 | `>=0.7.6` | `0.5.5`, `rust/stylus-wrapper/Cargo.lock` |
-| `lru` | [RUSTSEC-2026-0253](https://rustsec.org/advisories/RUSTSEC-2026-0253.html), 2026-08-11 | `>=0.18.2` | `0.16.4`, `rust/stylus-wrapper/Cargo.lock` |
+| `crypto-bigint` | [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html), 2026-10-23 | `>=0.7.6` | `0.5.5`, `rust/Cargo.lock` |
+| `lru` | [RUSTSEC-2026-0253](https://rustsec.org/advisories/RUSTSEC-2026-0253.html), 2026-08-11 | `>=0.18.2` | `0.16.4`, `rust/Cargo.lock` |
+
+Phase 2B.6.1 moved the workspace lockfile from `rust/stylus-wrapper/Cargo.lock` to `rust/Cargo.lock`. The baseline identities are unchanged; only the recorded path label moved.
 
 The rules classify stable crates.io registry releases below each fixed threshold as `affected` and releases at or above it as `not_affected_by_pinned_rule`. Prerelease versions and other sources for either tracked package are `unknown`; invalid versions and malformed/unreadable/unsupported lockfiles are errors. Multiple package versions and separate lockfiles are examined independently. Repeating the same lockfile path or identical package entry is an error. Unrelated package names are outside this narrow check. `not_affected_by_pinned_rule` is **not** a clean bill of health for any other advisory.
 
@@ -26,7 +28,7 @@ python3 -m unittest discover -s rust/stylus-wrapper/scripts -p 'test_advisory_gu
 python3 rust/stylus-wrapper/scripts/advisory_guard.py --release-gate
 
 # Inspect explicit files instead of all git-tracked Cargo.lock files.
-python3 rust/stylus-wrapper/scripts/advisory_guard.py --lockfile rust/stylus-wrapper/Cargo.lock
+python3 rust/stylus-wrapper/scripts/advisory_guard.py --lockfile rust/Cargo.lock
 ```
 
 `--lockfile` may be repeated; relative paths are resolved from the current working directory. The default uses local `git ls-files` to discover tracked files, including additional future Cargo.lock files; it does not contact a remote. Paths in output are repository-relative where possible. Output and ordering are deterministic. `--json` returns the same findings, status, baseline differences and scope note in machine-readable form.

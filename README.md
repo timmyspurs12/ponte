@@ -1,6 +1,8 @@
 # PONTE
 
-**Phase 2A — persistent PostgreSQL backend for the bilingual Pix-to-USDG simulation.** Built for Arbitrum Open House São Paulo. No real funds move: no banking QR code, PSP, wallet signing, contract, custody or Stylus execution is connected.
+**Hackathon prototype — a PostgreSQL-backed, bilingual Pix-to-USDG lifecycle simulation.** Built for Arbitrum Open House São Paulo. The app uses illustrative route candidates and simulated Pix/settlement operations. A separate Rust optimizer and a synthetic Stylus wrapper have offline and reproducible-build evidence, but neither powers the UI. No real funds move: no PSP, live liquidity, wallet signing, custody, deployed contract or Stylus runtime execution is connected.
+
+See the [hackathon evidence](docs/HACKATHON_DEMO_EVIDENCE.md) for claim boundaries and CI links, and the [deterministic demo guide](docs/HACKATHON_DEMO_GUIDE.md) for a reproducible two-minute run.
 
 ## Run locally
 
@@ -12,13 +14,23 @@ Requires Node.js **22.17+**, npm and PostgreSQL 18. No hosted account or paid se
 4. `npm run db:seed` applies the versioned migration and creates a local business/user/admin membership. `npm run db:fixtures` adds eight explicitly illustrative records using the backend lifecycle.
 5. `npm run dev`; open `http://localhost:3000/dev-login`, enter your local token, then continue to the workspace.
 
-The Node scripts load `.env.local`; existing environment variables take precedence. Commands do not require shell-specific environment syntax. Embedded PostgreSQL is a development convenience (a prerelease binary-distribution package), not a production database manager. Linux x64 is verified here; Windows/macOS are **not verified** in this phase. A separately installed PostgreSQL is the fallback if its binaries are unsupported.
+The Node scripts load `.env.local`; existing environment variables take precedence. Commands do not require shell-specific environment syntax. Embedded PostgreSQL is a development convenience (a prerelease binary-distribution package), not a production database manager. Linux x64 is verified here. Native Windows 10 Pro x64 platform support is assessed in [HACKATHON_DEMO_WINDOWS.md](docs/HACKATHON_DEMO_WINDOWS.md), but **no Windows commands or tests were verified**; macOS remains unverified. A separately installed PostgreSQL is the fallback if its binaries are unsupported.
 
 `npm run db:migrate` is safe to repeat. To **delete all local simulation data**, run `npm run db:reset -- --confirm-local-reset`; this requires a loopback database, refuses production, and reseeds. Never point test/reset commands at valuable data. Back up a persistent database with PostgreSQL's standard tools before changing it.
 
 ### Production safety
 
 `npm run build && npm start` validates and serves the production build, but **all financial API access returns 503 `AUTH_NOT_CONFIGURED`** and `/dev-login` is disabled. Development authentication cannot be enabled in production with a flag. A real identity/session integration and deployment security review are explicit next gates. No cloud resources were created or deployed.
+
+## Current scope
+
+| Layer | What it is today |
+| --- | --- |
+| Web app | Real Next.js API and PostgreSQL persistence; simulated financial lifecycle. |
+| Quote candidates | Three fixed illustrative routes calculated by `src/lib/quotes.ts`; no market data. |
+| Rust optimizer | Separately tested `no_std` route evaluator with a host JSON-lines adapter; not called by the app. |
+| Stylus wrapper | Synthetic caller-supplied ABI evaluator with an unactivated, locally built candidate artifact; not deployed. |
+| Security | RustSec findings are visible and unresolved; `--deny warnings` is unchanged. |
 
 ## Explore
 
@@ -57,8 +69,16 @@ Next.js Route Handlers → Zod validation/authentication → lifecycle service �
 - `src/lib/services.ts`: asynchronous API-backed InvoiceService. No localStorage persistence.
 - `src/lib/quotes.ts`: deterministic BigInt/rational simulation arithmetic, called by the server. The UI renders server-provided estimates; numbers in legacy visual models are display adapters only.
 - `src/lib/i18n`: pt-BR default, English option, locale cookie and Intl display boundaries.
+- `rust/optimizer`: separate `no_std + alloc` evaluator with checked `U256` arithmetic; its host CLI is a test/benchmark adapter, not a production API and not connected to the app.
+- `rust/stylus-wrapper`: separate synthetic-only Stylus ABI evaluator with bounded calldata and offline WASM tests; no live state, external calls or deployed artifact.
 
-See [financial units and rounding](docs/FINANCIAL_MODEL.md), [API examples](docs/API.md), [deployment preparation](docs/BACKEND_ARCHITECTURE.md#deployment-preparation), and [remaining Phase 2 work](docs/PHASE2.md).
+See [financial units and rounding](docs/FINANCIAL_MODEL.md), [API examples](docs/API.md), [backend architecture](docs/BACKEND_ARCHITECTURE.md), [hackathon evidence](docs/HACKATHON_DEMO_EVIDENCE.md), the [demo guide](docs/HACKATHON_DEMO_GUIDE.md), and [remaining Phase 2 work](docs/PHASE2.md).
+
+## Demo and evidence
+
+- [HACKATHON_DEMO_EVIDENCE.md](docs/HACKATHON_DEMO_EVIDENCE.md): authoritative claim map, CI links, 10,760 finite differential comparisons, WASM hashes and RustSec limitations.
+- [HACKATHON_DEMO_GUIDE.md](docs/HACKATHON_DEMO_GUIDE.md): exact local setup, seeded invoice `PNT-2026-1048`, two-minute script, 90-second recording script and recovery steps.
+- `docs/screenshots/`: current desktop/mobile visual evidence regenerated from the running app. Files prefixed `phase1.1-pt-` are historical baselines.
 
 ## Verification
 
@@ -86,6 +106,6 @@ Browser coverage includes Portuguese/English, full backend lifecycle and refresh
 
 ## Boundaries
 
-Only the simulations are implemented. No market/executable quotes, real Pix, actual USDG token precision, wallet, signing, chain transactions, contracts, Stylus, KYB/AML, refunds, queue/reconciliation, production authentication, PDF or production SLA is claimed. All sample businesses and metrics are illustrative; protocol names do not imply partnerships. USD accounting cents and the illustrative two-decimal USDG scale are distinct from unknown real token base units.
+Only the simulations are implemented. No market/executable quotes, real Pix, actual USDG token precision, wallet, signing, chain transactions, deployed or activated contracts, Stylus runtime execution, KYB/AML, refunds, queue/reconciliation, production authentication, PDF or production SLA is claimed. The separate Rust optimizer and Stylus wrapper are offline components, not app features. All sample businesses and metrics are illustrative; protocol names do not imply partnerships. USD accounting cents and the illustrative two-decimal USDG scale are distinct from unknown real token base units.
 
 The approved typography, custom responsive CSS, restrained Motion, bilingual interface and SVG visuals are retained. Phase 1 design research, skill sources and limitations remain in [DESIGN.md](DESIGN.md), `skills-lock.json`, [historical QA](docs/QA.md) and `docs/screenshots`. Local skill installations are not runtime dependencies or committed assets.
