@@ -1,10 +1,11 @@
 // Regenerates the current hackathon screenshots from the running local application.
 // Requires a seeded development database and `npm run dev` on localhost:3000.
+// Windows/macOS use ordinary Playwright Chromium after `npm run test:install`.
+// Only the restricted Linux fallback needs PONTE_BROWSER_FALLBACK=1.
 import { loadEnvFile, env } from 'node:process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { chromium } from '@playwright/test';
-import sparticuzChromium from '@sparticuz/chromium';
 import { prepareBrowser } from './prepare-browser.mjs';
 
 loadEnvFile('.env.local');
@@ -19,6 +20,7 @@ fs.mkdirSync(output, { recursive: true });
 
 const launchOptions = {};
 if (env.PONTE_BROWSER_FALLBACK === '1') {
+  const { default: sparticuzChromium } = await import('@sparticuz/chromium');
   const browser = await prepareBrowser();
   env.LD_LIBRARY_PATH = [browser.libraryPath, env.LD_LIBRARY_PATH]
     .filter(Boolean)

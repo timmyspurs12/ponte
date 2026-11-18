@@ -14,7 +14,7 @@ Requires Node.js **22.17+**, npm and PostgreSQL 18. No hosted account or paid se
 4. `npm run db:seed` applies the versioned migration and creates a local business/user/admin membership. `npm run db:fixtures` adds eight explicitly illustrative records using the backend lifecycle.
 5. `npm run dev`; open `http://localhost:3000/dev-login`, enter your local token, then continue to the workspace.
 
-The Node scripts load `.env.local`; existing environment variables take precedence. Commands do not require shell-specific environment syntax. Embedded PostgreSQL is a development convenience (a prerelease binary-distribution package), not a production database manager. Linux x64 is verified here; Windows/macOS are **not verified** in this phase. A separately installed PostgreSQL is the fallback if its binaries are unsupported.
+The Node scripts load `.env.local`; existing environment variables take precedence. Commands do not require shell-specific environment syntax. Embedded PostgreSQL is a development convenience (a prerelease binary-distribution package), not a production database manager. Linux x64 is verified here. Native Windows 10 Pro x64 platform support is assessed in [HACKATHON_DEMO_WINDOWS.md](docs/HACKATHON_DEMO_WINDOWS.md), but **no Windows commands or tests were verified**; macOS remains unverified. A separately installed PostgreSQL is the fallback if its binaries are unsupported.
 
 `npm run db:migrate` is safe to repeat. To **delete all local simulation data**, run `npm run db:reset -- --confirm-local-reset`; this requires a loopback database, refuses production, and reseeds. Never point test/reset commands at valuable data. Back up a persistent database with PostgreSQL's standard tools before changing it.
 
