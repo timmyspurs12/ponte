@@ -128,8 +128,13 @@ test("evidence repository helpers lock a persisted quote and atomically insert s
       nonce: bytes(12, 6),
       authenticationTag: bytes(16, 7),
       wrappedDek: bytes(48, 8),
-      kmsKeyReference: "test-kms-reference",
-      kmsKeyVersion: "test-kms-version",
+      kmsProvider: "gcp-cloud-kms",
+      wrappedDekAlgorithm: "GOOGLE_SYMMETRIC_ENCRYPTION",
+      wrappedDekFormat: "gcp-kms-encrypt-ciphertext-v1",
+      kmsKeyReference:
+        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
+      kmsKeyVersion:
+        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
       aadVersion: 1,
     });
     await insertPendingEvidenceOutbox(db, {
@@ -138,11 +143,29 @@ test("evidence repository helpers lock a persisted quote and atomically insert s
     });
 
     const stored = await db.query(
-      "SELECT e.public_evidence_id,o.submission_state,o.attempt_count FROM route_decision_evidence e JOIN evidence_outbox o ON o.evidence_record_id=e.id WHERE e.id=$1",
+      "SELECT e.public_evidence_id,e.wrapped_dek,e.kms_provider,e.wrapped_dek_algorithm,e.wrapped_dek_format,e.kms_key_reference,e.kms_key_version,o.submission_state,o.attempt_count FROM route_decision_evidence e JOIN evidence_outbox o ON o.evidence_record_id=e.id WHERE e.id=$1",
       [evidenceId],
     );
     assert.equal(stored.rowCount, 1);
     assert.deepEqual(stored.rows[0].public_evidence_id, publicEvidenceId);
+    assert.deepEqual(stored.rows[0].wrapped_dek, bytes(48, 8));
+    assert.equal(stored.rows[0].kms_provider, "gcp-cloud-kms");
+    assert.equal(
+      stored.rows[0].wrapped_dek_algorithm,
+      "GOOGLE_SYMMETRIC_ENCRYPTION",
+    );
+    assert.equal(
+      stored.rows[0].wrapped_dek_format,
+      "gcp-kms-encrypt-ciphertext-v1",
+    );
+    assert.equal(
+      stored.rows[0].kms_key_reference,
+      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
+    );
+    assert.equal(
+      stored.rows[0].kms_key_version,
+      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
+    );
     assert.equal(stored.rows[0].submission_state, "pending");
     assert.equal(stored.rows[0].attempt_count, 0);
   });

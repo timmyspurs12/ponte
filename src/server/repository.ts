@@ -1,5 +1,10 @@
 import { Pool, type PoolClient } from "pg";
 import type { PaymentQuote } from "../lib/models";
+import type {
+  KmsProviderIdentifier,
+  WrappedDekAlgorithmIdentifier,
+  WrappedDekFormatIdentifier,
+} from "./evidence/kms";
 
 export interface LockedEvidenceQuoteRow {
   id: string;
@@ -33,6 +38,9 @@ export interface RouteDecisionEvidenceInsert {
   nonce: Buffer;
   authenticationTag: Buffer;
   wrappedDek: Buffer;
+  kmsProvider: KmsProviderIdentifier;
+  wrappedDekAlgorithm: WrappedDekAlgorithmIdentifier;
+  wrappedDekFormat: WrappedDekFormatIdentifier;
   kmsKeyReference: string;
   kmsKeyVersion: string;
   aadVersion: number;
@@ -130,7 +138,7 @@ export function insertRouteDecisionEvidence(
   evidence: RouteDecisionEvidenceInsert,
 ) {
   return db.query(
-    "INSERT INTO route_decision_evidence(id,business_id,invoice_id,quote_id,created_by_user_id,routing_correlation_id,public_evidence_id,evidence_schema_version,quote_schema_version,chain_id,registry_address,sequence,evidence_kind,selected_route_code,quote_snapshot_hash,previous_payload_hash,payload_hash,envelope_version,content_algorithm,ciphertext,nonce,authentication_tag,wrapped_dek,kms_key_reference,kms_key_version,aad_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)",
+    "INSERT INTO route_decision_evidence(id,business_id,invoice_id,quote_id,created_by_user_id,routing_correlation_id,public_evidence_id,evidence_schema_version,quote_schema_version,chain_id,registry_address,sequence,evidence_kind,selected_route_code,quote_snapshot_hash,previous_payload_hash,payload_hash,envelope_version,content_algorithm,ciphertext,nonce,authentication_tag,wrapped_dek,kms_provider,wrapped_dek_algorithm,wrapped_dek_format,kms_key_reference,kms_key_version,aad_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)",
     [
       evidence.id,
       evidence.businessId,
@@ -155,6 +163,9 @@ export function insertRouteDecisionEvidence(
       evidence.nonce,
       evidence.authenticationTag,
       evidence.wrappedDek,
+      evidence.kmsProvider,
+      evidence.wrappedDekAlgorithm,
+      evidence.wrappedDekFormat,
       evidence.kmsKeyReference,
       evidence.kmsKeyVersion,
       evidence.aadVersion,

@@ -11,6 +11,8 @@ const foreignKey = (error: unknown) =>
   (error as { code?: string }).code === "23503";
 const unique = (error: unknown) =>
   (error as { code?: string }).code === "23505";
+const notNull = (error: unknown) =>
+  (error as { code?: string }).code === "23502";
 
 let marker = 1;
 const syntheticBytes = (length: number) => Buffer.alloc(length, marker++);
@@ -46,6 +48,9 @@ type Evidence = {
   nonce: Buffer;
   authenticationTag: Buffer;
   wrappedDek: Buffer;
+  kmsProvider: string;
+  wrappedDekAlgorithm: string;
+  wrappedDekFormat: string;
   kmsKeyReference: string;
   kmsKeyVersion: string;
   aadVersion: number;
@@ -75,14 +80,25 @@ const evidenceColumns = [
   "nonce",
   "authentication_tag",
   "wrapped_dek",
+  "kms_provider",
+  "wrapped_dek_algorithm",
+  "wrapped_dek_format",
   "kms_key_reference",
   "kms_key_version",
   "aad_version",
 ] as const;
 
-const evidenceSql = `INSERT INTO route_decision_evidence(${evidenceColumns.join(",")}) VALUES(${evidenceColumns
-  .map((_, index) => `$${index + 1}`)
-  .join(",")})`;
+const evidenceSqlFor = (columns: readonly string[]) =>
+  `INSERT INTO route_decision_evidence(${columns.join(",")}) VALUES(${columns
+    .map((_, index) => `$${index + 1}`)
+    .join(",")})`;
+const evidenceSql = evidenceSqlFor(evidenceColumns);
+const legacyEvidenceColumns = evidenceColumns.filter(
+  (column) =>
+    !["kms_provider", "wrapped_dek_algorithm", "wrapped_dek_format"].includes(
+      column,
+    ),
+);
 
 function invoiceData(id: string, reference: string) {
   return {
@@ -171,8 +187,13 @@ function evidenceFor(
     nonce: syntheticBytes(12),
     authenticationTag: syntheticBytes(16),
     wrappedDek: syntheticBytes(48),
-    kmsKeyReference: "test-kms-key-reference",
-    kmsKeyVersion: "test-kms-key-version",
+    kmsProvider: "gcp-cloud-kms",
+    wrappedDekAlgorithm: "GOOGLE_SYMMETRIC_ENCRYPTION",
+    wrappedDekFormat: "gcp-kms-encrypt-ciphertext-v1",
+    kmsKeyReference:
+      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
+    kmsKeyVersion:
+      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
     aadVersion: 1,
     ...overrides,
   };
@@ -203,10 +224,20 @@ function evidenceValues(evidence: Evidence) {
     evidence.nonce,
     evidence.authenticationTag,
     evidence.wrappedDek,
+    evidence.kmsProvider,
+    evidence.wrappedDekAlgorithm,
+    evidence.wrappedDekFormat,
     evidence.kmsKeyReference,
     evidence.kmsKeyVersion,
     evidence.aadVersion,
   ];
+}
+
+function valuesForColumns(evidence: Evidence, columns: readonly string[]) {
+  const values = evidenceValues(evidence);
+  return columns.map(
+    (column) => values[(evidenceColumns as readonly string[]).indexOf(column)],
+  );
 }
 
 async function insertEvidence(
@@ -217,6 +248,29 @@ async function insertEvidence(
   const evidence = evidenceFor(context, overrides);
   await db.query(evidenceSql, evidenceValues(evidence));
   return evidence;
+}
+
+async function insertLegacyEvidence(
+  db: PoolClient,
+  context: Context,
+  overrides: Partial<Evidence> = {},
+) {
+  const evidence = evidenceFor(context, overrides);
+  await db.query(
+    evidenceSqlFor(legacyEvidenceColumns),
+    valuesForColumns(evidence, legacyEvidenceColumns),
+  );
+  return evidence;
+}
+
+async function insertEvidenceWithoutColumn(
+  db: PoolClient,
+  context: Context,
+  column: string,
+) {
+  const evidence = evidenceFor(context);
+  const columns = evidenceColumns.filter((candidate) => candidate !== column);
+  await db.query(evidenceSqlFor(columns), valuesForColumns(evidence, columns));
 }
 
 async function assertInvalidEvidence(
@@ -282,6 +336,9 @@ async function main() {
     await db.query("COMMIT");
     await db.query("BEGIN");
     await db.query(await migration("003_route_decision_evidence"));
+    await db.query("COMMIT");
+    await db.query("BEGIN");
+    await db.query(await migration("004_kms_envelope_metadata"));
     await db.query("COMMIT");
 
     const preservedInvoice = (
@@ -418,6 +475,9 @@ async function main() {
     await assertInvalidEvidence(db, "short-registry", {
       registryAddress: syntheticBytes(19),
     });
+    await assertInvalidEvidence(db, "zero-registry", {
+      registryAddress: Buffer.alloc(20),
+    });
     await assertInvalidEvidence(db, "short-quote-hash", {
       quoteSnapshotHash: syntheticBytes(31),
     });
@@ -449,6 +509,40 @@ async function main() {
     await assertInvalidEvidence(db, "zero-payload", {
       payloadHash: Buffer.alloc(32),
     });
+    await assertInvalidEvidence(db, "unknown-kms-provider", {
+      kmsProvider: "unknown-kms",
+    });
+    await assertInvalidEvidence(db, "invalid-provider-algorithm", {
+      kmsProvider: "gcp-cloud-kms",
+      wrappedDekAlgorithm: "AWS_KMS_GENERATE_DATA_KEY_AES_256",
+      wrappedDekFormat: "aws-kms-generate-data-key-ciphertext-blob-v1",
+    });
+    await assertInvalidEvidence(db, "invalid-provider-format", {
+      kmsProvider: "aws-kms",
+      wrappedDekAlgorithm: "AWS_KMS_GENERATE_DATA_KEY_AES_256",
+      wrappedDekFormat: "gcp-kms-encrypt-ciphertext-v1",
+    });
+    await assertInvalidEvidence(db, "malformed-key-reference", {
+      kmsKeyReference: "invalid key reference",
+    });
+    await assertInvalidEvidence(db, "malformed-key-version", {
+      kmsKeyVersion: "invalid key version",
+    });
+
+    for (const requiredColumn of [
+      "kms_provider",
+      "wrapped_dek_algorithm",
+      "wrapped_dek_format",
+    ]) {
+      await assert.rejects(
+        insertEvidenceWithoutColumn(
+          db,
+          await createContext(db, `missing-${requiredColumn}`),
+          requiredColumn,
+        ),
+        notNull,
+      );
+    }
 
     await assert.rejects(
       createContext(db, "sub-millisecond", "2027-12-20T00:00:00.123456Z"),
@@ -474,6 +568,27 @@ async function main() {
       await db.query(`DROP SCHEMA ${precisionSchema} CASCADE`);
     }
 
+    const metadataAbortSchema = `${schema}_metadata_abort`;
+    await db.query(`CREATE SCHEMA ${metadataAbortSchema}`);
+    try {
+      await db.query(`SET search_path TO ${metadataAbortSchema}`);
+      await db.query(await migration("001_foundation"));
+      await db.query(await migration("002_audit_metadata"));
+      await db.query(await migration("003_route_decision_evidence"));
+      const existingEvidenceContext = await createContext(
+        db,
+        "metadata-abort-existing-evidence",
+      );
+      await insertLegacyEvidence(db, existingEvidenceContext);
+      await assert.rejects(
+        db.query(await migration("004_kms_envelope_metadata")),
+        /cannot add required KMS envelope metadata while route_decision_evidence contains rows/,
+      );
+    } finally {
+      await db.query(`SET search_path TO ${schema}`);
+      await db.query(`DROP SCHEMA ${metadataAbortSchema} CASCADE`);
+    }
+
     const fresh = `${schema}_fresh`;
     await db.query(`CREATE SCHEMA ${fresh}`);
     try {
@@ -489,7 +604,12 @@ async function main() {
       );
       assert.deepEqual(
         applied.rows.map((row) => row.name),
-        ["001_foundation", "002_audit_metadata", "003_route_decision_evidence"],
+        [
+          "001_foundation",
+          "002_audit_metadata",
+          "003_route_decision_evidence",
+          "004_kms_envelope_metadata",
+        ],
       );
     } finally {
       await db.query(`DROP SCHEMA ${fresh} CASCADE`);
