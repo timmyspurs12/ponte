@@ -203,52 +203,106 @@ jobs:
         id: rpc
         run: |
           set -euo pipefail
-          python3 - "$RPC_ENDPOINT" "$EVIDENCE_DIR/rpc-checks.jsonl" <<'PY'
-          import json, sys, urllib.request
-          endpoint, evidence = sys.argv[1:]
-          methods = [
-              ('eth_chainId', []),
-              ('eth_blockNumber', []),
-              ('eth_getBlockByNumber', ['latest', False]),
-          ]
-          with open(evidence, 'w', encoding='utf-8') as out:
-              for request_id, (method, params) in enumerate(methods, 1):
-                  payload = json.dumps({'jsonrpc': '2.0', 'id': request_id,
-                                        'method': method, 'params': params}).encode()
-                  request = urllib.request.Request(endpoint, data=payload,
-                      headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
-                      method='POST')
-                  try:
-                      with urllib.request.urlopen(request, timeout=30) as response:
-                          body = json.loads(response.read())
-                  except Exception as exc:
-                      error = {'endpoint': endpoint, 'method': method,
-                               'error_type': type(exc).__name__, 'error': str(exc)}
-                      with open(evidence + '.error.json', 'w', encoding='utf-8') as err_out:
-                          json.dump(error, err_out, sort_keys=True)
-                          err_out.write('\\n')
-                      print(json.dumps(error, sort_keys=True), file=sys.stderr)
-                      raise
-                  record = {'endpoint': endpoint, 'request': {'jsonrpc': '2.0', 'id': request_id,
-                            'method': method, 'params': params}, 'response': body}
-                  out.write(json.dumps(record, sort_keys=True) + '\n')
-                  out.flush()
-                  print(json.dumps(record, sort_keys=True))
-                  if body.get('id') != request_id or 'error' in body or 'result' not in body:
-                      raise SystemExit(f'{method} JSON-RPC request failed: {body}')
-                  if method == 'eth_chainId':
-                      chain_id = body['result']
-                      if not isinstance(chain_id, str) or int(chain_id, 16) != 0x66eee:
-                          raise SystemExit(f'Unexpected chain ID: {chain_id!r}; expected 0x66eee')
-                  elif method == 'eth_blockNumber':
-                      if not isinstance(body['result'], str) or int(body['result'], 16) < 0:
-                          raise SystemExit(f'Invalid eth_blockNumber result: {body["result"]!r}')
-                  else:
-                      block = body['result']
-                      if not isinstance(block, dict) or not block.get('hash') or not block.get('number'):
-                          raise SystemExit(f'Invalid latest block response: {block!r}')
-          print('RPC checks passed; chain ID is Arbitrum Sepolia (0x66eee).')
-          PY
+          diagnostics="$EVIDENCE_DIR/rpc-diagnostics"
+          mkdir -p "$diagnostics"
+
+          rpc_call() {
+            local method="$1" params="$2" request_id="$3"
+            local dir="$diagnostics/$method" timestamp request_json status curl_exit
+            mkdir -p "$dir"
+            timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            request_json=$(jq -cn --argjson id "$request_id" --arg method "$method" \
+              --argjson params "$params" \
+              '{jsonrpc:"2.0", id:$id, method:$method, params:$params}')
+            printf '%s\n' "$request_json" > "$dir/request.json"
+            jq -n --arg timestamp "$timestamp" --arg endpoint "$RPC_ENDPOINT" \
+              --arg http_method POST --argjson request "$request_json" \
+              '{timestamp_utc:$timestamp, endpoint:$endpoint, http_method:$http_method, request:$request}' \
+              > "$dir/attempt.json"
+
+            : > "$dir/response-headers.txt"
+            : > "$dir/response-body.txt"
+            : > "$dir/curl-error.txt"
+            curl --silent --show-error --noproxy '*' --connect-timeout 15 --max-time 30 \
+              --request POST \
+              --header 'Content-Type: application/json' \
+              --header 'Accept: application/json' \
+              --user-agent 'PONTE read-only compatibility diagnostic/1.0 (+https://github.com/timmyspurs12/ponte)' \
+              --data-binary "$request_json" \
+              --dump-header "$dir/response-headers.txt" \
+              --output "$dir/response-body.txt" \
+              --write-out '%{http_code}' \
+              "$RPC_ENDPOINT" > "$dir/http-status.txt" 2> "$dir/curl-error.txt" || curl_exit=$?
+            curl_exit="${curl_exit:-0}"
+            printf '%s\n' "$curl_exit" > "$dir/curl-exit-code.txt"
+            status=$(cat "$dir/http-status.txt")
+            jq -n --arg timestamp "$timestamp" --arg endpoint "$RPC_ENDPOINT" \
+              --arg http_method POST --arg method "$method" --argjson params "$params" \
+              --arg status "$status" --argjson curl_exit "$curl_exit" \
+              '{timestamp_utc:$timestamp, endpoint:$endpoint, http_method:$http_method,
+                method:$method, params:$params, http_status:$status, curl_exit_code:$curl_exit}' \
+              > "$dir/attempt-result.json"
+
+            echo "RPC diagnostic for $method ($timestamp UTC): HTTP ${status:-unavailable}; curl exit $curl_exit"
+            echo "Response files retained at $dir/"
+            # Treat server-controlled text as data, not GitHub Actions workflow commands.
+            local command_token="PONTE_RPC_DIAGNOSTIC_END_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${request_id}"
+            echo "::stop-commands::$command_token"
+            echo '--- Response headers ---'
+            cat "$dir/response-headers.txt"
+            echo '--- Response body ---'
+            cat "$dir/response-body.txt"
+            echo '--- Curl transport error ---'
+            cat "$dir/curl-error.txt"
+            echo "::$command_token::"
+
+            if [[ "$curl_exit" != 0 ]]; then
+              echo "curl transport failed for $method (exit $curl_exit); see retained diagnostics." >&2
+              return 1
+            fi
+            if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
+              echo "RPC HTTP request failed for $method with status ${status:-unavailable}; see retained headers/body." >&2
+              return 1
+            fi
+            if ! jq -e --argjson id "$request_id" \
+              '.jsonrpc == "2.0" and .id == $id and has("result") and (has("error") | not)' \
+              "$dir/response-body.txt" >/dev/null; then
+              echo "Invalid or failed JSON-RPC response for $method; see retained body." >&2
+              return 1
+            fi
+
+            case "$method" in
+              eth_chainId)
+                local chain_id
+                chain_id=$(jq -r '.result' "$dir/response-body.txt")
+                [[ "$chain_id" == '0x66eee' ]] || {
+                  echo "Unexpected chain ID '$chain_id'; expected exactly 0x66eee." >&2
+                  return 1
+                }
+                echo "Confirmed Arbitrum Sepolia chain ID: $chain_id"
+                ;;
+              eth_blockNumber)
+                jq -e '.result | type == "string" and test("^0x[0-9a-fA-F]+$")' \
+                  "$dir/response-body.txt" >/dev/null || {
+                    echo 'Invalid eth_blockNumber result.' >&2
+                    return 1
+                  }
+                ;;
+              eth_getBlockByNumber)
+                jq -e '.result | type == "object" and (.hash | type == "string") and (.number | type == "string")' \
+                  "$dir/response-body.txt" >/dev/null || {
+                    echo 'Invalid eth_getBlockByNumber result.' >&2
+                    return 1
+                  }
+                ;;
+            esac
+          }
+
+          # Stop on the first failure. Later read-only probes run only after the chain ID matches.
+          rpc_call eth_chainId '[]' 1
+          rpc_call eth_blockNumber '[]' 2
+          rpc_call eth_getBlockByNumber '["latest",false]' 3
+          echo 'All read-only RPC checks passed; chain ID is Arbitrum Sepolia (0x66eee).'
 
       - name: 4. Run the read-only Stylus compatibility check on the verified container WASM
         id: stylus-check
