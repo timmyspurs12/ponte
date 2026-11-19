@@ -155,6 +155,36 @@ export function assertCreatedAndWrappedDek(
 }
 
 /**
+ * Validates a provider result at the provider boundary. A provider declaration
+ * is not merely descriptive: the returned provider metadata must identify that
+ * same provider, after the provider-neutral result has passed validation.
+ */
+export function assertDekProviderResult(
+  provider: DekProvider,
+  result: CreatedAndWrappedDek,
+): CreatedAndWrappedDek {
+  const validated = assertCreatedAndWrappedDek(result);
+  if (provider.provider !== validated.kmsProvider)
+    fail("declared provider must match result kmsProvider");
+  return validated;
+}
+
+/**
+ * Calls the narrow provider operation and validates its returned metadata at
+ * that boundary. It does not create a provider, generate a key, or make any
+ * network request itself.
+ */
+export async function createAndValidateWrappedDek(
+  provider: DekProvider,
+  context: DekWrappingContext,
+): Promise<CreatedAndWrappedDek> {
+  return assertDekProviderResult(
+    provider,
+    await provider.createAndWrapDek(context),
+  );
+}
+
+/**
  * Overwrites the caller-owned Buffer when possible. Node.js and the runtime do
  * not guarantee secure zeroization: copies, GC behavior, provider buffers, and
  * native memory remain outside this best-effort helper's control.

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertCreatedAndWrappedDek,
+  assertDekProviderResult,
   clearDekBestEffort,
+  createAndValidateWrappedDek,
   DekProviderContractError,
   KMS_PROVIDER,
   type CreatedAndWrappedDek,
@@ -25,6 +27,22 @@ function syntheticGcpResult(): CreatedAndWrappedDek {
   };
 }
 
+function syntheticAwsResult(): CreatedAndWrappedDek {
+  return {
+    plaintextDek: Buffer.alloc(32, 2),
+    wrappedDek: Buffer.from("synthetic-aws-ciphertext-blob"),
+    kmsProvider: KMS_PROVIDER.AWS_KMS,
+    kmsKeyReference:
+      "arn:aws:kms:af-south-1:111122223333:key/12345678-1234-1234-1234-1234567890ab",
+    kmsKeyVersion:
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    wrappedDekAlgorithm:
+      WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
+    wrappedDekFormat:
+      WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
+  };
+}
+
 const isContractError = (error: unknown) =>
   error instanceof DekProviderContractError;
 
@@ -40,10 +58,11 @@ test("provider-neutral boundary accommodates a locally created fresh DEK and com
     },
   };
 
-  const result = await provider.createAndWrapDek({
+  const result = await createAndValidateWrappedDek(provider, {
     canonicalContext: Buffer.from("synthetic-context"),
   });
   assert.strictEqual(assertCreatedAndWrappedDek(result), result);
+  assert.strictEqual(assertDekProviderResult(provider, result), result);
   assert.deepEqual(
     result.wrappedDek,
     Buffer.from("synthetic-provider-opaque-ciphertext", "utf8"),
@@ -58,28 +77,45 @@ test("provider-neutral boundary accommodates a provider-created plaintext and wr
         context.canonicalContext,
         Buffer.from("synthetic-context"),
       );
-      return {
-        plaintextDek: Buffer.alloc(32, 2),
-        wrappedDek: Buffer.from("synthetic-aws-ciphertext-blob"),
-        kmsProvider: KMS_PROVIDER.AWS_KMS,
-        kmsKeyReference:
-          "arn:aws:kms:af-south-1:111122223333:key/12345678-1234-1234-1234-1234567890ab",
-        kmsKeyVersion:
-          "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        wrappedDekAlgorithm:
-          WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
-        wrappedDekFormat:
-          WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
-      };
+      return syntheticAwsResult();
     },
   };
 
-  const result = await provider.createAndWrapDek({
+  const result = await createAndValidateWrappedDek(provider, {
     canonicalContext: Buffer.from("synthetic-context"),
   });
   assert.equal(result.plaintextDek.length, 32);
   assert.equal(result.wrappedDek.length > 0, true);
   assert.strictEqual(assertCreatedAndWrappedDek(result), result);
+  assert.strictEqual(assertDekProviderResult(provider, result), result);
+});
+
+test("provider-bound validation rejects a valid result for a different provider", async () => {
+  const gcpProviderReturningAws: DekProvider = {
+    provider: KMS_PROVIDER.GCP_CLOUD_KMS,
+    async createAndWrapDek() {
+      return syntheticAwsResult();
+    },
+  };
+  const awsProviderReturningGcp: DekProvider = {
+    provider: KMS_PROVIDER.AWS_KMS,
+    async createAndWrapDek() {
+      return syntheticGcpResult();
+    },
+  };
+
+  await assert.rejects(
+    createAndValidateWrappedDek(gcpProviderReturningAws, {
+      canonicalContext: Buffer.from("synthetic-context"),
+    }),
+    isContractError,
+  );
+  await assert.rejects(
+    createAndValidateWrappedDek(awsProviderReturningGcp, {
+      canonicalContext: Buffer.from("synthetic-context"),
+    }),
+    isContractError,
+  );
 });
 
 test("rejects plaintext DEKs with any length other than 32 bytes", () => {
@@ -90,7 +126,13 @@ test("rejects plaintext DEKs with any length other than 32 bytes", () => {
   }
 });
 
-test("rejects incomplete metadata, unknown providers, and unsupported metadata tuples", () => {
+test("provider-bound validation rejects incomplete metadata and unsupported metadata tuples", () => {
+  const provider: DekProvider = {
+    provider: KMS_PROVIDER.GCP_CLOUD_KMS,
+    async createAndWrapDek() {
+      return syntheticGcpResult();
+    },
+  };
   const cases: Array<Partial<CreatedAndWrappedDek>> = [
     { wrappedDek: Buffer.alloc(0) },
     { kmsProvider: "unknown-kms" as CreatedAndWrappedDek["kmsProvider"] },
@@ -109,7 +151,7 @@ test("rejects incomplete metadata, unknown providers, and unsupported metadata t
   for (const overrides of cases) {
     const result = { ...syntheticGcpResult(), ...overrides };
     assert.throws(
-      () => assertCreatedAndWrappedDek(result as CreatedAndWrappedDek),
+      () => assertDekProviderResult(provider, result as CreatedAndWrappedDek),
       isContractError,
     );
   }
