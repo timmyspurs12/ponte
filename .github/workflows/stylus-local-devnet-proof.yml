@@ -119,7 +119,25 @@ jobs:
 
       - name: Execute and verify PONTE on local Nitro only
         shell: bash
-        run: bash scripts/stylus-devnet/run_local_proof.sh
+        run: |
+          set +e
+          bash scripts/stylus-devnet/run_local_proof.sh
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            python3 - "$EVIDENCE_DIR" "$status" <<'PY'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          for name in ("cargo-stylus-check.log", "cargo-stylus-deploy.log", "nitro-devnode.log"):
+              path = root / name
+              if not path.is_file():
+                  continue
+              lines = path.read_text(errors="replace").splitlines()[-30:]
+              message = "\\n".join(lines).replace("%", "%25").replace("\r", "%0D")
+              print(f"::error title=Local proof diagnostic ({name})::{message}")
+          print(f"::error title=Local proof failure::exit status {sys.argv[2]}")
+          PY
+            exit "$status"
+          fi
 
       - name: Upload proof evidence, receipts, and local execution report
         if: always()
