@@ -39,6 +39,13 @@ export class EvidenceEnvelopeValidationError extends Error {
   }
 }
 
+export class EvidenceEnvelopeOperationError extends Error {
+  constructor() {
+    super("evidence envelope operation failed");
+    this.name = "EvidenceEnvelopeOperationError";
+  }
+}
+
 export class EvidenceEnvelopeAuthenticationError extends Error {
   constructor() {
     super("evidence envelope authentication failed");
@@ -121,6 +128,14 @@ function validateDecryptionInput(
   assertCanonicalAad(input.canonicalAad);
 }
 
+function clearTemporaryPlaintextBestEffort(value: Buffer | undefined): void {
+  try {
+    value?.fill(0);
+  } catch {
+    // Buffer clearing is best effort and must not replace the crypto outcome.
+  }
+}
+
 /**
  * Encrypts one non-empty private evidence payload with AES-256-GCM.
  *
@@ -138,9 +153,7 @@ export function encryptEvidenceEnvelope(
   try {
     nonce = randomBytes(12);
   } catch {
-    throw new EvidenceEnvelopeValidationError(
-      "unable to generate an evidence envelope nonce",
-    );
+    throw new EvidenceEnvelopeOperationError();
   }
 
   try {
@@ -162,35 +175,38 @@ export function encryptEvidenceEnvelope(
       contentAlgorithm: EVIDENCE_CONTENT_ALGORITHM,
     };
   } catch {
-    throw new EvidenceEnvelopeValidationError(
-      "evidence envelope encryption failed",
-    );
+    throw new EvidenceEnvelopeOperationError();
   }
 }
 
 /**
  * Authenticates then returns a private evidence plaintext. No plaintext is
  * returned to the caller unless AES-GCM authentication completes successfully.
- * The caller owns `input.dek` and is responsible for best-effort clearing after
- * use; Node.js does not guarantee secure zeroization of runtime/native copies.
+ * The temporary decipher chunks are overwritten in `finally` after their
+ * separate returned Buffer has been constructed. The caller owns `input.dek`
+ * and is responsible for best-effort clearing after use; Node.js does not
+ * guarantee secure zeroization of runtime/native copies.
  */
 export function decryptEvidenceEnvelope(
   input: DecryptEvidenceEnvelopeInput,
 ): Buffer {
   validateDecryptionInput(input);
 
-  let unauthenticatedPlaintext: Buffer | undefined;
+  let intermediatePlaintext: Buffer | undefined;
+  let finalPlaintext: Buffer | undefined;
   try {
     const decipher = createDecipheriv("aes-256-gcm", input.dek, input.nonce, {
       authTagLength: 16,
     });
     decipher.setAAD(input.canonicalAad);
     decipher.setAuthTag(input.authenticationTag);
-    unauthenticatedPlaintext = decipher.update(input.ciphertext);
-    const finalPlaintext = decipher.final();
-    return Buffer.concat([unauthenticatedPlaintext, finalPlaintext]);
+    intermediatePlaintext = decipher.update(input.ciphertext);
+    finalPlaintext = decipher.final();
+    return Buffer.concat([intermediatePlaintext, finalPlaintext]);
   } catch {
-    unauthenticatedPlaintext?.fill(0);
     throw new EvidenceEnvelopeAuthenticationError();
+  } finally {
+    clearTemporaryPlaintextBestEffort(intermediatePlaintext);
+    clearTemporaryPlaintextBestEffort(finalPlaintext);
   }
 }

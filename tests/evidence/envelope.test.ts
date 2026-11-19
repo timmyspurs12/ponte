@@ -6,6 +6,7 @@ import {
   EVIDENCE_ENVELOPE_VERSION,
   encryptEvidenceEnvelope,
   EvidenceEnvelopeAuthenticationError,
+  EvidenceEnvelopeOperationError,
   EvidenceEnvelopeValidationError,
   type DecryptEvidenceEnvelopeInput,
 } from "../../src/server/evidence/envelope";
@@ -43,6 +44,34 @@ const isValidationError = (error: unknown) =>
   error instanceof EvidenceEnvelopeValidationError;
 const isAuthenticationError = (error: unknown) =>
   error instanceof EvidenceEnvelopeAuthenticationError;
+const isOperationError = (error: unknown) =>
+  error instanceof EvidenceEnvelopeOperationError;
+
+/**
+ * A test-only, scoped observation of the private cleanup implementation. It
+ * intercepts Buffer.fill without adding any test API or capability to the
+ * application module, and always restores the native method before returning.
+ */
+function captureTemporaryZeroFills<T>(operation: () => T): {
+  result: T | undefined;
+  error: unknown;
+  cleared: Buffer[];
+} {
+  const originalFill = Buffer.prototype.fill;
+  const cleared: Buffer[] = [];
+  Buffer.prototype.fill = function (this: Buffer, ...args: unknown[]): Buffer {
+    if (args[0] === 0) cleared.push(this);
+    return Reflect.apply(originalFill, this, args) as Buffer;
+  } as typeof Buffer.prototype.fill;
+
+  try {
+    return { result: operation(), error: undefined, cleared };
+  } catch (error) {
+    return { result: undefined, error, cleared };
+  } finally {
+    Buffer.prototype.fill = originalFill;
+  }
+}
 
 test("AES-256-GCM envelope round-trips synthetic private evidence", () => {
   const envelope = encrypt();
@@ -60,6 +89,50 @@ test("AES-256-GCM envelope round-trips synthetic private evidence", () => {
       canonicalAad: syntheticAad,
     }),
     syntheticPlaintext,
+  );
+});
+
+test("successful decryption preserves the returned plaintext while clearing both temporary chunks", () => {
+  const envelope = encrypt();
+  const observed = captureTemporaryZeroFills(() =>
+    decryptEvidenceEnvelope({
+      ...envelope,
+      dek: syntheticDek,
+      canonicalAad: syntheticAad,
+    }),
+  );
+
+  assert.equal(observed.error, undefined);
+  assert.ok(observed.result);
+  assert.deepEqual(observed.result, syntheticPlaintext);
+  assert.equal(observed.cleared.length, 2);
+  for (const temporaryChunk of observed.cleared) {
+    assert.notStrictEqual(temporaryChunk, observed.result);
+    assert.equal(
+      [...temporaryChunk].every((byte) => byte === 0),
+      true,
+    );
+  }
+  assert.deepEqual(observed.result, syntheticPlaintext);
+});
+
+test("failed authentication clears the available intermediate plaintext chunk", () => {
+  const envelope = encrypt();
+  const observed = captureTemporaryZeroFills(() =>
+    decryptEvidenceEnvelope({
+      ...envelope,
+      dek: syntheticDek,
+      canonicalAad: Buffer.from("wrong synthetic AAD", "utf8"),
+    }),
+  );
+
+  assert.equal(observed.result, undefined);
+  assert.equal(isAuthenticationError(observed.error), true);
+  assert.equal(observed.cleared.length, 1);
+  assert.equal(observed.cleared[0].length > 0, true);
+  assert.equal(
+    [...observed.cleared[0]].every((byte) => byte === 0),
+    true,
   );
 });
 
@@ -197,6 +270,38 @@ test("rejects unsupported envelope metadata and non-Buffer or missing AAD input"
       ),
     isValidationError,
   );
+});
+
+test("unexpected encryption-operation failures use a generic operation error", () => {
+  const originalConcat = Buffer.concat;
+  const syntheticInternalMessage = "synthetic internal crypto failure";
+  Buffer.concat = () => {
+    throw new Error(syntheticInternalMessage);
+  };
+
+  try {
+    let operationError: unknown;
+    try {
+      encrypt();
+    } catch (error) {
+      operationError = error;
+    }
+    assert.equal(isOperationError(operationError), true);
+    assert.equal(
+      (operationError as Error).message,
+      "evidence envelope operation failed",
+    );
+    for (const secret of [
+      syntheticPlaintext.toString("utf8"),
+      syntheticDek.toString("hex"),
+      syntheticAad.toString("utf8"),
+      syntheticInternalMessage,
+    ]) {
+      assert.equal(String(operationError).includes(secret), false);
+    }
+  } finally {
+    Buffer.concat = originalConcat;
+  }
 });
 
 test("encryption leaves the caller-owned DEK untouched and omits it from the result", () => {

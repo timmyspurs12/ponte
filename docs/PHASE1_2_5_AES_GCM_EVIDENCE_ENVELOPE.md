@@ -61,13 +61,27 @@ unsupported/malformed inputs. The primitive requires:
 - envelope version `1` and content algorithm `AES-256-GCM`; and
 - non-empty canonical AAD.
 
-It never pads, truncates, coerces, or repairs an input. Decryption buffers any
-intermediate bytes internally and returns plaintext only after GCM
-authentication completes. A wrong DEK, modified ciphertext/tag/nonce, or
-mismatched AAD produces the generic `EvidenceEnvelopeAuthenticationError`.
-Validation and authentication error messages contain field names or fixed text,
-not plaintext, DEKs, raw AAD, ciphertext, tags, salts, or preimages. The module
-does not log.
+It never pads, truncates, coerces, or repairs an input. Decryption buffers the
+`decipher.update()` and `decipher.final()` chunks internally, builds a separate
+returned `Buffer` only after GCM authentication completes, then best-effort
+overwrites both temporary chunks in a `finally` block. If authentication fails,
+any available intermediate chunk is also overwritten. This is not a guarantee
+of secure zeroization and never mutates caller-owned DEK or AAD buffers.
+
+Errors are intentionally generic and separated by category:
+
+- `EvidenceEnvelopeValidationError` — malformed caller input or unsupported
+  envelope metadata;
+- `EvidenceEnvelopeOperationError` — nonce generation or an unexpected internal
+  encryption operation could not complete; and
+- `EvidenceEnvelopeAuthenticationError` — authenticated decryption did not
+  complete, including wrong DEK, modified ciphertext/tag/nonce, or mismatched
+  AAD.
+
+No category includes raw underlying error messages, plaintext, DEKs, raw AAD,
+ciphertext, tags, salts, or preimages. The module does not log. Focused tests
+observe cleanup through a scoped `Buffer.prototype.fill` interception that is
+restored immediately; it adds no exported or production test hook.
 
 ## DEK lifecycle ownership
 
