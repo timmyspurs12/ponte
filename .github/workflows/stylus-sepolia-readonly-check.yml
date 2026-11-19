@@ -32,11 +32,6 @@ jobs:
       SDK_COMMIT: 76f8b055ec0bf421edd542b164dc2917c9e4e0bd
       CLI_VERSION: 0.10.10
       RUST_VERSION: 1.91.0
-      EVIDENCE_DIR: ${{ runner.temp }}/ponte-sepolia-readonly-evidence
-      ARTIFACT_DIR: ${{ runner.temp }}/ponte-sepolia-readonly-artifact
-      CLI_ROOT: ${{ runner.temp }}/ponte-cargo-stylus
-      SDK_DIR: ${{ runner.temp }}/stylus-sdk-rs
-
     defaults:
       run:
         shell: bash
@@ -47,9 +42,19 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
-          mkdir -p "$EVIDENCE_DIR" "$ARTIFACT_DIR"
+          evidence_dir="$RUNNER_TEMP/ponte-sepolia-readonly-evidence"
+          artifact_dir="$RUNNER_TEMP/ponte-sepolia-readonly-artifact"
+          cli_root="$RUNNER_TEMP/ponte-cargo-stylus"
+          sdk_dir="$RUNNER_TEMP/stylus-sdk-rs"
+          mkdir -p "$evidence_dir" "$artifact_dir"
+          {
+            echo "EVIDENCE_DIR=$evidence_dir"
+            echo "ARTIFACT_DIR=$artifact_dir"
+            echo "CLI_ROOT=$cli_root"
+            echo "SDK_DIR=$sdk_dir"
+          } >> "$GITHUB_ENV"
           printf 'workflow=%s\nrun_id=%s\nsource_sha=%s\n' \
-            "$GITHUB_WORKFLOW" "$GITHUB_RUN_ID" "$GITHUB_SHA" > "$EVIDENCE_DIR/run.txt"
+            "$GITHUB_WORKFLOW" "$GITHUB_RUN_ID" "$GITHUB_SHA" > "$evidence_dir/run.txt"
 
       - name: Check out the isolated PONTE source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
