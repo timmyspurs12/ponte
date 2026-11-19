@@ -14,6 +14,7 @@ readonly NITRO_VERSION="v3.12.2-5f02f3f"
 readonly EXPECTED_NITRO_IMAGE="offchainlabs/nitro-node:v3.12.2-5f02f3f"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+readonly ABI_TOOLS_PACKAGE="$REPO_ROOT/rust/stylus-wrapper/abi-tools/package.json"
 readonly CANDIDATE="$EVIDENCE_DIR/official-container-1.wasm"
 readonly DEVNODE_LOG="$EVIDENCE_DIR/nitro-devnode.log"
 readonly DEPLOY_LOG="$EVIDENCE_DIR/cargo-stylus-deploy.log"
@@ -48,7 +49,11 @@ if [[ ! $DEV_PRIVATE_KEY =~ ^0x[0-9a-fA-F]{64}$ ]]; then
 fi
 echo "::add-mask::$DEV_PRIVATE_KEY"
 export NITRO_DEV_PRIVATE_KEY="$DEV_PRIVATE_KEY"
-DEV_ADDRESS=$(node --input-type=module -e 'import { Wallet } from "ethers"; console.log(new Wallet(process.env.NITRO_DEV_PRIVATE_KEY).address)')
+# Dependencies are intentionally installed under abi-tools, rather than the repository root.
+# Bind Node's CommonJS resolver to that lockfile's package boundary so this early address check
+# does not depend on an undeclared root-level ethers installation.
+export ABI_TOOLS_PACKAGE
+DEV_ADDRESS=$(node --input-type=module -e 'import { createRequire } from "node:module"; const require = createRequire(process.env.ABI_TOOLS_PACKAGE); const { Wallet } = require("ethers"); console.log(new Wallet(process.env.NITRO_DEV_PRIVATE_KEY).address)')
 if [[ ${DEV_ADDRESS,,} != "0x3f1eae7d46d88f08fc2f8ed27fcb2ab183eb2d0e" ]]; then
   echo "official devnode development account address mismatch: $DEV_ADDRESS" >&2
   exit 1

@@ -121,8 +121,12 @@ jobs:
         shell: bash
         run: |
           set +e
-          bash scripts/stylus-devnet/run_local_proof.sh
+          bash scripts/stylus-devnet/run_local_proof.sh \
+            > "$EVIDENCE_DIR/local-proof.stdout.log" \
+            2> "$EVIDENCE_DIR/local-proof.stderr.log"
           status=$?
+          cat "$EVIDENCE_DIR/local-proof.stdout.log"
+          cat "$EVIDENCE_DIR/local-proof.stderr.log" >&2
           if [ "$status" -ne 0 ]; then
             python3 - "$EVIDENCE_DIR" "$status" <<'PY'
           import pathlib, sys
@@ -133,12 +137,12 @@ jobs:
               if path.suffix not in (".log", ".txt"):
                   continue
               lines = path.read_text(errors="replace").splitlines()[-25:]
-              message = "\\n".join(lines).replace("%", "%25").replace("\r", "%0D")
+              message = "\\n".join(lines).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
               print(f"::error title=Local proof diagnostic ({path.name})::{message}")
           for name in ("artifact.json", "devnode-preparation.json", "local-chain.json"):
               path = root / name
               if path.is_file():
-                  message = path.read_text(errors="replace")[:3000].replace("%", "%25").replace("\r", "%0D")
+                  message = path.read_text(errors="replace")[:3000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
                   print(f"::error title=Local proof state ({name})::{message}")
           print(f"::error title=Local proof failure::exit status {sys.argv[2]}")
           PY
