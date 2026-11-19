@@ -1,4 +1,48 @@
 import { Pool, type PoolClient } from "pg";
+import type { PaymentQuote } from "../lib/models";
+
+export interface LockedEvidenceQuoteRow {
+  id: string;
+  source: string;
+  simulated: boolean;
+  expires_at: Date;
+  data: PaymentQuote;
+}
+
+export interface RouteDecisionEvidenceInsert {
+  id: string;
+  businessId: string;
+  invoiceId: string;
+  quoteId: string;
+  createdByUserId: string;
+  routingCorrelationId: string;
+  publicEvidenceId: Buffer;
+  evidenceSchemaVersion: number;
+  quoteSchemaVersion: number;
+  chainId: string;
+  registryAddress: Buffer;
+  sequence: string;
+  evidenceKind: number;
+  selectedRouteCode: number;
+  quoteSnapshotHash: Buffer;
+  previousPayloadHash: Buffer;
+  payloadHash: Buffer;
+  envelopeVersion: number;
+  contentAlgorithm: "AES-256-GCM";
+  ciphertext: Buffer;
+  nonce: Buffer;
+  authenticationTag: Buffer;
+  wrappedDek: Buffer;
+  kmsKeyReference: string;
+  kmsKeyVersion: string;
+  aadVersion: number;
+}
+
+export interface PendingEvidenceOutboxInsert {
+  id: string;
+  evidenceRecordId: string;
+}
+
 const globalDb = globalThis as unknown as { pontePool?: Pool };
 export const pool = (globalDb.pontePool ??= new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -63,6 +107,72 @@ export const findValidQuote = (db: PoolClient, values: unknown[]) =>
     "SELECT * FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3 AND expires_at>clock_timestamp()",
     values,
   );
+
+/**
+ * Locks the exact persisted quote fields needed by future evidence creation.
+ * This helper does not create evidence or alter the current Routing lifecycle.
+ */
+export function lockValidQuoteForEvidence(
+  db: PoolClient,
+  businessId: string,
+  invoiceId: string,
+  quoteId: string,
+) {
+  return db.query<LockedEvidenceQuoteRow>(
+    "SELECT id,source,simulated,expires_at,data FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3 AND expires_at>clock_timestamp() FOR UPDATE",
+    [businessId, invoiceId, quoteId],
+  );
+}
+
+/** Inserts a complete encrypted evidence envelope using the caller's transaction. */
+export function insertRouteDecisionEvidence(
+  db: PoolClient,
+  evidence: RouteDecisionEvidenceInsert,
+) {
+  return db.query(
+    "INSERT INTO route_decision_evidence(id,business_id,invoice_id,quote_id,created_by_user_id,routing_correlation_id,public_evidence_id,evidence_schema_version,quote_schema_version,chain_id,registry_address,sequence,evidence_kind,selected_route_code,quote_snapshot_hash,previous_payload_hash,payload_hash,envelope_version,content_algorithm,ciphertext,nonce,authentication_tag,wrapped_dek,kms_key_reference,kms_key_version,aad_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)",
+    [
+      evidence.id,
+      evidence.businessId,
+      evidence.invoiceId,
+      evidence.quoteId,
+      evidence.createdByUserId,
+      evidence.routingCorrelationId,
+      evidence.publicEvidenceId,
+      evidence.evidenceSchemaVersion,
+      evidence.quoteSchemaVersion,
+      evidence.chainId,
+      evidence.registryAddress,
+      evidence.sequence,
+      evidence.evidenceKind,
+      evidence.selectedRouteCode,
+      evidence.quoteSnapshotHash,
+      evidence.previousPayloadHash,
+      evidence.payloadHash,
+      evidence.envelopeVersion,
+      evidence.contentAlgorithm,
+      evidence.ciphertext,
+      evidence.nonce,
+      evidence.authenticationTag,
+      evidence.wrappedDek,
+      evidence.kmsKeyReference,
+      evidence.kmsKeyVersion,
+      evidence.aadVersion,
+    ],
+  );
+}
+
+/** Creates the durable pending job for an already-inserted evidence record. */
+export function insertPendingEvidenceOutbox(
+  db: PoolClient,
+  outbox: PendingEvidenceOutboxInsert,
+) {
+  return db.query(
+    "INSERT INTO evidence_outbox(id,evidence_record_id,submission_state) VALUES($1,$2,'pending')",
+    [outbox.id, outbox.evidenceRecordId],
+  );
+}
+
 export const insertSettlement = (db: PoolClient, values: unknown[]) =>
   db.query(
     "INSERT INTO settlements(id,business_id,invoice_id,quote_id,route_id,expected_minor,minimum_minor,status) VALUES($1,$2,$3,$4,$5,$6,$7,'Routing')",

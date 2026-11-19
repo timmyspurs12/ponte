@@ -6,7 +6,7 @@ export async function resetFixtures() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   try {
     await pool.query(
-      "TRUNCATE idempotency,payment_events,settlements,quotes,payments,invoices,rate_limits",
+      "TRUNCATE idempotency,payment_events,evidence_outbox,route_decision_evidence,settlements,quotes,payments,invoices,rate_limits",
     );
   } finally {
     await pool.end();

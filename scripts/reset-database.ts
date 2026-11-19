@@ -13,7 +13,7 @@ async function main() {
   const pool = new Pool({ connectionString: url.toString() });
   try {
     await pool.query(
-      "TRUNCATE idempotency,payment_events,settlements,quotes,payments,invoices,rate_limits,memberships,users,businesses",
+      "TRUNCATE idempotency,payment_events,evidence_outbox,route_decision_evidence,settlements,quotes,payments,invoices,rate_limits,memberships,users,businesses",
     );
   } finally {
     await pool.end();
