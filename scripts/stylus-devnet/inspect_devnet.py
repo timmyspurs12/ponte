@@ -9,7 +9,10 @@ import urllib.request
 
 RPC_URL = "http://127.0.0.1:8547"
 CHAIN_ID = 412346
-NITRO_VERSION = "v3.12.2-5f02f3f"
+NITRO_IMAGE_TAG = "v3.12.2-5f02f3f"
+# Nitro reports the source suffix with '+' in web3_clientVersion, while the published image
+# tag uses '-'. Pin both representations rather than normalizing away the commit identifier.
+NITRO_CLIENT_VERSION_PREFIX = "nitro/v3.12.2+5f02f3f"
 ARBOS_VERSION = 61
 ARBOS_VERSION_SELECTOR = "0x051038f2"  # ArbSys.arbOSVersion(), pinned Nitro v3.12.2 ABI
 ACTIVATION_GAS_SELECTOR = "0x2278c278"  # ArbWasm.activationGas(), pinned Nitro v3.12.2 ABI
@@ -46,7 +49,7 @@ def main() -> None:
     config = container.get("Config") or {}
     command = [str(part) for part in (config.get("Cmd") or [])]
     image = str(config.get("Image") or "")
-    if NITRO_VERSION not in image:
+    if NITRO_IMAGE_TAG not in image:
         raise RuntimeError(f"running node container image is not pinned: {image!r}")
     if ALLOW_OFFCHAIN_FLAG not in command:
         raise RuntimeError("required off-chain activation flag is not present in the running container command")
@@ -61,7 +64,7 @@ def main() -> None:
     if chain_id != CHAIN_ID:
         raise RuntimeError(f"local chain ID mismatch: {chain_id} != {CHAIN_ID}")
     client_version = str(rpc("web3_clientVersion", []))
-    if NITRO_VERSION not in client_version:
+    if not client_version.startswith(NITRO_CLIENT_VERSION_PREFIX):
         raise RuntimeError(f"Nitro client version mismatch: {client_version!r}")
 
     arbos_return = str(

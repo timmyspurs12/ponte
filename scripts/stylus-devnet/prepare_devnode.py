@@ -22,6 +22,14 @@ NEW_LAUNCH = (
     + OFFCHAIN_FLAG
     + ' --chain.id=412346 --chain.info-json "$CHAIN_INFO_JSON" &'
 )
+# Foundry v1.9.0 prints both the address and the salt from `cast create2`; the upstream helper
+# passes that complete string to `cast code`, making its post-deploy verification silently fail
+# inside a conditional. Keep only the first (address) field in the disposable patched copy.
+OLD_DEPLOYER_ADDRESS = "deployer_address=$(cast create2 --salt $SALT --init-code $deployer_code)"
+NEW_DEPLOYER_ADDRESS = (
+    "deployer_address=$(cast create2 --salt $SALT --init-code $deployer_code "
+    "| awk 'NR == 1 { print $1 }')"
+)
 
 
 def main() -> None:
@@ -46,9 +54,15 @@ def main() -> None:
     script = script_path.read_text()
     if script.count(OLD_LAUNCH) != 1:
         raise RuntimeError("official nitro-devnode launch line changed; refusing an unreviewed patch")
-    patched = script.replace(OLD_LAUNCH, NEW_LAUNCH)
+    if script.count(OLD_DEPLOYER_ADDRESS) != 1:
+        raise RuntimeError("official nitro-devnode create2 parsing changed; refusing an unreviewed patch")
+    patched = script.replace(OLD_LAUNCH, NEW_LAUNCH).replace(
+        OLD_DEPLOYER_ADDRESS, NEW_DEPLOYER_ADDRESS
+    )
     if patched.count(OFFCHAIN_FLAG) != 1:
         raise RuntimeError("off-chain activation flag was not inserted exactly once")
+    if patched.count(NEW_DEPLOYER_ADDRESS) != 1:
+        raise RuntimeError("pinned Foundry create2 address normalization was not inserted exactly once")
     script_path.write_text(patched)
 
     print(
