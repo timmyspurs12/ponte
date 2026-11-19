@@ -66,7 +66,13 @@ fi
 export NITRO_NODE_VERSION="$NITRO_VERSION"
 export TARGET_IMAGE="$NITRO_IMAGE"
 export CHAIN_INFO_JSON="$(cat "$CHAIN_INFO_OUT")"
-bash "$DEVNODE_DIR/run-dev-node.sh" >"$DEVNODE_LOG" 2>&1 &
+# The official helper resolves stylus-deployer-bytecode.txt relative to its working directory.
+# Run its patched CI copy from that directory; invoking it by an absolute pathname from PONTE's
+# root makes the helper terminate after its cache-manager setup, before it reports readiness.
+(
+  cd "$DEVNODE_DIR"
+  exec bash ./run-dev-node.sh
+) >"$DEVNODE_LOG" 2>&1 &
 DEVNODE_PID=$!
 cleanup() {
   set +e
