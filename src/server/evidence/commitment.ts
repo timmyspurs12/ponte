@@ -1,3 +1,7 @@
+// Next.js recognizes this marker in client dependency graphs. Pure Node evidence tests
+// use npm run test:evidence to resolve its react-server export without altering client builds.
+import "server-only";
+
 import {
   AbiCoder,
   getAddress,
@@ -200,8 +204,8 @@ function assertFixedQuoteMetadata(
   if (!invoice.fundingMinor) fail("invoice fundingMinor is required");
   if (quoteRow.source !== "simulation-fixed-525")
     fail("quoteRow.source must be simulation-fixed-525");
-  if (!quoteRow.simulated) fail("quoteRow.simulated must be true");
-  if (!quote.simulated) fail("quoteRow.data.simulated must be true");
+  if (quoteRow.simulated !== true) fail("quoteRow.simulated must be true");
+  if (quote.simulated !== true) fail("quoteRow.data.simulated must be true");
   if (quote.asset !== "USDG") fail("quoteRow.data.asset must be USDG");
   if (quote.demoAssetDecimals !== DEMO_OUTPUT_ASSET_DECIMALS)
     fail("quoteRow.data.demoAssetDecimals must be 2");

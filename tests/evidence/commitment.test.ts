@@ -537,6 +537,15 @@ test("validates persisted quote-row metadata without expecting quote.source", ()
     validationError,
   );
 
+  const truthyPersistedSimulation = inputFor(VECTOR_1);
+  (
+    truthyPersistedSimulation.quoteRow as unknown as { simulated: unknown }
+  ).simulated = "true";
+  assert.throws(
+    () => buildRouteDecisionCommitment(truthyPersistedSimulation),
+    validationError,
+  );
+
   const invalidQuoteDataSimulation = inputFor(VECTOR_1);
   (
     invalidQuoteDataSimulation.quoteRow.data as unknown as {
@@ -548,11 +557,54 @@ test("validates persisted quote-row metadata without expecting quote.source", ()
     validationError,
   );
 
+  const truthyQuoteDataSimulation = inputFor(VECTOR_1);
+  (
+    truthyQuoteDataSimulation.quoteRow.data as unknown as {
+      simulated: unknown;
+    }
+  ).simulated = 1;
+  assert.throws(
+    () => buildRouteDecisionCommitment(truthyQuoteDataSimulation),
+    validationError,
+  );
+
   const invalidAsset = inputFor(VECTOR_1);
   (invalidAsset.quoteRow.data as unknown as { asset: string }).asset =
     "NOT_USDG";
   assert.throws(
     () => buildRouteDecisionCommitment(invalidAsset),
+    validationError,
+  );
+
+  const invalidDemoDecimals = inputFor(VECTOR_1);
+  (
+    invalidDemoDecimals.quoteRow.data as unknown as {
+      demoAssetDecimals: number;
+    }
+  ).demoAssetDecimals = 3;
+  assert.throws(
+    () => buildRouteDecisionCommitment(invalidDemoDecimals),
+    validationError,
+  );
+
+  const invalidRateNumerator = inputFor(VECTOR_1);
+  invalidRateNumerator.quoteRow.data.rate.numerator = "524";
+  assert.throws(
+    () => buildRouteDecisionCommitment(invalidRateNumerator),
+    validationError,
+  );
+
+  const invalidRateDenominator = inputFor(VECTOR_1);
+  invalidRateDenominator.quoteRow.data.rate.denominator = "101";
+  assert.throws(
+    () => buildRouteDecisionCommitment(invalidRateDenominator),
+    validationError,
+  );
+
+  const invalidExecutionCost = inputFor(VECTOR_1);
+  invalidExecutionCost.quoteRow.data.executionCostMinor = "3";
+  assert.throws(
+    () => buildRouteDecisionCommitment(invalidExecutionCost),
     validationError,
   );
 

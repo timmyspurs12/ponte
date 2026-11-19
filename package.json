@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node scripts/run-tests.mjs",
-    "test:evidence": "node --import tsx --test tests/evidence/*.test.ts",
+    "test:evidence": "node --conditions=react-server --import tsx --test tests/evidence/*.test.ts",
     "format": "prettier --write src tests playwright.config.ts",
     "test:install": "playwright install chromium",
     "db:local": "tsx scripts/local-postgres.ts",
@@ -30,6 +30,7 @@
     "pg": "^8.23.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "server-only": "0.0.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
