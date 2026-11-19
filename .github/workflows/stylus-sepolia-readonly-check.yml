@@ -218,8 +218,17 @@ jobs:
                   request = urllib.request.Request(endpoint, data=payload,
                       headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
                       method='POST')
-                  with urllib.request.urlopen(request, timeout=30) as response:
-                      body = json.loads(response.read())
+                  try:
+                      with urllib.request.urlopen(request, timeout=30) as response:
+                          body = json.loads(response.read())
+                  except Exception as exc:
+                      error = {'endpoint': endpoint, 'method': method,
+                               'error_type': type(exc).__name__, 'error': str(exc)}
+                      with open(evidence + '.error.json', 'w', encoding='utf-8') as err_out:
+                          json.dump(error, err_out, sort_keys=True)
+                          err_out.write('\\n')
+                      print(json.dumps(error, sort_keys=True), file=sys.stderr)
+                      raise
                   record = {'endpoint': endpoint, 'request': {'jsonrpc': '2.0', 'id': request_id,
                             'method': method, 'params': params}, 'response': body}
                   out.write(json.dumps(record, sort_keys=True) + '\n')
