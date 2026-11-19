@@ -89,7 +89,10 @@ def main() -> None:
     deployment_addresses = re.findall(r"deployed code at address:\s*(0x[0-9a-fA-F]{40})", text)
     deployment_hashes = re.findall(r"deployment tx hash:\s*(0x[0-9a-fA-F]{64})", text)
     activations = re.findall(
-        r"successfully activated contract\s+(0x[0-9a-fA-F]{40})\s+with tx\s+(?:0x)?([0-9a-fA-F]{64})",
+        # cargo-stylus 0.10.10 prints the activation hash in double quotes after
+        # ANSI styling is removed. Accept that presentation detail while preserving
+        # the exact 32-byte hash and the deployed-address binding.
+        r"successfully activated contract\s+(0x[0-9a-fA-F]{40})\s+with tx\s+['\"]?(?:0x)?([0-9a-fA-F]{64})['\"]?",
         text,
         flags=re.IGNORECASE,
     )
