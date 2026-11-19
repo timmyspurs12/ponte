@@ -127,13 +127,19 @@ jobs:
             python3 - "$EVIDENCE_DIR" "$status" <<'PY'
           import pathlib, sys
           root = pathlib.Path(sys.argv[1])
-          for name in ("cargo-stylus-check.log", "cargo-stylus-deploy.log", "nitro-devnode.log"):
-              path = root / name
-              if not path.is_file():
+          files = sorted(p for p in root.rglob("*") if p.is_file())
+          print(f"::error title=Local proof evidence files::{', '.join(str(p.relative_to(root)) for p in files) or '(none)'}")
+          for path in files:
+              if path.suffix not in (".log", ".txt"):
                   continue
-              lines = path.read_text(errors="replace").splitlines()[-30:]
+              lines = path.read_text(errors="replace").splitlines()[-25:]
               message = "\\n".join(lines).replace("%", "%25").replace("\r", "%0D")
-              print(f"::error title=Local proof diagnostic ({name})::{message}")
+              print(f"::error title=Local proof diagnostic ({path.name})::{message}")
+          for name in ("artifact.json", "devnode-preparation.json", "local-chain.json"):
+              path = root / name
+              if path.is_file():
+                  message = path.read_text(errors="replace")[:3000].replace("%", "%25").replace("\r", "%0D")
+                  print(f"::error title=Local proof state ({name})::{message}")
           print(f"::error title=Local proof failure::exit status {sys.argv[2]}")
           PY
             exit "$status"
