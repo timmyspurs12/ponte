@@ -1,5 +1,5 @@
 import { Pool, type PoolClient } from "pg";
-import type { Invoice, PaymentQuote } from "../lib/models";
+import type { Invoice, PaymentQuote, Status } from "../lib/models";
 import type {
   KmsProviderIdentifier,
   WrappedDekAlgorithmIdentifier,
@@ -7,32 +7,75 @@ import type {
 } from "./evidence/kms";
 
 /**
- * Narrow persisted invoice view for a future evidence transaction. `funding_minor`
- * is PostgreSQL int8 text from node-postgres and is the authoritative amount;
- * `data` is used only for fixed invoice metadata validation.
+ * Narrow persisted invoice view for evidence preparation. `funding_minor` is
+ * PostgreSQL int8 text from node-postgres and is the authoritative amount;
+ * `data` supplies fixed JSONB metadata validation only.
  */
-export interface LockedEvidenceInvoiceRow {
+export interface EvidencePreparationInvoiceRow {
   id: string;
   business_id: string;
+  status: Status;
   funding_minor: string;
   data: Pick<Invoice, "fundingCurrency" | "fundingMinor">;
 }
 
 /**
- * Narrow persisted quote view for a future evidence transaction. All three
- * identity columns are selected from PostgreSQL rather than inferred from the
- * lookup arguments.
+ * Narrow persisted quote view for evidence preparation. Its identities come
+ * from the row, never from lookup arguments.
  */
-export interface LockedEvidenceQuoteRow {
+export interface EvidencePreparationQuoteRow {
   id: string;
   business_id: string;
   invoice_id: string;
   source: string;
   simulated: boolean;
-  /** node-postgres parses persisted timestamptz quote expiry as a Date. */
+  /** node-postgres parses the millisecond-constrained timestamptz as a Date. */
   expires_at: Date;
   data: PaymentQuote;
 }
+
+/**
+ * One non-locking read-only snapshot has either the exact valid invoice/quote
+ * pair, a missing invoice, or an exact quote that is missing or expired.
+ */
+export type EvidencePreparationSnapshot =
+  | {
+      kind: "ready";
+      invoice: EvidencePreparationInvoiceRow;
+      quote: EvidencePreparationQuoteRow;
+    }
+  | { kind: "invoice_missing" }
+  | {
+      kind: "quote_missing_or_expired";
+      invoice: EvidencePreparationInvoiceRow;
+    };
+
+/**
+ * Final-transaction invoice view. `status` is the relational authority for
+ * the lifecycle state; `funding_minor` remains the relational amount authority.
+ */
+export interface LockedEvidenceInvoiceRow extends EvidencePreparationInvoiceRow {}
+
+/**
+ * Final-transaction quote view. It shares the preparation row shape but is
+ * selected with a database-time expiry predicate and FOR UPDATE.
+ */
+export interface LockedEvidenceQuoteRow extends EvidencePreparationQuoteRow {}
+
+type EvidencePreparationSnapshotQueryRow = {
+  invoice_id: string;
+  invoice_business_id: string;
+  invoice_status: Status;
+  invoice_funding_minor: string;
+  invoice_data: Pick<Invoice, "fundingCurrency" | "fundingMinor">;
+  quote_id: string | null;
+  quote_business_id: string | null;
+  quote_invoice_id: string | null;
+  quote_source: string | null;
+  quote_simulated: boolean | null;
+  quote_expires_at: Date | null;
+  quote_data: PaymentQuote | null;
+};
 
 export interface RouteDecisionEvidenceInsert {
   id: string;
@@ -137,7 +180,70 @@ export const findValidQuote = (db: PoolClient, values: unknown[]) =>
   );
 
 /**
- * Locks the authoritative invoice identity/funding columns for a future
+ * Reads a coherent, non-locking preparation snapshot and releases its
+ * read-only transaction before resolving. An absent/expired quote is one
+ * intentional result because both map to the current valid-quote semantics.
+ */
+export async function readEvidencePreparationSnapshot(
+  businessId: string,
+  invoiceId: string,
+  quoteId: string,
+): Promise<EvidencePreparationSnapshot> {
+  const db = await pool.connect();
+  let transactionOpen = false;
+  try {
+    await db.query("BEGIN READ ONLY");
+    transactionOpen = true;
+    const result = await db.query<EvidencePreparationSnapshotQueryRow>(
+      "SELECT i.id AS invoice_id,i.business_id AS invoice_business_id,i.status AS invoice_status,i.funding_minor AS invoice_funding_minor,i.data AS invoice_data,q.id AS quote_id,q.business_id AS quote_business_id,q.invoice_id AS quote_invoice_id,q.source AS quote_source,q.simulated AS quote_simulated,q.expires_at AS quote_expires_at,q.data AS quote_data FROM invoices i LEFT JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id AND q.id=$3 AND q.expires_at>clock_timestamp() WHERE i.business_id=$1 AND i.id=$2",
+      [businessId, invoiceId, quoteId],
+    );
+    await db.query("COMMIT");
+    transactionOpen = false;
+
+    if (!result.rowCount) return { kind: "invoice_missing" };
+    const row = result.rows[0];
+    const invoice: EvidencePreparationInvoiceRow = {
+      id: row.invoice_id,
+      business_id: row.invoice_business_id,
+      status: row.invoice_status,
+      funding_minor: row.invoice_funding_minor,
+      data: row.invoice_data,
+    };
+    if (
+      row.quote_id === null ||
+      row.quote_business_id === null ||
+      row.quote_invoice_id === null ||
+      row.quote_source === null ||
+      row.quote_simulated === null ||
+      row.quote_expires_at === null ||
+      row.quote_data === null
+    )
+      return { kind: "quote_missing_or_expired", invoice };
+
+    return {
+      kind: "ready",
+      invoice,
+      quote: {
+        id: row.quote_id,
+        business_id: row.quote_business_id,
+        invoice_id: row.quote_invoice_id,
+        source: row.quote_source,
+        simulated: row.quote_simulated,
+        expires_at: row.quote_expires_at,
+        data: row.quote_data,
+      },
+    };
+  } catch (error) {
+    if (transactionOpen) await db.query("ROLLBACK");
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
+/**
+ * Locks the authoritative invoice identity/funding/state columns for a future
  * evidence transaction. It has no normal Routing or service integration.
  */
 export function lockInvoiceForEvidence(
@@ -146,7 +252,7 @@ export function lockInvoiceForEvidence(
   invoiceId: string,
 ) {
   return db.query<LockedEvidenceInvoiceRow>(
-    "SELECT id,business_id,funding_minor,data FROM invoices WHERE business_id=$1 AND id=$2 FOR UPDATE",
+    "SELECT id,business_id,status,funding_minor,data FROM invoices WHERE business_id=$1 AND id=$2 FOR UPDATE",
     [businessId, invoiceId],
   );
 }
