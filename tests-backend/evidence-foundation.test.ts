@@ -152,6 +152,7 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
       business_id: context.businessId,
       status: "Funded",
       funding_minor: "2500001",
+      funding_currency: "BRL",
       data: context.invoice,
     });
 
@@ -264,6 +265,7 @@ test("evidence preparation snapshot returns the exact persisted invoice and vali
     business_id: context.businessId,
     status: "Funded",
     funding_minor: "2500001",
+    funding_currency: "BRL",
     data: context.invoice,
   });
   assert.deepEqual(snapshot.quote, {
@@ -337,7 +339,7 @@ test("evidence preparation snapshot treats an expired quote as missing or expire
     assert.equal(snapshot.invoice.id, context.invoiceId);
 });
 
-test("evidence preparation snapshot keeps relational funding authoritative and BRL metadata fixed", async () => {
+test("evidence preparation snapshot keeps relational funding authoritative and generated BRL projection fixed", async () => {
   const context = await createContext();
   const before = await readEvidencePreparationSnapshot(
     context.businessId,
@@ -347,9 +349,16 @@ test("evidence preparation snapshot keeps relational funding authoritative and B
   if (before.kind !== "ready")
     assert.fail(`unexpected snapshot: ${before.kind}`);
   assert.equal(before.invoice.funding_minor, "2500001");
+  assert.equal(before.invoice.funding_currency, "BRL");
   assert.equal(before.invoice.data.fundingMinor, "2500001");
   assert.equal(before.invoice.data.fundingCurrency, "BRL");
 
+  await assert.rejects(
+    pool.query("UPDATE invoices SET funding_currency='USD' WHERE id=$1", [
+      context.invoiceId,
+    ]),
+    (error) => (error as { code?: string }).code === "428C9",
+  );
   await assert.rejects(
     pool.query(
       "UPDATE invoices SET data=jsonb_set(data,'{fundingMinor}',to_jsonb('2500002'::text)) WHERE id=$1",
@@ -372,6 +381,7 @@ test("evidence preparation snapshot keeps relational funding authoritative and B
   );
   if (after.kind !== "ready") assert.fail(`unexpected snapshot: ${after.kind}`);
   assert.equal(after.invoice.funding_minor, "2500001");
+  assert.equal(after.invoice.funding_currency, "BRL");
   assert.equal(after.invoice.data.fundingMinor, "2500001");
   assert.equal(after.invoice.data.fundingCurrency, "BRL");
 });
@@ -380,7 +390,7 @@ test("evidence preparation snapshot does not mutate persisted lifecycle or evide
   const context = await createContext();
   const beforeCounts = await evidenceTableCounts(context.businessId);
   const beforeRows = await pool.query(
-    "SELECT i.status,i.funding_minor,i.data AS invoice_data,q.source,q.simulated,q.expires_at,q.data AS quote_data FROM invoices i JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id WHERE i.id=$1 AND q.id=$2",
+    "SELECT i.status,i.funding_minor,i.funding_currency,i.data AS invoice_data,q.source,q.simulated,q.expires_at,q.data AS quote_data FROM invoices i JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id WHERE i.id=$1 AND q.id=$2",
     [context.invoiceId, context.quoteId],
   );
 
@@ -393,7 +403,7 @@ test("evidence preparation snapshot does not mutate persisted lifecycle or evide
 
   const afterCounts = await evidenceTableCounts(context.businessId);
   const afterRows = await pool.query(
-    "SELECT i.status,i.funding_minor,i.data AS invoice_data,q.source,q.simulated,q.expires_at,q.data AS quote_data FROM invoices i JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id WHERE i.id=$1 AND q.id=$2",
+    "SELECT i.status,i.funding_minor,i.funding_currency,i.data AS invoice_data,q.source,q.simulated,q.expires_at,q.data AS quote_data FROM invoices i JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id WHERE i.id=$1 AND q.id=$2",
     [context.invoiceId, context.quoteId],
   );
   assert.deepEqual(afterCounts, beforeCounts);

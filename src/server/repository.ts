@@ -16,6 +16,8 @@ export interface EvidencePreparationInvoiceRow {
   business_id: string;
   status: Status;
   funding_minor: string;
+  /** Stored generated projection of data.fundingCurrency, constrained to BRL. */
+  funding_currency: "BRL";
   data: Pick<Invoice, "fundingCurrency" | "fundingMinor">;
 }
 
@@ -51,8 +53,9 @@ export type EvidencePreparationSnapshot =
     };
 
 /**
- * Final-transaction invoice view. `status` is the relational authority for
- * the lifecycle state; `funding_minor` remains the relational amount authority.
+ * Final-transaction invoice view. `status` is the relational lifecycle
+ * authority, `funding_minor` is the amount authority, and `funding_currency`
+ * is the stored generated projection of JSONB funding metadata.
  */
 export interface LockedEvidenceInvoiceRow extends EvidencePreparationInvoiceRow {}
 
@@ -67,6 +70,7 @@ type EvidencePreparationSnapshotQueryRow = {
   invoice_business_id: string;
   invoice_status: Status;
   invoice_funding_minor: string;
+  invoice_funding_currency: "BRL";
   invoice_data: Pick<Invoice, "fundingCurrency" | "fundingMinor">;
   quote_id: string | null;
   quote_business_id: string | null;
@@ -195,7 +199,7 @@ export async function readEvidencePreparationSnapshot(
     await db.query("BEGIN READ ONLY");
     transactionOpen = true;
     const result = await db.query<EvidencePreparationSnapshotQueryRow>(
-      "SELECT i.id AS invoice_id,i.business_id AS invoice_business_id,i.status AS invoice_status,i.funding_minor AS invoice_funding_minor,i.data AS invoice_data,q.id AS quote_id,q.business_id AS quote_business_id,q.invoice_id AS quote_invoice_id,q.source AS quote_source,q.simulated AS quote_simulated,q.expires_at AS quote_expires_at,q.data AS quote_data FROM invoices i LEFT JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id AND q.id=$3 AND q.expires_at>clock_timestamp() WHERE i.business_id=$1 AND i.id=$2",
+      "SELECT i.id AS invoice_id,i.business_id AS invoice_business_id,i.status AS invoice_status,i.funding_minor AS invoice_funding_minor,i.funding_currency AS invoice_funding_currency,i.data AS invoice_data,q.id AS quote_id,q.business_id AS quote_business_id,q.invoice_id AS quote_invoice_id,q.source AS quote_source,q.simulated AS quote_simulated,q.expires_at AS quote_expires_at,q.data AS quote_data FROM invoices i LEFT JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id AND q.id=$3 AND q.expires_at>clock_timestamp() WHERE i.business_id=$1 AND i.id=$2",
       [businessId, invoiceId, quoteId],
     );
     await db.query("COMMIT");
@@ -208,6 +212,7 @@ export async function readEvidencePreparationSnapshot(
       business_id: row.invoice_business_id,
       status: row.invoice_status,
       funding_minor: row.invoice_funding_minor,
+      funding_currency: row.invoice_funding_currency,
       data: row.invoice_data,
     };
     if (
@@ -252,7 +257,7 @@ export function lockInvoiceForEvidence(
   invoiceId: string,
 ) {
   return db.query<LockedEvidenceInvoiceRow>(
-    "SELECT id,business_id,status,funding_minor,data FROM invoices WHERE business_id=$1 AND id=$2 FOR UPDATE",
+    "SELECT id,business_id,status,funding_minor,funding_currency,data FROM invoices WHERE business_id=$1 AND id=$2 FOR UPDATE",
     [businessId, invoiceId],
   );
 }

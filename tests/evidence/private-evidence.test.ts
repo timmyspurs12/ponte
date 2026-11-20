@@ -74,6 +74,7 @@ function payloadInput(): PrivateEvidencePayloadInput {
       business_id: AAD_INPUT.businessId,
       status: "Funded",
       funding_minor: "2500000",
+      funding_currency: "BRL",
       data: persistedInvoiceData,
     },
     quoteRow: {
