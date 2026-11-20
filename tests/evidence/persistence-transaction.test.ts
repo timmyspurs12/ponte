@@ -93,6 +93,18 @@ test("definitive SQLSTATE rejection rolls back and preserves the original server
   });
 });
 
+test("XQuery SQLSTATE 10608 is definitive and preserves the original server error", async () => {
+  const serverError = errorWithCode("10608");
+  await withSyntheticClient({ commitError: serverError }, async (observed) => {
+    await assert.rejects(
+      transactionWithCommitOutcome(async () => "never returned"),
+      (error: unknown) => error === serverError,
+    );
+    assert.deepEqual(observed.queries, ["BEGIN", "COMMIT", "ROLLBACK"]);
+    assert.deepEqual(observed.releases, [false]);
+  });
+});
+
 test("callback failure preserves the callback error when rollback also fails and destroys the client", async () => {
   const callbackError = new Error("synthetic callback failure");
   const rollbackError = new Error("synthetic rollback failure");

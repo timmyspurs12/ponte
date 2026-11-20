@@ -90,11 +90,13 @@ This path distinguishes outcomes after `COMMIT` is issued:
 | Missing/non-string code or a non-SQLSTATE code, including Node `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, and protocol/transport labels | Ambiguous                   | Do not speculate with `ROLLBACK`; destroy the client and surface `COMMIT_OUTCOME_UNKNOWN` through persistence. |
 
 The classifier recognizes a PostgreSQL SQLSTATE only when it has a documented
-PostgreSQL class and is exactly five uppercase alphanumeric characters. This
-prevents a five-letter Node transport code such as `EPIPE` from being mistaken
-for a server rejection. `40003` is explicitly ambiguous because PostgreSQL
-states that statement completion is unknown. Any non-SQLSTATE code is
-ambiguous: it does not establish whether PostgreSQL processed the `COMMIT`.
+PostgreSQL class and is exactly five uppercase alphanumeric characters. The
+recognized classes include `10` (XQuery Error), so `10608` remains a definitive
+server rejection under this design. This prevents a five-letter Node transport
+code such as `EPIPE` from being mistaken for a server rejection. `40003` is
+explicitly ambiguous because PostgreSQL states that statement completion is
+unknown. Any non-SQLSTATE code is ambiguous: it does not establish whether
+PostgreSQL processed the `COMMIT`.
 
 A caller must not infer a failed mutation from `COMMIT_OUTCOME_UNKNOWN`.
 Recovery is restricted to retrying the same business/key/fingerprint: the
@@ -107,8 +109,9 @@ acknowledgement-loss test is not a real network-partition test.
 The unit and isolated local-PostgreSQL tests cover:
 
 - metadata-only KMS validation without a plaintext DEK;
-- acknowledged `COMMIT`; definitive `23505`; ambiguous `08006`, `40003`,
-  `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, and no-code failures. Each ambiguous
+- acknowledged `COMMIT`; definitive `23505` and XQuery `10608`; ambiguous
+  `08006`, `40003`, `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, and no-code failures.
+  Each ambiguous
   case asserts no speculative rollback and `release(true)`; callback failure
   with rollback failure preserves the callback error and also destroys its
   client;
