@@ -38,7 +38,7 @@ const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
  * operation, network request, credential lookup, or production-resource call.
  */
 class SyntheticFakeDekProvider implements DekProvider {
-  readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;
+  readonly provider = KMS_PROVIDER.LOCAL_TEST_ONLY;
   calls = 0;
   readonly contexts: Buffer[] = [];
   readonly returnedDeks: Buffer[] = [];
@@ -55,11 +55,11 @@ class SyntheticFakeDekProvider implements DekProvider {
     const result = {
       plaintextDek: Buffer.from("42".repeat(32), "hex"),
       wrappedDek: Buffer.from("synthetic-wrapped-dek-v1", "utf8"),
-      kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
-      kmsKeyReference: "synthetic/test-candidate-key",
-      kmsKeyVersion: "synthetic/version-1",
-      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
-      wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+      kmsProvider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+      kmsKeyReference: "local-test-only/test-candidate-key",
+      kmsKeyVersion: "local-test-only/version-1",
+      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
       ...this.resultOverrides,
     } as CreatedAndWrappedDek;
     if (Buffer.isBuffer(result.plaintextDek))
@@ -365,13 +365,13 @@ test("rejects invalid provider results without disclosing metadata and clears ra
       name: "short plaintext DEK",
       dekLength: 31,
       overrides: (plaintextDek) => ({ plaintextDek }),
-      forbidden: ["synthetic/test-candidate-key"],
+      forbidden: ["local-test-only/test-candidate-key"],
     },
     {
       name: "long plaintext DEK",
       dekLength: 33,
       overrides: (plaintextDek) => ({ plaintextDek }),
-      forbidden: ["synthetic/test-candidate-key"],
+      forbidden: ["local-test-only/test-candidate-key"],
     },
     {
       name: "empty wrapped DEK",
@@ -380,7 +380,7 @@ test("rejects invalid provider results without disclosing metadata and clears ra
         plaintextDek,
         wrappedDek: Buffer.alloc(0),
       }),
-      forbidden: ["synthetic/test-candidate-key"],
+      forbidden: ["local-test-only/test-candidate-key"],
     },
     {
       name: "result provider differs from declared provider",
@@ -694,7 +694,7 @@ test("rejects every adversarial snapshot/input form before provider invocation",
       name: "malformed provider object",
       mutate: (request) => {
         (request as unknown as { provider: unknown }).provider = {
-          provider: KMS_PROVIDER.GCP_CLOUD_KMS,
+          provider: KMS_PROVIDER.LOCAL_TEST_ONLY,
         };
       },
     },

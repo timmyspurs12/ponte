@@ -39,7 +39,8 @@ function hasLoopbackDatabase(): boolean {
 
 function localRuntimeIsAllowed(): boolean {
   return (
-    process.env.NODE_ENV !== "production" &&
+    (process.env.NODE_ENV === "development" ||
+      process.env.NODE_ENV === "test") &&
     process.env.PONTE_DEV_AUTH === "1" &&
     hasLoopbackDatabase()
   );
@@ -66,21 +67,21 @@ function explicitLocalRegistryAddress(): string {
  * of KMS-backed or on-chain evidence outside the guarded local runtime.
  */
 class LocalTestDekProvider implements DekProvider {
-  readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;
+  readonly provider = KMS_PROVIDER.LOCAL_TEST_ONLY;
 
   async createAndWrapDek(
     _context: DekWrappingContext,
   ): Promise<CreatedAndWrappedDek> {
     return {
       plaintextDek: randomBytes(32),
+      // This is not KMS ciphertext and cannot be used to recover the DEK. Its
+      // explicit format marks the record as synthetic local test data only.
       wrappedDek: randomBytes(48),
-      kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
-      kmsKeyReference:
-        "projects/local-test-only/locations/local/keyRings/ponte/cryptoKeys/evidence",
-      kmsKeyVersion:
-        "projects/local-test-only/locations/local/keyRings/ponte/cryptoKeys/evidence/cryptoKeyVersions/1",
-      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
-      wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+      kmsProvider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+      kmsKeyReference: "local-test-only/ephemeral/evidence",
+      kmsKeyVersion: "local-test-only/ephemeral/v1",
+      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
     };
   }
 }
@@ -88,8 +89,9 @@ class LocalTestDekProvider implements DekProvider {
 /**
  * Returns local integration-only preparation dependencies only after every
  * explicit guard has passed. It is disabled by default and always fails closed:
- * production, non-loopback databases, missing dev auth, absent opt-in, and an
- * absent/invalid explicit registry address never receive a test provider.
+ * unset, production, preview, or staging runtimes; non-loopback databases;
+ * missing dev auth; absent opt-in; and an absent/invalid registry address never
+ * receive a test provider.
  */
 export function resolveLocalRoutingEvidencePreparationDependencies(): RoutingPreparationDependencies {
   if (

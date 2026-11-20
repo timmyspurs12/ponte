@@ -6,8 +6,9 @@ import { prepareBrowser } from './prepare-browser.mjs';
 const require=createRequire(import.meta.url);
 const env={
  ...process.env,
- // This runner alone opts its disposable local browser suite into the guarded
- // synthetic evidence provider. The app remains disabled by default.
+ // This runner alone selects an allowed local development runtime and opts its
+ // disposable browser suite into the guarded synthetic evidence provider.
+ NODE_ENV:'development',
  PONTE_LOCAL_EVIDENCE_TEST_PROVIDER:'1',
  PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS:process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS??'0x1111111111111111111111111111111111111111',
 };

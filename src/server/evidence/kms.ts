@@ -3,8 +3,15 @@
 import "server-only";
 
 export const KMS_PROVIDER = Object.freeze({
+  /** Only a future real Cloud KMS adapter may emit this provenance value. */
   GCP_CLOUD_KMS: "gcp-cloud-kms",
+  /** Only a future real AWS KMS adapter may emit this provenance value. */
   AWS_KMS: "aws-kms",
+  /**
+   * Synthetic local test data only. It is not a KMS operation, key, envelope,
+   * registry deployment, or on-chain attestation.
+   */
+  LOCAL_TEST_ONLY: "local-test-only",
 } as const);
 
 export type KmsProviderIdentifier =
@@ -13,6 +20,8 @@ export type KmsProviderIdentifier =
 export const WRAPPED_DEK_ALGORITHM = Object.freeze({
   GOOGLE_SYMMETRIC_ENCRYPTION: "GOOGLE_SYMMETRIC_ENCRYPTION",
   AWS_KMS_GENERATE_DATA_KEY_AES_256: "AWS_KMS_GENERATE_DATA_KEY_AES_256",
+  /** Fresh random test bytes; not a provider wrapping operation. */
+  LOCAL_TEST_RANDOM_BYTES_V1: "LOCAL_TEST_RANDOM_BYTES_V1",
 } as const);
 
 export type WrappedDekAlgorithmIdentifier =
@@ -22,21 +31,29 @@ export const WRAPPED_DEK_FORMAT = Object.freeze({
   GCP_KMS_ENCRYPT_CIPHERTEXT_V1: "gcp-kms-encrypt-ciphertext-v1",
   AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1:
     "aws-kms-generate-data-key-ciphertext-blob-v1",
+  /** Opaque synthetic local-test bytes; never an interoperable KMS ciphertext. */
+  LOCAL_TEST_RANDOM_BYTES_V1: "local-test-random-bytes-v1",
 } as const);
 
 export type WrappedDekFormatIdentifier =
   (typeof WRAPPED_DEK_FORMAT)[keyof typeof WRAPPED_DEK_FORMAT];
 
 export interface DekWrappingMetadata {
-  /** Provider that created and wrapped this fresh DEK. */
+  /**
+   * Provenance of this fresh DEK's opaque companion bytes. GCP/AWS values are
+   * reserved for genuine provider operations; local-test-only is synthetic.
+   */
   kmsProvider: KmsProviderIdentifier;
-  /** Stable provider key resource/reference, never a display label or alias. */
+  /**
+   * Stable provider key resource/reference, or a local-test-only marker for
+   * synthetic data. It is never a display label or credential.
+   */
   kmsKeyReference: string;
-  /** Exact provider key version or key-material identifier for this operation. */
+  /** Exact provider key/material identifier, or a local-test-only marker. */
   kmsKeyVersion: string;
-  /** Provider operation/algorithm identifier for the opaque wrapped bytes. */
+  /** Provider operation identifier, or the explicit synthetic test algorithm. */
   wrappedDekAlgorithm: WrappedDekAlgorithmIdentifier;
-  /** Versioned, non-secret serialization discriminator for those opaque bytes. */
+  /** Versioned non-secret serialization discriminator for opaque bytes. */
   wrappedDekFormat: WrappedDekFormatIdentifier;
 }
 
@@ -80,6 +97,7 @@ const providerIdentifier = /^[a-z][a-z0-9-]{1,31}$/;
 const algorithmIdentifier = /^[A-Z][A-Z0-9_]{2,63}$/;
 const formatIdentifier = /^[a-z][a-z0-9-]{2,63}$/;
 const providerKeyIdentifier = /^[A-Za-z0-9][A-Za-z0-9:/._+=,@-]{0,2047}$/;
+export const LOCAL_TEST_KEY_PROVENANCE_PREFIX = "local-test-only/";
 
 function fail(message: string): never {
   throw new DekProviderContractError(message);
@@ -96,6 +114,27 @@ function assertProviderKeyIdentifier(value: string, field: string): void {
   }
 }
 
+export function isLocalTestOnlyDekWrappingMetadata(
+  metadata: Pick<
+    DekWrappingMetadata,
+    | "kmsProvider"
+    | "kmsKeyReference"
+    | "kmsKeyVersion"
+    | "wrappedDekAlgorithm"
+    | "wrappedDekFormat"
+  >,
+): boolean {
+  return (
+    metadata.kmsProvider === KMS_PROVIDER.LOCAL_TEST_ONLY &&
+    metadata.wrappedDekAlgorithm ===
+      WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1 &&
+    metadata.wrappedDekFormat ===
+      WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1 &&
+    metadata.kmsKeyReference.startsWith(LOCAL_TEST_KEY_PROVENANCE_PREFIX) &&
+    metadata.kmsKeyVersion.startsWith(LOCAL_TEST_KEY_PROVENANCE_PREFIX)
+  );
+}
+
 function isSupportedCombination(metadata: DekWrappingMetadata): boolean {
   return (
     (metadata.kmsProvider === KMS_PROVIDER.GCP_CLOUD_KMS &&
@@ -107,7 +146,8 @@ function isSupportedCombination(metadata: DekWrappingMetadata): boolean {
       metadata.wrappedDekAlgorithm ===
         WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256 &&
       metadata.wrappedDekFormat ===
-        WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1)
+        WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1) ||
+    isLocalTestOnlyDekWrappingMetadata(metadata)
   );
 }
 

@@ -11,6 +11,11 @@ import {
   transaction,
 } from "../src/server/repository";
 import { quote } from "../src/lib/quotes";
+import {
+  KMS_PROVIDER,
+  WRAPPED_DEK_ALGORITHM,
+  WRAPPED_DEK_FORMAT,
+} from "../src/server/evidence/kms";
 
 function bytes(length: number, value: number) {
   return Buffer.alloc(length, value);
@@ -197,13 +202,11 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
       nonce: bytes(12, 6),
       authenticationTag: bytes(16, 7),
       wrappedDek: bytes(48, 8),
-      kmsProvider: "gcp-cloud-kms",
-      wrappedDekAlgorithm: "GOOGLE_SYMMETRIC_ENCRYPTION",
-      wrappedDekFormat: "gcp-kms-encrypt-ciphertext-v1",
-      kmsKeyReference:
-        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
-      kmsKeyVersion:
-        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
+      kmsProvider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
+      kmsKeyReference: "local-test-only/repository/evidence",
+      kmsKeyVersion: "local-test-only/repository/v1",
       aadVersion: 1,
     });
     await insertPendingEvidenceOutbox(db, {
@@ -218,22 +221,22 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
     assert.equal(stored.rowCount, 1);
     assert.deepEqual(stored.rows[0].public_evidence_id, publicEvidenceId);
     assert.deepEqual(stored.rows[0].wrapped_dek, bytes(48, 8));
-    assert.equal(stored.rows[0].kms_provider, "gcp-cloud-kms");
+    assert.equal(stored.rows[0].kms_provider, KMS_PROVIDER.LOCAL_TEST_ONLY);
     assert.equal(
       stored.rows[0].wrapped_dek_algorithm,
-      "GOOGLE_SYMMETRIC_ENCRYPTION",
+      WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
     );
     assert.equal(
       stored.rows[0].wrapped_dek_format,
-      "gcp-kms-encrypt-ciphertext-v1",
+      WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
     );
     assert.equal(
       stored.rows[0].kms_key_reference,
-      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
+      "local-test-only/repository/evidence",
     );
     assert.equal(
       stored.rows[0].kms_key_version,
-      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
+      "local-test-only/repository/v1",
     );
     assert.equal(stored.rows[0].submission_state, "pending");
     assert.equal(stored.rows[0].attempt_count, 0);

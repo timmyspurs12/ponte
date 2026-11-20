@@ -7,55 +7,60 @@ import {
   clearDekBestEffort,
   createAndValidateWrappedDek,
   DekProviderContractError,
+  isLocalTestOnlyDekWrappingMetadata,
   KMS_PROVIDER,
   type CreatedAndWrappedDek,
   type DekProvider,
+  type DekWrappingMetadata,
   WRAPPED_DEK_ALGORITHM,
   WRAPPED_DEK_FORMAT,
 } from "../../src/server/evidence/kms";
 
-function syntheticGcpResult(): CreatedAndWrappedDek {
+function localTestResult(): CreatedAndWrappedDek {
   return {
     plaintextDek: Buffer.alloc(32, 1),
-    wrappedDek: Buffer.from("synthetic-provider-opaque-ciphertext", "utf8"),
-    kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
-    kmsKeyReference:
-      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
-    kmsKeyVersion:
-      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
-    wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
-    wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+    wrappedDek: Buffer.from("local-test-random-bytes", "utf8"),
+    kmsProvider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+    kmsKeyReference: "local-test-only/kms-envelope/evidence",
+    kmsKeyVersion: "local-test-only/kms-envelope/v1",
+    wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+    wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
   };
 }
 
-function syntheticAwsResult(): CreatedAndWrappedDek {
-  return {
-    plaintextDek: Buffer.alloc(32, 2),
-    wrappedDek: Buffer.from("synthetic-aws-ciphertext-blob"),
-    kmsProvider: KMS_PROVIDER.AWS_KMS,
-    kmsKeyReference:
-      "arn:aws:kms:af-south-1:111122223333:key/12345678-1234-1234-1234-1234567890ab",
-    kmsKeyVersion:
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    wrappedDekAlgorithm:
-      WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
-    wrappedDekFormat:
-      WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
-  };
-}
+const reviewedGcpMetadata: DekWrappingMetadata = {
+  kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
+  kmsKeyReference:
+    "projects/example/locations/us-central1/keyRings/example/cryptoKeys/evidence",
+  kmsKeyVersion:
+    "projects/example/locations/us-central1/keyRings/example/cryptoKeys/evidence/cryptoKeyVersions/1",
+  wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
+  wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+};
+
+const reviewedAwsMetadata: DekWrappingMetadata = {
+  kmsProvider: KMS_PROVIDER.AWS_KMS,
+  kmsKeyReference:
+    "arn:aws:kms:af-south-1:111122223333:key/12345678-1234-1234-1234-1234567890ab",
+  kmsKeyVersion:
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
+  wrappedDekFormat:
+    WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
+};
 
 const isContractError = (error: unknown) =>
   error instanceof DekProviderContractError;
 
-test("provider-neutral boundary accommodates a locally created fresh DEK and complete GCP metadata", async () => {
+test("controlled providers emit only explicit local-test provenance", async () => {
   const provider: DekProvider = {
-    provider: KMS_PROVIDER.GCP_CLOUD_KMS,
+    provider: KMS_PROVIDER.LOCAL_TEST_ONLY,
     async createAndWrapDek(context) {
       assert.deepEqual(
         context.canonicalContext,
         Buffer.from("synthetic-context"),
       );
-      return syntheticGcpResult();
+      return localTestResult();
     },
   };
 
@@ -64,64 +69,44 @@ test("provider-neutral boundary accommodates a locally created fresh DEK and com
   });
   assert.strictEqual(assertCreatedAndWrappedDek(result), result);
   assert.strictEqual(assertDekProviderResult(provider, result), result);
+  assert.equal(isLocalTestOnlyDekWrappingMetadata(result), true);
+  assert.notEqual(result.kmsProvider, KMS_PROVIDER.GCP_CLOUD_KMS);
+  assert.notEqual(result.kmsProvider, KMS_PROVIDER.AWS_KMS);
   assert.deepEqual(
     result.wrappedDek,
-    Buffer.from("synthetic-provider-opaque-ciphertext", "utf8"),
+    Buffer.from("local-test-random-bytes", "utf8"),
   );
 });
 
-test("provider-neutral boundary accommodates a provider-created plaintext and wrapped DEK pair", async () => {
-  const provider: DekProvider = {
-    provider: KMS_PROVIDER.AWS_KMS,
-    async createAndWrapDek(context) {
-      assert.deepEqual(
-        context.canonicalContext,
-        Buffer.from("synthetic-context"),
-      );
-      return syntheticAwsResult();
-    },
-  };
-
-  const result = await createAndValidateWrappedDek(provider, {
-    canonicalContext: Buffer.from("synthetic-context"),
-  });
-  assert.equal(result.plaintextDek.length, 32);
-  assert.equal(result.wrappedDek.length > 0, true);
-  assert.strictEqual(assertCreatedAndWrappedDek(result), result);
-  assert.strictEqual(assertDekProviderResult(provider, result), result);
+test("reviewed GCP and AWS provenance tuples remain recognized as non-local metadata", () => {
+  for (const metadata of [reviewedGcpMetadata, reviewedAwsMetadata]) {
+    assert.strictEqual(assertDekWrappingMetadata(metadata), metadata);
+    assert.equal(isLocalTestOnlyDekWrappingMetadata(metadata), false);
+  }
 });
 
-test("provider-bound validation rejects a valid result for a different provider", async () => {
-  const gcpProviderReturningAws: DekProvider = {
-    provider: KMS_PROVIDER.GCP_CLOUD_KMS,
+test("provider-bound validation rejects a real-provider tuple from a local test declaration", () => {
+  const localProvider: DekProvider = {
+    provider: KMS_PROVIDER.LOCAL_TEST_ONLY,
     async createAndWrapDek() {
-      return syntheticAwsResult();
+      return localTestResult();
     },
   };
-  const awsProviderReturningGcp: DekProvider = {
-    provider: KMS_PROVIDER.AWS_KMS,
-    async createAndWrapDek() {
-      return syntheticGcpResult();
-    },
+  const realTupleWithSyntheticBuffers: CreatedAndWrappedDek = {
+    plaintextDek: Buffer.alloc(32, 2),
+    wrappedDek: Buffer.from("not-emitted-by-a-provider"),
+    ...reviewedGcpMetadata,
   };
 
-  await assert.rejects(
-    createAndValidateWrappedDek(gcpProviderReturningAws, {
-      canonicalContext: Buffer.from("synthetic-context"),
-    }),
-    isContractError,
-  );
-  await assert.rejects(
-    createAndValidateWrappedDek(awsProviderReturningGcp, {
-      canonicalContext: Buffer.from("synthetic-context"),
-    }),
+  assert.throws(
+    () => assertDekProviderResult(localProvider, realTupleWithSyntheticBuffers),
     isContractError,
   );
 });
 
 test("rejects plaintext DEKs with any length other than 32 bytes", () => {
   for (const length of [0, 31, 33]) {
-    const result = syntheticGcpResult();
+    const result = localTestResult();
     result.plaintextDek = Buffer.alloc(length, 1);
     assert.throws(() => assertCreatedAndWrappedDek(result), isContractError);
   }
@@ -129,9 +114,9 @@ test("rejects plaintext DEKs with any length other than 32 bytes", () => {
 
 test("provider-bound validation rejects incomplete metadata and unsupported metadata tuples", () => {
   const provider: DekProvider = {
-    provider: KMS_PROVIDER.GCP_CLOUD_KMS,
+    provider: KMS_PROVIDER.LOCAL_TEST_ONLY,
     async createAndWrapDek() {
-      return syntheticGcpResult();
+      return localTestResult();
     },
   };
   const cases: Array<Partial<CreatedAndWrappedDek>> = [
@@ -145,12 +130,14 @@ test("provider-bound validation rejects incomplete metadata and unsupported meta
       wrappedDekFormat:
         WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
     },
+    { kmsKeyReference: "projects/pretend/cryptoKeys/evidence" },
+    { kmsKeyVersion: "projects/pretend/cryptoKeyVersions/1" },
     { kmsKeyReference: "" },
     { kmsKeyVersion: "missing version" },
   ];
 
   for (const overrides of cases) {
-    const result = { ...syntheticGcpResult(), ...overrides };
+    const result = { ...localTestResult(), ...overrides };
     assert.throws(
       () => assertDekProviderResult(provider, result as CreatedAndWrappedDek),
       isContractError,
@@ -158,8 +145,8 @@ test("provider-bound validation rejects incomplete metadata and unsupported meta
   }
 });
 
-test("metadata-only validation accepts opaque wrapping metadata without a plaintext DEK", () => {
-  const result = syntheticGcpResult();
+test("metadata-only validation preserves the explicit local-test distinction", () => {
+  const result = localTestResult();
   const metadata = {
     kmsProvider: result.kmsProvider,
     kmsKeyReference: result.kmsKeyReference,
@@ -168,6 +155,7 @@ test("metadata-only validation accepts opaque wrapping metadata without a plaint
     wrappedDekFormat: result.wrappedDekFormat,
   };
   assert.strictEqual(assertDekWrappingMetadata(metadata), metadata);
+  assert.equal(isLocalTestOnlyDekWrappingMetadata(metadata), true);
   assert.throws(
     () =>
       assertDekWrappingMetadata({

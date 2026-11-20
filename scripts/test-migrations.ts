@@ -16,6 +16,22 @@ const notNull = (error: unknown) =>
 
 let marker = 1;
 const syntheticBytes = (length: number) => Buffer.alloc(length, marker++);
+const LOCAL_TEST_PROVENANCE = Object.freeze({
+  provider: "local-test-only",
+  algorithm: "LOCAL_TEST_RANDOM_BYTES_V1",
+  format: "local-test-random-bytes-v1",
+  keyReference: "local-test-only/migration/evidence",
+  keyVersion: "local-test-only/migration/v1",
+});
+const GCP_PROVENANCE = Object.freeze({
+  provider: "gcp-cloud-kms",
+  algorithm: "GOOGLE_SYMMETRIC_ENCRYPTION",
+  format: "gcp-kms-encrypt-ciphertext-v1",
+  keyReference:
+    "projects/example/locations/us-central1/keyRings/example/cryptoKeys/evidence",
+  keyVersion:
+    "projects/example/locations/us-central1/keyRings/example/cryptoKeys/evidence/cryptoKeyVersions/1",
+});
 
 type Context = {
   businessId: string;
@@ -187,13 +203,11 @@ function evidenceFor(
     nonce: syntheticBytes(12),
     authenticationTag: syntheticBytes(16),
     wrappedDek: syntheticBytes(48),
-    kmsProvider: "gcp-cloud-kms",
-    wrappedDekAlgorithm: "GOOGLE_SYMMETRIC_ENCRYPTION",
-    wrappedDekFormat: "gcp-kms-encrypt-ciphertext-v1",
-    kmsKeyReference:
-      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
-    kmsKeyVersion:
-      "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
+    kmsProvider: LOCAL_TEST_PROVENANCE.provider,
+    wrappedDekAlgorithm: LOCAL_TEST_PROVENANCE.algorithm,
+    wrappedDekFormat: LOCAL_TEST_PROVENANCE.format,
+    kmsKeyReference: LOCAL_TEST_PROVENANCE.keyReference,
+    kmsKeyVersion: LOCAL_TEST_PROVENANCE.keyVersion,
     aadVersion: 1,
     ...overrides,
   };
@@ -340,6 +354,35 @@ async function main() {
     await db.query("BEGIN");
     await db.query(await migration("004_kms_envelope_metadata"));
     await db.query("COMMIT");
+
+    // A row that predates migration 005 keeps its genuine-provider provenance
+    // unchanged; the forward-only constraint extension must never relabel it.
+    const historicalGcpContext = await createContext(db, "historical-gcp");
+    const historicalGcpEvidence = await insertEvidence(
+      db,
+      historicalGcpContext,
+      {
+        kmsProvider: GCP_PROVENANCE.provider,
+        wrappedDekAlgorithm: GCP_PROVENANCE.algorithm,
+        wrappedDekFormat: GCP_PROVENANCE.format,
+        kmsKeyReference: GCP_PROVENANCE.keyReference,
+        kmsKeyVersion: GCP_PROVENANCE.keyVersion,
+      },
+    );
+    await db.query("BEGIN");
+    await db.query(await migration("005_local_test_provider_provenance"));
+    await db.query("COMMIT");
+    const preservedGcpProvenance = await db.query(
+      "SELECT kms_provider,wrapped_dek_algorithm,wrapped_dek_format,kms_key_reference,kms_key_version FROM route_decision_evidence WHERE id=$1",
+      [historicalGcpEvidence.id],
+    );
+    assert.deepEqual(preservedGcpProvenance.rows[0], {
+      kms_provider: GCP_PROVENANCE.provider,
+      wrapped_dek_algorithm: GCP_PROVENANCE.algorithm,
+      wrapped_dek_format: GCP_PROVENANCE.format,
+      kms_key_reference: GCP_PROVENANCE.keyReference,
+      kms_key_version: GCP_PROVENANCE.keyVersion,
+    });
 
     const preservedInvoice = (
       await db.query(
@@ -522,6 +565,12 @@ async function main() {
       wrappedDekAlgorithm: "AWS_KMS_GENERATE_DATA_KEY_AES_256",
       wrappedDekFormat: "gcp-kms-encrypt-ciphertext-v1",
     });
+    await assertInvalidEvidence(db, "local-test-with-nonlocal-key-reference", {
+      kmsKeyReference: "projects/pretend/cryptoKeys/evidence",
+    });
+    await assertInvalidEvidence(db, "local-test-with-nonlocal-key-version", {
+      kmsKeyVersion: "projects/pretend/cryptoKeyVersions/1",
+    });
     await assertInvalidEvidence(db, "malformed-key-reference", {
       kmsKeyReference: "invalid key reference",
     });
@@ -609,6 +658,7 @@ async function main() {
           "002_audit_metadata",
           "003_route_decision_evidence",
           "004_kms_envelope_metadata",
+          "005_local_test_provider_provenance",
         ],
       );
     } finally {

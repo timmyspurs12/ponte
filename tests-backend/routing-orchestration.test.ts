@@ -40,7 +40,7 @@ interface TestContext {
 }
 
 class ControlledDekProvider implements DekProvider {
-  readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;
+  readonly provider = KMS_PROVIDER.LOCAL_TEST_ONLY;
   calls = 0;
 
   constructor(
@@ -57,13 +57,11 @@ class ControlledDekProvider implements DekProvider {
     return {
       plaintextDek: Buffer.alloc(32, 71),
       wrappedDek: Buffer.from("controlled-routing-orchestration-dek-v1"),
-      kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
-      kmsKeyReference:
-        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
-      kmsKeyVersion:
-        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
-      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
-      wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+      kmsProvider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+      kmsKeyReference: "local-test-only/orchestration/evidence",
+      kmsKeyVersion: "local-test-only/orchestration/v1",
+      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
     };
   }
 }

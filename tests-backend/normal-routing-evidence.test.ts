@@ -5,6 +5,7 @@ import type { Invoice } from "../src/lib/models";
 import { resolveLocalRoutingEvidencePreparationDependencies } from "../src/server/evidence/local-routing-config";
 import { EvidenceCandidatePreparationError } from "../src/server/evidence/errors";
 import {
+  isLocalTestOnlyDekWrappingMetadata,
   KMS_PROVIDER,
   WRAPPED_DEK_ALGORITHM,
   WRAPPED_DEK_FORMAT,
@@ -38,7 +39,7 @@ Object.assign(process.env, {
 });
 
 class ControlledDekProvider implements DekProvider {
-  readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;
+  readonly provider = KMS_PROVIDER.LOCAL_TEST_ONLY;
 
   constructor(
     private readonly onCreate?: () => void | Promise<void>,
@@ -53,13 +54,11 @@ class ControlledDekProvider implements DekProvider {
     return {
       plaintextDek: Buffer.alloc(32, 83),
       wrappedDek: Buffer.from("normal-routing-evidence-test-dek-v1"),
-      kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
-      kmsKeyReference:
-        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence",
-      kmsKeyVersion:
-        "projects/test/locations/africa-south1/keyRings/test/cryptoKeys/evidence/cryptoKeyVersions/1",
-      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
-      wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+      kmsProvider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+      kmsKeyReference: "local-test-only/normal-routing/evidence",
+      kmsKeyVersion: "local-test-only/normal-routing/v1",
+      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
     };
   }
 }
@@ -69,6 +68,11 @@ function restoreEnvironment(): void {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
   }
+}
+
+function setNodeEnvironment(value: string | undefined): void {
+  if (value === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
+  else Object.assign(process.env, { NODE_ENV: value });
 }
 
 function invoiceInput() {
@@ -222,8 +226,13 @@ test("normal Routing endpoint atomically persists simulated settlement, encrypte
     submission_state: string;
     settlement_status: string;
     event_simulated: boolean;
+    kms_provider: string;
+    wrapped_dek_algorithm: string;
+    wrapped_dek_format: string;
+    kms_key_reference: string;
+    kms_key_version: string;
   }>(
-    "SELECT s.transaction_hash,o.submission_state,s.status AS settlement_status,(ev.data->>'simulated')::boolean AS event_simulated FROM settlements s JOIN route_decision_evidence e ON e.invoice_id=s.invoice_id JOIN evidence_outbox o ON o.evidence_record_id=e.id JOIN payment_events ev ON ev.invoice_id=s.invoice_id AND ev.kind='invoice.Routing' WHERE s.business_id=$1 AND s.invoice_id=$2",
+    "SELECT s.transaction_hash,o.submission_state,s.status AS settlement_status,(ev.data->>'simulated')::boolean AS event_simulated,e.kms_provider,e.wrapped_dek_algorithm,e.wrapped_dek_format,e.kms_key_reference,e.kms_key_version FROM settlements s JOIN route_decision_evidence e ON e.invoice_id=s.invoice_id JOIN evidence_outbox o ON o.evidence_record_id=e.id JOIN payment_events ev ON ev.invoice_id=s.invoice_id AND ev.kind='invoice.Routing' WHERE s.business_id=$1 AND s.invoice_id=$2",
     [business, invoice.id],
   );
   assert.deepEqual(stored.rows, [
@@ -232,6 +241,11 @@ test("normal Routing endpoint atomically persists simulated settlement, encrypte
       submission_state: "pending",
       settlement_status: "Routing",
       event_simulated: true,
+      kms_provider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+      wrapped_dek_algorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      wrapped_dek_format: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
+      kms_key_reference: "local-test-only/ephemeral/evidence",
+      kms_key_version: "local-test-only/ephemeral/v1",
     },
   ]);
   const history = (await call(`/${invoice.id}/settlements`)) as Array<{
@@ -367,7 +381,11 @@ test("disabled local evidence mode returns a safe endpoint error without routing
       code: "EVIDENCE_PROVIDER_UNAVAILABLE",
     });
   } finally {
-    process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER = previousFlag;
+    if (previousFlag === undefined) {
+      delete process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER;
+    } else {
+      process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER = previousFlag;
+    }
   }
   assert.deepEqual(await routingCounts(invoice.id, key), {
     evidence: "0",
@@ -379,34 +397,139 @@ test("disabled local evidence mode returns a safe endpoint error without routing
   });
 });
 
-test("local test-provider mode is disabled by default and denied in production", async () => {
+test("local test-provider metadata is explicit and configuration fails closed outside development or test", async () => {
   const previousFlag = process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER;
-  delete process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER;
-  try {
-    assert.throws(
-      () => resolveLocalRoutingEvidencePreparationDependencies(),
-      (error: unknown) =>
-        error instanceof EvidenceCandidatePreparationError &&
-        error.code === "PROVIDER_FAILURE",
-    );
-  } finally {
-    process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER = previousFlag;
-  }
-
+  const previousRegistry =
+    process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS;
   const previousNodeEnv = process.env.NODE_ENV;
-  Object.assign(process.env, { NODE_ENV: "production" });
+  const previousDevAuth = process.env.PONTE_DEV_AUTH;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
   try {
+    process.env.PONTE_DEV_AUTH = "1";
+    process.env.DATABASE_URL =
+      "postgres://ponte:local-only@localhost:54329/ponte";
+    delete process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER;
     assert.throws(
       () => resolveLocalRoutingEvidencePreparationDependencies(),
       (error: unknown) =>
         error instanceof EvidenceCandidatePreparationError &&
         error.code === "PROVIDER_FAILURE",
     );
+
+    process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER = "1";
+    for (const environment of [
+      undefined,
+      "preview",
+      "staging",
+      "production",
+    ] as const) {
+      setNodeEnvironment(environment);
+      assert.throws(
+        () => resolveLocalRoutingEvidencePreparationDependencies(),
+        (error: unknown) =>
+          error instanceof EvidenceCandidatePreparationError &&
+          error.code === "PROVIDER_FAILURE",
+        `${environment ?? "unset"} runtime must fail closed`,
+      );
+    }
+
+    setNodeEnvironment("test");
+    process.env.PONTE_DEV_AUTH = "0";
+    assert.throws(
+      () => resolveLocalRoutingEvidencePreparationDependencies(),
+      (error: unknown) =>
+        error instanceof EvidenceCandidatePreparationError &&
+        error.code === "PROVIDER_FAILURE",
+    );
+    process.env.PONTE_DEV_AUTH = "1";
+    process.env.DATABASE_URL =
+      "postgres://ponte:local-only@example.invalid/ponte";
+    assert.throws(
+      () => resolveLocalRoutingEvidencePreparationDependencies(),
+      (error: unknown) =>
+        error instanceof EvidenceCandidatePreparationError &&
+        error.code === "PROVIDER_FAILURE",
+    );
+    process.env.DATABASE_URL =
+      "postgres://ponte:local-only@localhost:54329/ponte";
+    delete process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS;
+    assert.throws(
+      () => resolveLocalRoutingEvidencePreparationDependencies(),
+      (error: unknown) =>
+        error instanceof EvidenceCandidatePreparationError &&
+        error.code === "PROVIDER_FAILURE",
+    );
+    process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS =
+      "0x0000000000000000000000000000000000000000";
+    assert.throws(
+      () => resolveLocalRoutingEvidencePreparationDependencies(),
+      (error: unknown) =>
+        error instanceof EvidenceCandidatePreparationError &&
+        error.code === "PROVIDER_FAILURE",
+    );
+    process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS =
+      "not-a-registry-address";
+    assert.throws(
+      () => resolveLocalRoutingEvidencePreparationDependencies(),
+      (error: unknown) =>
+        error instanceof EvidenceCandidatePreparationError &&
+        error.code === "PROVIDER_FAILURE",
+    );
+    process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS = TEST_REGISTRY;
+
+    for (const environment of ["development", "test"] as const) {
+      setNodeEnvironment(environment);
+      if (environment === "development")
+        await assert.rejects(
+          __testOnlyExecute(request(""), parts(""), {}),
+          /test-only service dependencies are unavailable/,
+        );
+      const dependencies = resolveLocalRoutingEvidencePreparationDependencies();
+      const result = await dependencies.provider.createAndWrapDek({
+        canonicalContext: Buffer.alloc(96),
+      });
+      assert.equal(isLocalTestOnlyDekWrappingMetadata(result), true);
+      assert.equal(result.kmsProvider, KMS_PROVIDER.LOCAL_TEST_ONLY);
+      assert.equal(
+        result.wrappedDekAlgorithm,
+        WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      );
+      assert.equal(
+        result.wrappedDekFormat,
+        WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
+      );
+      assert.match(result.kmsKeyReference, /^local-test-only\//);
+      assert.match(result.kmsKeyVersion, /^local-test-only\//);
+      assert.notEqual(result.kmsProvider, KMS_PROVIDER.GCP_CLOUD_KMS);
+      assert.notEqual(result.kmsProvider, KMS_PROVIDER.AWS_KMS);
+    }
+
+    setNodeEnvironment("production");
     await assert.rejects(
       execute(request(""), parts("")),
       isApiError("AUTH_NOT_CONFIGURED"),
     );
   } finally {
-    Object.assign(process.env, { NODE_ENV: previousNodeEnv });
+    if (previousFlag === undefined) {
+      delete process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER;
+    } else {
+      process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER = previousFlag;
+    }
+    if (previousRegistry === undefined) {
+      delete process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS;
+    } else {
+      process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS = previousRegistry;
+    }
+    if (previousDevAuth === undefined) {
+      delete process.env.PONTE_DEV_AUTH;
+    } else {
+      process.env.PONTE_DEV_AUTH = previousDevAuth;
+    }
+    if (previousDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = previousDatabaseUrl;
+    }
+    setNodeEnvironment(previousNodeEnv);
   }
 });
