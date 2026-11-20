@@ -143,6 +143,73 @@ export async function transaction<T>(
   }
 }
 
+/**
+ * A sanitized signal used only when a COMMIT acknowledgement cannot establish
+ * whether PostgreSQL committed. It deliberately carries no database error.
+ */
+export class CommitOutcomeUnknownError extends Error {
+  constructor() {
+    super("commit outcome is unknown");
+    this.name = "CommitOutcomeUnknownError";
+  }
+}
+
+function commitOutcomeIsUnknown(error: unknown): boolean {
+  const code = (error as { code?: unknown })?.code;
+  if (typeof code !== "string") return true;
+  // Non-connection SQLSTATEs are definitive PostgreSQL rejections. Connection
+  // failures and shutdown-family errors can occur after the server processed COMMIT.
+  return code.startsWith("08") || code.startsWith("57P0");
+}
+
+/**
+ * Evidence-only transaction wrapper with commit-outcome classification. Unlike
+ * `transaction`, it never reuses a client after an ambiguous COMMIT failure and
+ * never lets a secondary ROLLBACK error replace the original failure.
+ */
+export async function transactionWithCommitOutcome<T>(
+  work: (db: PoolClient) => Promise<T>,
+): Promise<T> {
+  const db = await pool.connect();
+  let transactionOpen = false;
+  let commitAttempted = false;
+  let destroyClient = false;
+  try {
+    await db.query("BEGIN");
+    transactionOpen = true;
+    const result = await work(db);
+    commitAttempted = true;
+    try {
+      await db.query("COMMIT");
+      transactionOpen = false;
+      return result;
+    } catch (error) {
+      if (commitOutcomeIsUnknown(error)) {
+        destroyClient = true;
+        throw new CommitOutcomeUnknownError();
+      }
+      try {
+        await db.query("ROLLBACK");
+        transactionOpen = false;
+      } catch {
+        destroyClient = true;
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (transactionOpen && !commitAttempted) {
+      try {
+        await db.query("ROLLBACK");
+      } catch {
+        destroyClient = true;
+      }
+    }
+    throw error;
+  } finally {
+    db.release(destroyClient);
+  }
+}
+
 export const appendEvent = (db: PoolClient, values: unknown[]) =>
   db.query(
     "INSERT INTO payment_events(id,business_id,invoice_id,actor_id,correlation_id,kind,data,previous_state,new_state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",

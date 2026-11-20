@@ -112,6 +112,43 @@ function isSupportedCombination(metadata: DekWrappingMetadata): boolean {
 }
 
 /**
+ * Validates the non-secret provider metadata carried alongside opaque wrapped
+ * DEK bytes. It deliberately accepts no plaintext DEK, performs no provider
+ * work, and is safe for final persistence revalidation.
+ */
+export function assertDekWrappingMetadata(
+  metadata: DekWrappingMetadata,
+): DekWrappingMetadata {
+  if (
+    typeof metadata.kmsProvider !== "string" ||
+    !providerIdentifier.test(metadata.kmsProvider)
+  ) {
+    fail("kmsProvider must be a supported provider identifier");
+  }
+  if (
+    typeof metadata.wrappedDekAlgorithm !== "string" ||
+    !algorithmIdentifier.test(metadata.wrappedDekAlgorithm)
+  ) {
+    fail(
+      "wrappedDekAlgorithm must be a provider operation/algorithm identifier",
+    );
+  }
+  if (
+    typeof metadata.wrappedDekFormat !== "string" ||
+    !formatIdentifier.test(metadata.wrappedDekFormat)
+  ) {
+    fail("wrappedDekFormat must be a versioned format identifier");
+  }
+  assertProviderKeyIdentifier(metadata.kmsKeyReference, "kmsKeyReference");
+  assertProviderKeyIdentifier(metadata.kmsKeyVersion, "kmsKeyVersion");
+  if (!isSupportedCombination(metadata))
+    fail(
+      "unsupported KMS provider, wrapped-DEK algorithm, or format combination",
+    );
+  return metadata;
+}
+
+/**
  * Validates only the provider-neutral result boundary. It does not encrypt,
  * decrypt, generate a key, call a provider, or log any sensitive bytes.
  */
@@ -125,32 +162,7 @@ export function assertCreatedAndWrappedDek(
     fail("plaintextDek must be exactly 32 bytes");
   if (!Buffer.isBuffer(result.wrappedDek) || result.wrappedDek.length < 1)
     fail("wrappedDek must be non-empty opaque bytes");
-  if (
-    typeof result.kmsProvider !== "string" ||
-    !providerIdentifier.test(result.kmsProvider)
-  ) {
-    fail("kmsProvider must be a supported provider identifier");
-  }
-  if (
-    typeof result.wrappedDekAlgorithm !== "string" ||
-    !algorithmIdentifier.test(result.wrappedDekAlgorithm)
-  ) {
-    fail(
-      "wrappedDekAlgorithm must be a provider operation/algorithm identifier",
-    );
-  }
-  if (
-    typeof result.wrappedDekFormat !== "string" ||
-    !formatIdentifier.test(result.wrappedDekFormat)
-  ) {
-    fail("wrappedDekFormat must be a versioned format identifier");
-  }
-  assertProviderKeyIdentifier(result.kmsKeyReference, "kmsKeyReference");
-  assertProviderKeyIdentifier(result.kmsKeyVersion, "kmsKeyVersion");
-  if (!isSupportedCombination(result))
-    fail(
-      "unsupported KMS provider, wrapped-DEK algorithm, or format combination",
-    );
+  assertDekWrappingMetadata(result);
   return result;
 }
 

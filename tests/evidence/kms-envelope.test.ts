@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertCreatedAndWrappedDek,
   assertDekProviderResult,
+  assertDekWrappingMetadata,
   clearDekBestEffort,
   createAndValidateWrappedDek,
   DekProviderContractError,
@@ -155,6 +156,27 @@ test("provider-bound validation rejects incomplete metadata and unsupported meta
       isContractError,
     );
   }
+});
+
+test("metadata-only validation accepts opaque wrapping metadata without a plaintext DEK", () => {
+  const result = syntheticGcpResult();
+  const metadata = {
+    kmsProvider: result.kmsProvider,
+    kmsKeyReference: result.kmsKeyReference,
+    kmsKeyVersion: result.kmsKeyVersion,
+    wrappedDekAlgorithm: result.wrappedDekAlgorithm,
+    wrappedDekFormat: result.wrappedDekFormat,
+  };
+  assert.strictEqual(assertDekWrappingMetadata(metadata), metadata);
+  assert.throws(
+    () =>
+      assertDekWrappingMetadata({
+        ...metadata,
+        wrappedDekFormat:
+          WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
+      }),
+    isContractError,
+  );
 });
 
 test("best-effort clearing mutates only the caller-owned temporary DEK buffer", () => {
