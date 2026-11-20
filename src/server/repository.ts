@@ -1,10 +1,11 @@
-import { Pool, type PoolClient } from "pg";
+import { Pool, type PoolClient, type QueryResult } from "pg";
 import type { Invoice, PaymentQuote, Status } from "../lib/models";
 import type {
   KmsProviderIdentifier,
   WrappedDekAlgorithmIdentifier,
   WrappedDekFormatIdentifier,
 } from "./evidence/kms";
+import { EvidenceReadError } from "./evidence/errors";
 
 /**
  * Narrow persisted invoice view for evidence preparation. `funding_minor` is
@@ -246,6 +247,61 @@ export type RoutingIdempotencyPreflight =
   | { kind: "match"; response: unknown }
   | { kind: "conflict" };
 
+type ReadOnlyTransactionClient = Pick<PoolClient, "query" | "release">;
+
+/**
+ * Test-only client seam for read-only transaction cleanup. Production helpers
+ * always acquire their own pool client through `withReadOnlyTransaction`.
+ */
+export async function __testOnlyRunReadOnlyTransaction<T>(
+  db: ReadOnlyTransactionClient,
+  work: (db: ReadOnlyTransactionClient) => Promise<T>,
+): Promise<T> {
+  let transactionOpen = false;
+  let commitAttempted = false;
+  let destroyClient = false;
+  let originalError: unknown;
+  try {
+    await db.query("BEGIN READ ONLY");
+    transactionOpen = true;
+    const result = await work(db);
+    commitAttempted = true;
+    await db.query("COMMIT");
+    transactionOpen = false;
+    return result;
+  } catch (error) {
+    originalError = error;
+    if (transactionOpen) {
+      // A failed COMMIT acknowledgement cannot prove connection state. Even if
+      // ROLLBACK succeeds, this client is discarded rather than reused.
+      if (commitAttempted) destroyClient = true;
+      try {
+        await db.query("ROLLBACK");
+        transactionOpen = false;
+      } catch {
+        destroyClient = true;
+      }
+    }
+    throw error;
+  } finally {
+    try {
+      db.release(destroyClient);
+    } catch (releaseError) {
+      // Preserve the read/commit error; never turn cleanup into false success.
+      if (originalError === undefined) throw releaseError;
+    }
+  }
+}
+
+async function withReadOnlyTransaction<T>(
+  work: (db: PoolClient) => Promise<T>,
+): Promise<T> {
+  const db = await pool.connect();
+  return __testOnlyRunReadOnlyTransaction(db, (client) =>
+    work(client as PoolClient),
+  );
+}
+
 /**
  * Runs one short READ ONLY idempotency lookup and releases its client before
  * resolving. It acquires no advisory, invoice, or quote lock and must never be
@@ -256,29 +312,16 @@ export async function readRoutingIdempotencyPreflight(
   idempotencyKey: string,
   requestFingerprint: string,
 ): Promise<RoutingIdempotencyPreflight> {
-  const db = await pool.connect();
-  let transactionOpen = false;
   try {
-    await db.query("BEGIN READ ONLY");
-    transactionOpen = true;
-    const result = await findIdempotency(db, [businessId, idempotencyKey]);
-    await db.query("COMMIT");
-    transactionOpen = false;
+    const result = await withReadOnlyTransaction((db) =>
+      findIdempotency(db, [businessId, idempotencyKey]),
+    );
     if (!result.rowCount) return { kind: "miss" };
     return result.rows[0].fingerprint === requestFingerprint
       ? { kind: "match", response: result.rows[0].response }
       : { kind: "conflict" };
-  } catch (error) {
-    if (transactionOpen) {
-      try {
-        await db.query("ROLLBACK");
-      } catch {
-        // The original lookup failure remains authoritative.
-      }
-    }
-    throw error;
-  } finally {
-    db.release();
+  } catch {
+    throw new EvidenceReadError("PREFLIGHT_READ_FAILED");
   }
 }
 export const insertInvoice = (db: PoolClient, values: unknown[]) =>
@@ -312,58 +355,52 @@ export async function readEvidencePreparationSnapshot(
   invoiceId: string,
   quoteId: string,
 ): Promise<EvidencePreparationSnapshot> {
-  const db = await pool.connect();
-  let transactionOpen = false;
+  let result: QueryResult<EvidencePreparationSnapshotQueryRow>;
   try {
-    await db.query("BEGIN READ ONLY");
-    transactionOpen = true;
-    const result = await db.query<EvidencePreparationSnapshotQueryRow>(
-      "SELECT i.id AS invoice_id,i.business_id AS invoice_business_id,i.status AS invoice_status,i.funding_minor AS invoice_funding_minor,i.funding_currency AS invoice_funding_currency,i.data AS invoice_data,q.id AS quote_id,q.business_id AS quote_business_id,q.invoice_id AS quote_invoice_id,q.source AS quote_source,q.simulated AS quote_simulated,q.expires_at AS quote_expires_at,q.data AS quote_data FROM invoices i LEFT JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id AND q.id=$3 AND q.expires_at>clock_timestamp() WHERE i.business_id=$1 AND i.id=$2",
-      [businessId, invoiceId, quoteId],
+    result = await withReadOnlyTransaction((db) =>
+      db.query<EvidencePreparationSnapshotQueryRow>(
+        "SELECT i.id AS invoice_id,i.business_id AS invoice_business_id,i.status AS invoice_status,i.funding_minor AS invoice_funding_minor,i.funding_currency AS invoice_funding_currency,i.data AS invoice_data,q.id AS quote_id,q.business_id AS quote_business_id,q.invoice_id AS quote_invoice_id,q.source AS quote_source,q.simulated AS quote_simulated,q.expires_at AS quote_expires_at,q.data AS quote_data FROM invoices i LEFT JOIN quotes q ON q.business_id=i.business_id AND q.invoice_id=i.id AND q.id=$3 AND q.expires_at>clock_timestamp() WHERE i.business_id=$1 AND i.id=$2",
+        [businessId, invoiceId, quoteId],
+      ),
     );
-    await db.query("COMMIT");
-    transactionOpen = false;
-
-    if (!result.rowCount) return { kind: "invoice_missing" };
-    const row = result.rows[0];
-    const invoice: EvidencePreparationInvoiceRow = {
-      id: row.invoice_id,
-      business_id: row.invoice_business_id,
-      status: row.invoice_status,
-      funding_minor: row.invoice_funding_minor,
-      funding_currency: row.invoice_funding_currency,
-      data: row.invoice_data,
-    };
-    if (
-      row.quote_id === null ||
-      row.quote_business_id === null ||
-      row.quote_invoice_id === null ||
-      row.quote_source === null ||
-      row.quote_simulated === null ||
-      row.quote_expires_at === null ||
-      row.quote_data === null
-    )
-      return { kind: "quote_missing_or_expired", invoice };
-
-    return {
-      kind: "ready",
-      invoice,
-      quote: {
-        id: row.quote_id,
-        business_id: row.quote_business_id,
-        invoice_id: row.quote_invoice_id,
-        source: row.quote_source,
-        simulated: row.quote_simulated,
-        expires_at: row.quote_expires_at,
-        data: row.quote_data,
-      },
-    };
-  } catch (error) {
-    if (transactionOpen) await db.query("ROLLBACK");
-    throw error;
-  } finally {
-    db.release();
+  } catch {
+    throw new EvidenceReadError("SNAPSHOT_READ_FAILED");
   }
+
+  if (!result.rowCount) return { kind: "invoice_missing" };
+  const row = result.rows[0] as EvidencePreparationSnapshotQueryRow;
+  const invoice: EvidencePreparationInvoiceRow = {
+    id: row.invoice_id,
+    business_id: row.invoice_business_id,
+    status: row.invoice_status,
+    funding_minor: row.invoice_funding_minor,
+    funding_currency: row.invoice_funding_currency,
+    data: row.invoice_data,
+  };
+  if (
+    row.quote_id === null ||
+    row.quote_business_id === null ||
+    row.quote_invoice_id === null ||
+    row.quote_source === null ||
+    row.quote_simulated === null ||
+    row.quote_expires_at === null ||
+    row.quote_data === null
+  )
+    return { kind: "quote_missing_or_expired", invoice };
+
+  return {
+    kind: "ready",
+    invoice,
+    quote: {
+      id: row.quote_id,
+      business_id: row.quote_business_id,
+      invoice_id: row.quote_invoice_id,
+      source: row.quote_source,
+      simulated: row.quote_simulated,
+      expires_at: row.quote_expires_at,
+      data: row.quote_data,
+    },
+  };
 }
 
 /**

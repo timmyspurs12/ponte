@@ -4,8 +4,12 @@ import { readFile } from "node:fs/promises";
 import { after, test } from "node:test";
 import { quote } from "../src/lib/quotes";
 import { mapEvidenceError } from "../src/server/evidence/error-boundary";
-import { EvidenceCandidatePreparationError } from "../src/server/evidence/prepare-candidate";
-import { EvidencePersistenceError } from "../src/server/evidence/persist-candidate";
+import {
+  EvidenceCandidatePreparationError,
+  EvidencePersistenceError,
+  EvidenceReadError,
+  RoutingEligibilityError,
+} from "../src/server/evidence/errors";
 import { orchestratePreparedRoutingCandidate } from "../src/server/evidence/routing-orchestration";
 import {
   KMS_PROVIDER,
@@ -16,9 +20,13 @@ import {
   type DekWrappingContext,
 } from "../src/server/evidence/kms";
 import {
+  __testOnlyRunReadOnlyTransaction,
   pool,
+  readEvidencePreparationSnapshot,
   readRoutingIdempotencyPreflight,
+  transaction,
 } from "../src/server/repository";
+import type { PoolClient } from "pg";
 
 // Test fixture only. It is not a deployed registry address or runtime default.
 const TEST_ONLY_REGISTRY = "0x1111111111111111111111111111111111111111";
@@ -170,6 +178,44 @@ function hasPersistenceError(code: EvidencePersistenceError["code"]) {
     error instanceof EvidencePersistenceError && error.code === code;
 }
 
+async function commitSyntheticNormalRouting(
+  context: TestContext,
+  key: string,
+  requestFingerprint: string,
+  response: unknown,
+): Promise<void> {
+  await transaction(async (db) => {
+    await db.query(
+      "INSERT INTO settlements(id,business_id,invoice_id,quote_id,route_id,expected_minor,minimum_minor,status) VALUES($1,$2,$3,$4,'split','473904','471534','Routing')",
+      [randomUUID(), context.businessId, context.invoiceId, context.quoteId],
+    );
+    await db.query(
+      "UPDATE invoices SET status='Routing',data=jsonb_set(jsonb_set(data,'{status}','\"Routing\"'::jsonb),'{selectedRoute}','\"split\"'::jsonb) WHERE business_id=$1 AND id=$2",
+      [context.businessId, context.invoiceId],
+    );
+    await db.query(
+      "INSERT INTO payment_events(id,business_id,invoice_id,actor_id,correlation_id,kind,data,previous_state,new_state) VALUES($1,$2,$3,$4,$5,'invoice.Routing',$6,'Funded','Routing')",
+      [
+        randomUUID(),
+        context.businessId,
+        context.invoiceId,
+        context.actorUserId,
+        randomUUID(),
+        JSON.stringify({
+          status: "Routing",
+          selectedRoute: "split",
+          fundingMinor: "2500001",
+          simulated: true,
+        }),
+      ],
+    );
+    await db.query(
+      "INSERT INTO idempotency(business_id,key,fingerprint,response) VALUES($1,$2,$3,$4)",
+      [context.businessId, key, requestFingerprint, JSON.stringify(response)],
+    );
+  });
+}
+
 after(async () => {
   await pool.end();
 });
@@ -224,6 +270,38 @@ test("matching preflight uses candidate-free final replay and reuses no provider
   });
 });
 
+test("matching preflight still reauthorizes membership in the final helper", async () => {
+  const context = await createContext();
+  const key = `routing-${randomUUID()}`;
+  const requestFingerprint = fingerprint();
+  await seedIdempotency(context, key, requestFingerprint);
+  await pool.query(
+    "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
+    [context.businessId, context.actorUserId],
+  );
+  const provider = new ControlledDekProvider(() =>
+    assert.fail(
+      "candidate-free membership reauthorization must not invoke provider",
+    ),
+  );
+
+  await assert.rejects(
+    orchestratePreparedRoutingCandidate(
+      request(context, provider, { idempotencyKey: key, requestFingerprint }),
+    ),
+    hasPersistenceError("FORBIDDEN"),
+  );
+  assert.equal(provider.calls, 0);
+  assert.deepEqual(await counts(context), {
+    evidence: "0",
+    outbox: "0",
+    settlements: "0",
+    events: "0",
+    idempotency: "1",
+    status: "Funded",
+  });
+});
+
 test("conflicting preflight is retried authoritatively and cannot produce writes", async () => {
   const context = await createContext();
   const key = `routing-${randomUUID()}`;
@@ -247,6 +325,147 @@ test("conflicting preflight is retried authoritatively and cannot produce writes
     idempotency: "1",
     status: "Funded",
   });
+});
+
+test("a matching normal Routing commit between preflight miss and snapshot replays authoritatively", async () => {
+  const context = await createContext();
+  const key = `routing-${randomUUID()}`;
+  const requestFingerprint = fingerprint();
+  const response = { replay: "committed-before-snapshot", status: "Routing" };
+  const provider = new ControlledDekProvider(() =>
+    assert.fail("candidate-free replay must not invoke provider"),
+  );
+
+  const result = await orchestratePreparedRoutingCandidate(
+    request(context, provider, { idempotencyKey: key, requestFingerprint }),
+    {
+      afterPreflightMissBeforeSnapshot: () =>
+        commitSyntheticNormalRouting(
+          context,
+          key,
+          requestFingerprint,
+          response,
+        ),
+    },
+  );
+
+  assert.equal(result.preflight, "miss");
+  assert.equal(result.kind, "replay");
+  assert.deepEqual(result.response, response);
+  assert.equal(provider.calls, 0);
+  assert.deepEqual(await counts(context), {
+    evidence: "0",
+    outbox: "0",
+    settlements: "1",
+    events: "1",
+    idempotency: "1",
+    status: "Routing",
+  });
+});
+
+test("a conflicting commit between preflight miss and snapshot is decided by final persistence", async () => {
+  const context = await createContext();
+  const key = `routing-${randomUUID()}`;
+  const provider = new ControlledDekProvider(() =>
+    assert.fail("candidate-free conflict arbitration must not invoke provider"),
+  );
+
+  await assert.rejects(
+    orchestratePreparedRoutingCandidate(
+      request(context, provider, { idempotencyKey: key }),
+      {
+        afterPreflightMissBeforeSnapshot: () =>
+          commitSyntheticNormalRouting(context, key, fingerprint("cd"), {
+            replay: "different-fingerprint",
+            status: "Routing",
+          }),
+      },
+    ),
+    hasPersistenceError("IDEMPOTENCY_CONFLICT"),
+  );
+  assert.equal(provider.calls, 0);
+  assert.deepEqual(await counts(context), {
+    evidence: "0",
+    outbox: "0",
+    settlements: "1",
+    events: "1",
+    idempotency: "1",
+    status: "Routing",
+  });
+});
+
+test("a stale snapshot without a concurrent idempotency row preserves invalid transition semantics", async () => {
+  const context = await createContext();
+  const provider = new ControlledDekProvider(() =>
+    assert.fail("ineligible snapshot must not invoke provider"),
+  );
+
+  await assert.rejects(
+    orchestratePreparedRoutingCandidate(request(context, provider), {
+      afterPreflightMissBeforeSnapshot: async () => {
+        await pool.query(
+          "UPDATE invoices SET status='Routing',data=jsonb_set(data,'{status}','\"Routing\"'::jsonb) WHERE business_id=$1 AND id=$2",
+          [context.businessId, context.invoiceId],
+        );
+      },
+    }),
+    (error: unknown) =>
+      error instanceof RoutingEligibilityError &&
+      error.code === "INVALID_TRANSITION",
+  );
+  assert.equal(provider.calls, 0);
+  assert.deepEqual(await counts(context), {
+    evidence: "0",
+    outbox: "0",
+    settlements: "0",
+    events: "0",
+    idempotency: "0",
+    status: "Routing",
+  });
+});
+
+test("initial snapshot failures preserve invoice, transition, and quote API semantics", async () => {
+  const provider = new ControlledDekProvider(() =>
+    assert.fail("initial snapshot rejection must not invoke provider"),
+  );
+
+  const missingInvoice = await createContext();
+  await assert.rejects(
+    orchestratePreparedRoutingCandidate({
+      ...request(missingInvoice, provider),
+      invoiceId: randomUUID(),
+    }),
+    (error: unknown) =>
+      error instanceof RoutingEligibilityError &&
+      error.code === "INVOICE_NOT_FOUND",
+  );
+
+  const missingQuote = await createContext();
+  await pool.query("DELETE FROM quotes WHERE id=$1", [missingQuote.quoteId]);
+  await assert.rejects(
+    orchestratePreparedRoutingCandidate(request(missingQuote, provider)),
+    (error: unknown) =>
+      error instanceof RoutingEligibilityError &&
+      error.code === "QUOTE_EXPIRED_OR_MISSING",
+  );
+
+  const ineligibleBeforeQuote = await createContext();
+  await pool.query("DELETE FROM quotes WHERE id=$1", [
+    ineligibleBeforeQuote.quoteId,
+  ]);
+  await pool.query(
+    "UPDATE invoices SET status='Routing',data=jsonb_set(data,'{status}','\"Routing\"'::jsonb) WHERE business_id=$1 AND id=$2",
+    [ineligibleBeforeQuote.businessId, ineligibleBeforeQuote.invoiceId],
+  );
+  await assert.rejects(
+    orchestratePreparedRoutingCandidate(
+      request(ineligibleBeforeQuote, provider),
+    ),
+    (error: unknown) =>
+      error instanceof RoutingEligibilityError &&
+      error.code === "INVALID_TRANSITION",
+  );
+  assert.equal(provider.calls, 0);
 });
 
 test("controlled preparation starts after read-only work, without final locks, then persists once", async () => {
@@ -383,6 +602,37 @@ test("safe evidence error mapping keeps ambiguous commit indeterminate", () => {
       500,
       "EVIDENCE_ENCRYPTION_FAILED",
     ],
+    [
+      new EvidenceCandidatePreparationError("PREPARATION_FAILED"),
+      500,
+      "EVIDENCE_PREPARATION_FAILED",
+    ],
+    [
+      new EvidenceReadError("PREFLIGHT_READ_FAILED"),
+      500,
+      "EVIDENCE_PREFLIGHT_READ_FAILED",
+    ],
+    [
+      new EvidenceReadError("SNAPSHOT_READ_FAILED"),
+      500,
+      "EVIDENCE_SNAPSHOT_READ_FAILED",
+    ],
+    [new RoutingEligibilityError("INVOICE_NOT_FOUND"), 404, "NOT_FOUND"],
+    [
+      new RoutingEligibilityError("INVALID_TRANSITION"),
+      409,
+      "INVALID_TRANSITION",
+    ],
+    [
+      new RoutingEligibilityError("QUOTE_EXPIRED_OR_MISSING"),
+      409,
+      "QUOTE_EXPIRED_OR_MISSING",
+    ],
+    [
+      new EvidencePersistenceError("INVALID_CONTEXT"),
+      500,
+      "EVIDENCE_INTERNAL_CONTEXT_INVALID",
+    ],
     [new EvidencePersistenceError("FORBIDDEN"), 403, "FORBIDDEN"],
     [
       new EvidencePersistenceError("IDEMPOTENCY_CONFLICT"),
@@ -390,9 +640,24 @@ test("safe evidence error mapping keeps ambiguous commit indeterminate", () => {
       "IDEMPOTENCY_CONFLICT",
     ],
     [
+      new EvidencePersistenceError("CANDIDATE_REQUIRED"),
+      500,
+      "EVIDENCE_INTERNAL_CONTEXT_INVALID",
+    ],
+    [
       new EvidencePersistenceError("CANDIDATE_INVALID"),
       500,
       "EVIDENCE_INTERNAL_CANDIDATE_INVALID",
+    ],
+    [
+      new EvidencePersistenceError("CANDIDATE_MISMATCH"),
+      409,
+      "EVIDENCE_PREPARATION_STALE",
+    ],
+    [
+      new EvidencePersistenceError("INVOICE_OR_QUOTE_UNAVAILABLE"),
+      409,
+      "QUOTE_EXPIRED_OR_MISSING",
     ],
     [
       new EvidencePersistenceError("PERSISTENCE_FAILED"),
@@ -410,6 +675,132 @@ test("safe evidence error mapping keeps ambiguous commit indeterminate", () => {
     assert.equal(mapped?.status, status);
     assert.equal(mapped?.code, code);
   }
+});
+
+interface ControlledReadOnlyClient {
+  readonly queries: string[];
+  readonly releases: boolean[];
+  readonly client: Pick<PoolClient, "query" | "release">;
+}
+
+function controlledReadOnlyClient(
+  failures: Partial<Record<"SELECT" | "COMMIT" | "ROLLBACK", Error>> = {},
+): ControlledReadOnlyClient {
+  const queries: string[] = [];
+  const releases: boolean[] = [];
+  const client = {
+    query: async (query: string) => {
+      queries.push(query);
+      const failure = Object.entries(failures).find(([operation]) =>
+        query.startsWith(operation),
+      )?.[1];
+      if (failure) throw failure;
+      return { rowCount: 0, rows: [] };
+    },
+    release: (destroy?: boolean) => {
+      releases.push(destroy === true);
+    },
+  } as unknown as Pick<PoolClient, "query" | "release">;
+  return { client, queries, releases };
+}
+
+async function withFakePoolClient<T>(
+  client: Pick<PoolClient, "query" | "release">,
+  work: () => Promise<T>,
+): Promise<T> {
+  const mutablePool = pool as unknown as {
+    connect: typeof pool.connect;
+  };
+  const originalConnect = mutablePool.connect;
+  mutablePool.connect = async () => client as PoolClient;
+  try {
+    return await work();
+  } finally {
+    mutablePool.connect = originalConnect;
+  }
+}
+
+test("read-only cleanup preserves original errors and discards uncertain clients", async () => {
+  const operationFailure = new Error("read query failure");
+  const healthyRollback = controlledReadOnlyClient({
+    SELECT: operationFailure,
+  });
+  await assert.rejects(
+    __testOnlyRunReadOnlyTransaction(healthyRollback.client, async (db) => {
+      await db.query("SELECT fail");
+      return "unreachable";
+    }),
+    (error: unknown) => error === operationFailure,
+  );
+  assert.deepEqual(healthyRollback.queries, [
+    "BEGIN READ ONLY",
+    "SELECT fail",
+    "ROLLBACK",
+  ]);
+  assert.deepEqual(healthyRollback.releases, [false]);
+
+  const rollbackFailure = new Error("rollback failure");
+  const failedRollback = controlledReadOnlyClient({
+    SELECT: operationFailure,
+    ROLLBACK: rollbackFailure,
+  });
+  await assert.rejects(
+    __testOnlyRunReadOnlyTransaction(failedRollback.client, async (db) => {
+      await db.query("SELECT fail");
+      return "unreachable";
+    }),
+    (error: unknown) => error === operationFailure,
+  );
+  assert.deepEqual(failedRollback.releases, [true]);
+
+  const commitFailure = new Error("commit acknowledgement failure");
+  const failedCommit = controlledReadOnlyClient({ COMMIT: commitFailure });
+  await assert.rejects(
+    __testOnlyRunReadOnlyTransaction(failedCommit.client, async () => "done"),
+    (error: unknown) => error === commitFailure,
+  );
+  assert.deepEqual(failedCommit.queries, [
+    "BEGIN READ ONLY",
+    "COMMIT",
+    "ROLLBACK",
+  ]);
+  assert.deepEqual(failedCommit.releases, [true]);
+});
+
+test("read-only repository errors are sanitized before the API boundary", async () => {
+  const preflightFailure = new Error(
+    "raw preflight SQL detail must not escape",
+  );
+  const preflightClient = controlledReadOnlyClient({
+    SELECT: preflightFailure,
+  });
+  await assert.rejects(
+    withFakePoolClient(preflightClient.client, () =>
+      readRoutingIdempotencyPreflight(
+        randomUUID(),
+        "routing-test-key",
+        fingerprint(),
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof EvidenceReadError &&
+      error.code === "PREFLIGHT_READ_FAILED" &&
+      !error.message.includes("raw preflight SQL detail"),
+  );
+  assert.deepEqual(preflightClient.releases, [false]);
+
+  const snapshotFailure = new Error("raw snapshot SQL detail must not escape");
+  const snapshotClient = controlledReadOnlyClient({ SELECT: snapshotFailure });
+  await assert.rejects(
+    withFakePoolClient(snapshotClient.client, () =>
+      readEvidencePreparationSnapshot(randomUUID(), randomUUID(), randomUUID()),
+    ),
+    (error: unknown) =>
+      error instanceof EvidenceReadError &&
+      error.code === "SNAPSHOT_READ_FAILED" &&
+      !error.message.includes("raw snapshot SQL detail"),
+  );
+  assert.deepEqual(snapshotClient.releases, [false]);
 });
 
 test("ordinary Routing remains disconnected from the controlled orchestration seam", async () => {

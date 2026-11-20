@@ -13,10 +13,14 @@ import {
   type PreparedEvidenceCandidate,
 } from "./prepare-candidate";
 import {
-  EvidencePersistenceError,
   persistPreparedEvidenceCandidate,
   type PersistPreparedEvidenceCandidateResult,
 } from "./persist-candidate";
+import {
+  EvidencePersistenceError,
+  RoutingEligibilityError,
+  type RoutingEligibilityErrorCode,
+} from "./errors";
 import type { CanonicalRouteId } from "./commitment";
 import type { DekProvider } from "./kms";
 
@@ -37,6 +41,11 @@ export interface RoutingOrchestrationInput {
 }
 
 export interface RoutingOrchestrationTestHooks {
+  /**
+   * Test-only deterministic boundary after a preflight miss and before the
+   * snapshot read. It has no normal-runtime caller or configuration fallback.
+   */
+  afterPreflightMissBeforeSnapshot?: () => void | Promise<void>;
   /** Called only after the snapshot read has completed and released its client. */
   beforePreparation?: () => void | Promise<void>;
 }
@@ -46,10 +55,38 @@ export interface RoutingOrchestrationResult extends PersistPreparedEvidenceCandi
   preflight: RoutingIdempotencyPreflight["kind"];
 }
 
-function persistenceFailure(
-  code: ConstructorParameters<typeof EvidencePersistenceError>[0],
-): never {
-  throw new EvidencePersistenceError(code);
+function eligibilityFailure(code: RoutingEligibilityErrorCode): never {
+  throw new RoutingEligibilityError(code);
+}
+
+/**
+ * After a preflight miss, an ineligible snapshot can be a race with a durable
+ * matching request. The final helper is asked candidate-free so its advisory
+ * lock, fingerprint decision, and locked membership reauthorization remain the
+ * only replay/conflict authority. Its CANDIDATE_REQUIRED result means no row
+ * exists and the original known snapshot outcome is safe to return.
+ */
+async function recheckBeforeSnapshotRejection(
+  input: RoutingOrchestrationInput,
+  original: RoutingEligibilityError,
+): Promise<RoutingOrchestrationResult> {
+  try {
+    const result = await persistPreparedEvidenceCandidate({
+      businessId: input.businessId,
+      actorUserId: input.actorUserId,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: input.requestFingerprint,
+    });
+    return { ...result, preflight: "miss" };
+  } catch (error) {
+    if (
+      error instanceof EvidencePersistenceError &&
+      error.code === "CANDIDATE_REQUIRED"
+    ) {
+      throw original;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -81,17 +118,30 @@ export async function orchestratePreparedRoutingCandidate(
     return { ...result, preflight: preflight.kind };
   }
 
+  await hooks?.afterPreflightMissBeforeSnapshot?.();
   const snapshot = await readEvidencePreparationSnapshot(
     input.businessId,
     input.invoiceId,
     input.quoteId,
   );
   if (snapshot.kind === "invoice_missing")
-    return persistenceFailure("INVOICE_OR_QUOTE_UNAVAILABLE");
-  if (snapshot.kind === "quote_missing_or_expired")
-    return persistenceFailure("INVOICE_OR_QUOTE_UNAVAILABLE");
+    return recheckBeforeSnapshotRejection(
+      input,
+      new RoutingEligibilityError("INVOICE_NOT_FOUND"),
+    );
+
+  // Preserve ordinary Routing validation order: invoice transition eligibility
+  // precedes quote availability, even when the snapshot's quote is missing.
   if (snapshot.invoice.status !== "Funded")
-    return persistenceFailure("CANDIDATE_MISMATCH");
+    return recheckBeforeSnapshotRejection(
+      input,
+      new RoutingEligibilityError("INVALID_TRANSITION"),
+    );
+  if (snapshot.kind === "quote_missing_or_expired")
+    return recheckBeforeSnapshotRejection(
+      input,
+      new RoutingEligibilityError("QUOTE_EXPIRED_OR_MISSING"),
+    );
 
   // Snapshot's own READ ONLY transaction has committed and its client has been
   // released. No advisory, invoice, or quote lock is acquired before provider

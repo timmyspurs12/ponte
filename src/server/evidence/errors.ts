@@ -30,6 +30,52 @@ export class EvidenceCandidatePreparationError extends Error {
   }
 }
 
+export type EvidenceReadErrorCode =
+  "PREFLIGHT_READ_FAILED" | "SNAPSHOT_READ_FAILED";
+
+const READ_ERROR_MESSAGES: Readonly<Record<EvidenceReadErrorCode, string>> =
+  Object.freeze({
+    PREFLIGHT_READ_FAILED: "routing idempotency preflight failed",
+    SNAPSHOT_READ_FAILED: "evidence preparation snapshot read failed",
+  });
+
+/** Fixed error boundary for short read-only orchestration database work. */
+export class EvidenceReadError extends Error {
+  readonly code: EvidenceReadErrorCode;
+
+  constructor(code: EvidenceReadErrorCode) {
+    super(READ_ERROR_MESSAGES[code]);
+    this.name = "EvidenceReadError";
+    this.code = code;
+  }
+}
+
+/**
+ * These describe known initial request state before preparation. They are not
+ * final-candidate failures and therefore preserve the ordinary Routing API
+ * semantics rather than reusing an evidence-staleness result.
+ */
+export type RoutingEligibilityErrorCode =
+  "INVOICE_NOT_FOUND" | "INVALID_TRANSITION" | "QUOTE_EXPIRED_OR_MISSING";
+
+const ELIGIBILITY_ERROR_MESSAGES: Readonly<
+  Record<RoutingEligibilityErrorCode, string>
+> = Object.freeze({
+  INVOICE_NOT_FOUND: "routing invoice was not found",
+  INVALID_TRANSITION: "routing invoice is not eligible for transition",
+  QUOTE_EXPIRED_OR_MISSING: "routing quote is unavailable or expired",
+});
+
+export class RoutingEligibilityError extends Error {
+  readonly code: RoutingEligibilityErrorCode;
+
+  constructor(code: RoutingEligibilityErrorCode) {
+    super(ELIGIBILITY_ERROR_MESSAGES[code]);
+    this.name = "RoutingEligibilityError";
+    this.code = code;
+  }
+}
+
 export type EvidencePersistenceErrorCode =
   | "INVALID_CONTEXT"
   | "IDEMPOTENCY_CONFLICT"
