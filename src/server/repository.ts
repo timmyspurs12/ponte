@@ -1,15 +1,35 @@
 import { Pool, type PoolClient } from "pg";
-import type { PaymentQuote } from "../lib/models";
+import type { Invoice, PaymentQuote } from "../lib/models";
 import type {
   KmsProviderIdentifier,
   WrappedDekAlgorithmIdentifier,
   WrappedDekFormatIdentifier,
 } from "./evidence/kms";
 
+/**
+ * Narrow persisted invoice view for a future evidence transaction. `funding_minor`
+ * is PostgreSQL int8 text from node-postgres and is the authoritative amount;
+ * `data` is used only for fixed invoice metadata validation.
+ */
+export interface LockedEvidenceInvoiceRow {
+  id: string;
+  business_id: string;
+  funding_minor: string;
+  data: Pick<Invoice, "fundingCurrency" | "fundingMinor">;
+}
+
+/**
+ * Narrow persisted quote view for a future evidence transaction. All three
+ * identity columns are selected from PostgreSQL rather than inferred from the
+ * lookup arguments.
+ */
 export interface LockedEvidenceQuoteRow {
   id: string;
+  business_id: string;
+  invoice_id: string;
   source: string;
   simulated: boolean;
+  /** node-postgres parses persisted timestamptz quote expiry as a Date. */
   expires_at: Date;
   data: PaymentQuote;
 }
@@ -117,6 +137,21 @@ export const findValidQuote = (db: PoolClient, values: unknown[]) =>
   );
 
 /**
+ * Locks the authoritative invoice identity/funding columns for a future
+ * evidence transaction. It has no normal Routing or service integration.
+ */
+export function lockInvoiceForEvidence(
+  db: PoolClient,
+  businessId: string,
+  invoiceId: string,
+) {
+  return db.query<LockedEvidenceInvoiceRow>(
+    "SELECT id,business_id,funding_minor,data FROM invoices WHERE business_id=$1 AND id=$2 FOR UPDATE",
+    [businessId, invoiceId],
+  );
+}
+
+/**
  * Locks the exact persisted quote fields needed by future evidence creation.
  * This helper does not create evidence or alter the current Routing lifecycle.
  */
@@ -127,7 +162,7 @@ export function lockValidQuoteForEvidence(
   quoteId: string,
 ) {
   return db.query<LockedEvidenceQuoteRow>(
-    "SELECT id,source,simulated,expires_at,data FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3 AND expires_at>clock_timestamp() FOR UPDATE",
+    "SELECT id,business_id,invoice_id,source,simulated,expires_at,data FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3 AND expires_at>clock_timestamp() FOR UPDATE",
     [businessId, invoiceId, quoteId],
   );
 }

@@ -58,7 +58,7 @@ const GOLDEN_PAYLOAD_DIGEST =
   "0x890933213ea0022af3e0f0135c1f65ff20963926535ccad3f745ac869c8611ce";
 
 function payloadInput(): PrivateEvidencePayloadInput {
-  const privateInvoice = Object.assign(
+  const persistedInvoiceData = Object.assign(
     { fundingCurrency: "BRL" as const, fundingMinor: "2500000" },
     {
       reference: "SYNTHETIC-PRIVATE-INVOICE",
@@ -69,11 +69,19 @@ function payloadInput(): PrivateEvidencePayloadInput {
   );
   return {
     aad: { ...AAD_INPUT },
-    invoice: privateInvoice,
+    invoiceRow: {
+      id: AAD_INPUT.invoiceId,
+      business_id: AAD_INPUT.businessId,
+      funding_minor: "2500000",
+      data: persistedInvoiceData,
+    },
     quoteRow: {
+      id: AAD_INPUT.quoteId,
+      business_id: AAD_INPUT.businessId,
+      invoice_id: AAD_INPUT.invoiceId,
       source: "simulation-fixed-525",
       simulated: true,
-      expires_at: "1803859140000",
+      expires_at: new Date(1803859140000),
       data: {
         ...quote({ fundingMinor: "2500000" }),
         routes: quote({ fundingMinor: "2500000" }).routes.map((route) => ({
@@ -290,6 +298,107 @@ test("private payload rejects arbitrary top-level input fields", () => {
   );
 });
 
+test("matching normalized persisted identities preserve every golden output", () => {
+  const input = payloadInput();
+  input.aad.businessId = input.aad.businessId.toUpperCase();
+  input.aad.invoiceId = input.aad.invoiceId.toUpperCase();
+  input.aad.quoteId = input.aad.quoteId.toUpperCase();
+  input.invoiceRow.id = input.invoiceRow.id.toUpperCase();
+  input.invoiceRow.business_id = input.invoiceRow.business_id.toUpperCase();
+  input.quoteRow.id = input.quoteRow.id.toUpperCase();
+  input.quoteRow.business_id = input.quoteRow.business_id.toUpperCase();
+  input.quoteRow.invoice_id = input.quoteRow.invoice_id.toUpperCase();
+
+  const aad = buildCanonicalPrivateEvidenceAad(input.aad);
+  assert.equal(`0x${aad.toString("hex")}`, GOLDEN_AAD_HEX);
+  assert.equal(
+    `0x${buildKmsWrappingContext(aad).toString("hex")}`,
+    GOLDEN_KMS_CONTEXT_HEX,
+  );
+  assert.equal(
+    buildCanonicalPrivateEvidencePayload(input).toString("utf8"),
+    GOLDEN_PAYLOAD_JSON,
+  );
+});
+
+test("private payload rejects every persisted identity cross-binding mismatch generically", () => {
+  const otherBusiness = "55555555-5555-4555-8555-555555555555";
+  const anotherBusiness = "66666666-6666-4666-8666-666666666666";
+  const otherInvoice = "77777777-7777-4777-8777-777777777777";
+  const otherQuote = "88888888-8888-4888-8888-888888888888";
+  const mutations: Array<{
+    name: string;
+    mutate: (input: PrivateEvidencePayloadInput) => void;
+  }> = [
+    {
+      name: "quote from another business",
+      mutate: (input) => {
+        input.quoteRow.business_id = otherBusiness;
+      },
+    },
+    {
+      name: "quote from another invoice",
+      mutate: (input) => {
+        input.quoteRow.invoice_id = otherInvoice;
+      },
+    },
+    {
+      name: "quote persisted ID differs from AAD",
+      mutate: (input) => {
+        input.quoteRow.id = otherQuote;
+      },
+    },
+    {
+      name: "invoice persisted ID differs from AAD",
+      mutate: (input) => {
+        input.invoiceRow.id = otherInvoice;
+      },
+    },
+    {
+      name: "invoice business differs from AAD",
+      mutate: (input) => {
+        input.invoiceRow.business_id = otherBusiness;
+      },
+    },
+    {
+      name: "quote business differs from invoice business",
+      mutate: (input) => {
+        input.invoiceRow.business_id = otherBusiness;
+        input.quoteRow.business_id = anotherBusiness;
+      },
+    },
+  ];
+
+  for (const { name, mutate } of mutations) {
+    const input = payloadInput();
+    mutate(input);
+    assert.throws(
+      () => buildCanonicalPrivateEvidencePayload(input),
+      (error: unknown) => {
+        assert(error instanceof PrivateEvidencePayloadValidationError, name);
+        assert.equal(
+          error.message,
+          "persisted record identity does not match canonical AAD",
+        );
+        for (const privateValue of [
+          input.aad.businessId,
+          input.aad.invoiceId,
+          input.aad.quoteId,
+          input.invoiceRow.id,
+          input.invoiceRow.business_id,
+          input.quoteRow.id,
+          input.quoteRow.business_id,
+          input.quoteRow.invoice_id,
+          input.salt,
+        ]) {
+          assert.equal(error.message.includes(privateValue), false);
+        }
+        return true;
+      },
+    );
+  }
+});
+
 test("private payload emits the frozen selected-route code", () => {
   const input = payloadInput();
   input.expectedCommitment = undefined;
@@ -346,11 +455,28 @@ test("private payload validates V1 route, binding, salt, registry, and predecess
   }
 });
 
-test("private payload rejects missing or incorrect persisted quote metadata and non-exact expiry", () => {
+test("private payload treats the invoice column as authoritative funding", () => {
+  const columnVsQuote = payloadInput();
+  columnVsQuote.invoiceRow.funding_minor = "2500001";
+  columnVsQuote.invoiceRow.data.fundingMinor = "2500001";
+  assert.throws(
+    () => buildCanonicalPrivateEvidencePayload(columnVsQuote),
+    payloadError,
+  );
+
+  const staleInvoiceJson = payloadInput();
+  staleInvoiceJson.invoiceRow.data.fundingMinor = "2500001";
+  assert.throws(
+    () => buildCanonicalPrivateEvidencePayload(staleInvoiceJson),
+    payloadError,
+  );
+});
+
+test("private payload rejects invalid persisted quote metadata and expiry", () => {
   const mutations: Array<(input: PrivateEvidencePayloadInput) => void> = [
     (input) => {
       (
-        input.invoice as unknown as { fundingCurrency: string }
+        input.invoiceRow.data as unknown as { fundingCurrency: string }
       ).fundingCurrency = "USD";
     },
     (input) => {
@@ -380,10 +506,12 @@ test("private payload rejects missing or incorrect persisted quote metadata and 
       input.quoteRow.data.executionCostMinor = "3";
     },
     (input) => {
-      input.quoteRow.expires_at = "1803859140000.1";
+      (input.quoteRow as unknown as { expires_at: unknown }).expires_at =
+        "1803859140000.1";
     },
     (input) => {
-      input.quoteRow.expires_at = "18446744073709551616";
+      (input.quoteRow as unknown as { expires_at: unknown }).expires_at =
+        "18446744073709551616";
     },
     (input) => {
       delete (input.quoteRow as unknown as Record<string, unknown>).source;

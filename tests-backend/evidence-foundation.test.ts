@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   insertPendingEvidenceOutbox,
   insertRouteDecisionEvidence,
+  lockInvoiceForEvidence,
   lockValidQuoteForEvidence,
   pool,
   transaction,
@@ -75,20 +76,40 @@ async function createContext() {
       "2027-12-20T00:00:00.123Z",
     ],
   );
-  return { businessId, userId, invoiceId, quoteId, quote: invoice.quote };
+  return {
+    businessId,
+    userId,
+    invoiceId,
+    quoteId,
+    invoice,
+    quote: invoice.quote,
+  };
 }
 
 after(async () => {
   await pool.end();
 });
 
-test("evidence repository helpers lock a persisted quote and atomically insert synthetic encrypted rows", async () => {
+test("evidence repository helpers lock persisted invoice/quote identity and atomically insert synthetic encrypted rows", async () => {
   const context = await createContext();
   const evidenceId = randomUUID();
   const outboxId = randomUUID();
   const publicEvidenceId = testOnlyEvidenceId();
 
   await transaction(async (db) => {
+    const lockedInvoice = await lockInvoiceForEvidence(
+      db,
+      context.businessId,
+      context.invoiceId,
+    );
+    assert.equal(lockedInvoice.rowCount, 1);
+    assert.deepEqual(lockedInvoice.rows[0], {
+      id: context.invoiceId,
+      business_id: context.businessId,
+      funding_minor: "2500001",
+      data: context.invoice,
+    });
+
     const locked = await lockValidQuoteForEvidence(
       db,
       context.businessId,
@@ -98,6 +119,8 @@ test("evidence repository helpers lock a persisted quote and atomically insert s
     assert.equal(locked.rowCount, 1);
     assert.deepEqual(locked.rows[0], {
       id: context.quoteId,
+      business_id: context.businessId,
+      invoice_id: context.invoiceId,
       source: "simulation-fixed-525",
       simulated: true,
       expires_at: new Date("2027-12-20T00:00:00.123Z"),

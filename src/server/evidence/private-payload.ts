@@ -3,7 +3,11 @@
 // integration.
 import "server-only";
 
-import type { Invoice, RouteCandidate } from "../../lib/models";
+import type { RouteCandidate } from "../../lib/models";
+import type {
+  LockedEvidenceInvoiceRow,
+  LockedEvidenceQuoteRow,
+} from "../repository";
 import {
   ARBITRUM_SEPOLIA_CHAIN_ID,
   buildRouteDecisionCommitment,
@@ -12,11 +16,12 @@ import {
   QUOTE_SCHEMA_VERSION,
   SIMULATED_ROUTE_DECISION_KIND,
   type CanonicalRouteId,
-  type PersistedQuoteRow,
   type RouteDecisionCommitment,
 } from "./commitment";
 import {
+  canonicalizeEvidenceUuid,
   canonicalizePrivateEvidenceAad,
+  type CanonicalPrivateEvidenceAad,
   type CanonicalPrivateEvidenceAadInput,
 } from "./aad";
 
@@ -41,8 +46,10 @@ export interface ExpectedPrivateEvidenceCommitment {
 
 export interface PrivateEvidencePayloadInput {
   aad: CanonicalPrivateEvidenceAadInput;
-  invoice: Pick<Invoice, "fundingCurrency" | "fundingMinor">;
-  quoteRow: PersistedQuoteRow;
+  /** Locked PostgreSQL invoice row; funding_minor is the authoritative amount. */
+  invoiceRow: LockedEvidenceInvoiceRow;
+  /** Locked PostgreSQL quote row, including actual record identities. */
+  quoteRow: LockedEvidenceQuoteRow;
   selectedRouteId: CanonicalRouteId;
   sequence: string;
   previousPayloadHash: string;
@@ -84,7 +91,7 @@ function assertObject(
 function assertPayloadInputKeys(value: Record<string, unknown>): void {
   const required = [
     "aad",
-    "invoice",
+    "invoiceRow",
     "quoteRow",
     "selectedRouteId",
     "sequence",
@@ -222,8 +229,44 @@ function commitmentRoutes(routes: readonly CanonicalRoute[]): RouteCandidate[] {
   }));
 }
 
+function assertPersistedIdentity(
+  aad: CanonicalPrivateEvidenceAad,
+  invoiceRow: PrivateEvidencePayloadInput["invoiceRow"],
+  quoteRow: PrivateEvidencePayloadInput["quoteRow"],
+): void {
+  assertObject(invoiceRow, "invoiceRow");
+  assertObject(quoteRow, "quoteRow");
+
+  const invoiceId = canonicalizeEvidenceUuid(invoiceRow.id, "invoiceRow.id");
+  const invoiceBusinessId = canonicalizeEvidenceUuid(
+    invoiceRow.business_id,
+    "invoiceRow.business_id",
+  );
+  const quoteId = canonicalizeEvidenceUuid(quoteRow.id, "quoteRow.id");
+  const quoteBusinessId = canonicalizeEvidenceUuid(
+    quoteRow.business_id,
+    "quoteRow.business_id",
+  );
+  const quoteInvoiceId = canonicalizeEvidenceUuid(
+    quoteRow.invoice_id,
+    "quoteRow.invoice_id",
+  );
+
+  if (
+    invoiceBusinessId !== quoteBusinessId ||
+    invoiceId !== quoteInvoiceId ||
+    aad.businessId !== invoiceBusinessId ||
+    aad.invoiceId !== invoiceId ||
+    aad.businessId !== quoteBusinessId ||
+    aad.invoiceId !== quoteInvoiceId ||
+    aad.quoteId !== quoteId
+  ) {
+    fail("persisted record identity does not match canonical AAD");
+  }
+}
+
 function canonicalQuote(
-  invoice: PrivateEvidencePayloadInput["invoice"],
+  invoiceRow: PrivateEvidencePayloadInput["invoiceRow"],
   quoteRow: PrivateEvidencePayloadInput["quoteRow"],
 ): {
   fundingCurrency: "BRL";
@@ -240,15 +283,27 @@ function canonicalQuote(
   executionCostMinor: string;
   routes: CanonicalRoute[];
 } {
-  assertObject(invoice, "invoice");
+  assertObject(invoiceRow, "invoiceRow");
+  assertObject(invoiceRow.data, "invoiceRow.data");
   assertObject(quoteRow, "quoteRow");
-  if (invoice.fundingCurrency !== "BRL")
-    fail("invoice funding currency must be BRL");
+  if (invoiceRow.data.fundingCurrency !== "BRL")
+    fail("persisted invoice funding currency must be BRL");
   const fundingMinor = canonicalDecimalString(
-    invoice.fundingMinor,
+    invoiceRow.funding_minor,
     MAX_UINT256,
-    "invoice.fundingMinor",
+    "invoiceRow.funding_minor",
   );
+  if (invoiceRow.data.fundingMinor !== undefined) {
+    const dataFundingMinor = canonicalDecimalString(
+      invoiceRow.data.fundingMinor,
+      MAX_UINT256,
+      "invoiceRow.data.fundingMinor",
+    );
+    if (dataFundingMinor !== fundingMinor)
+      fail(
+        "persisted invoice funding metadata does not match authoritative funding",
+      );
+  }
   if (quoteRow.source !== "simulation-fixed-525")
     fail("quoteRow.source is not supported");
   if (quoteRow.simulated !== true) fail("quoteRow.simulated must be true");
@@ -385,7 +440,8 @@ export function buildCanonicalPrivateEvidencePayload(
   assertObject(input, "private payload input");
   assertPayloadInputKeys(input);
   const aad = canonicalizePrivateEvidenceAad(input.aad);
-  const quote = canonicalQuote(input.invoice, input.quoteRow);
+  assertPersistedIdentity(aad, input.invoiceRow, input.quoteRow);
+  const quote = canonicalQuote(input.invoiceRow, input.quoteRow);
   const sequence = canonicalDecimalString(
     input.sequence,
     MAX_UINT64,

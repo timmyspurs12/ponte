@@ -104,7 +104,14 @@ function assertExactKeys(
   }
 }
 
-function canonicalUuid(value: unknown, field: string): string {
+/**
+ * Validates an identity UUID at the persisted-evidence boundary and returns its
+ * lowercase hyphenated representation. It never accepts a zero UUID.
+ */
+export function canonicalizeEvidenceUuid(
+  value: unknown,
+  field: string,
+): string {
   if (typeof value !== "string" || !UUID_PATTERN.test(value))
     fail(`${field} must be a canonical UUID`);
   const normalized = value.toLowerCase();
@@ -186,10 +193,13 @@ export function canonicalizePrivateEvidenceAad(
 
   return {
     aadVersion: PRIVATE_EVIDENCE_AAD_VERSION,
-    evidenceRecordId: canonicalUuid(input.evidenceRecordId, "evidenceRecordId"),
-    businessId: canonicalUuid(input.businessId, "businessId"),
-    invoiceId: canonicalUuid(input.invoiceId, "invoiceId"),
-    quoteId: canonicalUuid(input.quoteId, "quoteId"),
+    evidenceRecordId: canonicalizeEvidenceUuid(
+      input.evidenceRecordId,
+      "evidenceRecordId",
+    ),
+    businessId: canonicalizeEvidenceUuid(input.businessId, "businessId"),
+    invoiceId: canonicalizeEvidenceUuid(input.invoiceId, "invoiceId"),
+    quoteId: canonicalizeEvidenceUuid(input.quoteId, "quoteId"),
     publicEvidenceId: canonicalBytes32(
       input.publicEvidenceId,
       "publicEvidenceId",
