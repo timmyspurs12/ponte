@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ponte:registry-deployment-manifest:v1",
+  "title": "PONTE Route-Decision Evidence Registry deployment manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "chainId",
+    "contract",
+    "deployment",
+    "roles",
+    "build",
+    "abi",
+    "sourceVerification"
+  ],
+  "properties": {
+    "manifestVersion": { "const": 1 },
+    "chainId": { "const": "421614" },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "PonteRouteDecisionEvidenceRegistry" },
+        "version": { "const": "1.0.0" }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registryAddress",
+        "transactionHash",
+        "blockNumber",
+        "runtimeBytecodeHash"
+      ],
+      "properties": {
+        "registryAddress": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" },
+        "transactionHash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+        "blockNumber": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "runtimeBytecodeHash": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$"
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["administrator", "initialAttestor"],
+      "properties": {
+        "administrator": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" },
+        "initialAttestor": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "solidityCompiler",
+        "optimizer",
+        "evmVersion",
+        "viaIR",
+        "runtimeBytecodeHashAlgorithm",
+        "runtimeBytecodeHash"
+      ],
+      "properties": {
+        "solidityCompiler": { "const": "0.8.28+commit.7893614a" },
+        "optimizer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "runs"],
+          "properties": {
+            "enabled": { "const": true },
+            "runs": { "const": 200 }
+          }
+        },
+        "evmVersion": { "const": "prague" },
+        "viaIR": { "const": false },
+        "runtimeBytecodeHashAlgorithm": { "const": "keccak256" },
+        "runtimeBytecodeHash": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$"
+        }
+      }
+    },
+    "abi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "hashAlgorithm", "hash"],
+      "properties": {
+        "version": { "const": 1 },
+        "hashAlgorithm": { "const": "sha256" },
+        "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" }
+      }
+    },
+    "sourceVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "url"],
+      "properties": {
+        "status": { "enum": ["not_submitted", "verified", "failed"] },
+        "url": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

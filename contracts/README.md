@@ -2,15 +2,15 @@
 
 This directory is a self-contained Foundry project for the local Solidity implementation and unit tests of `PonteRouteDecisionEvidenceRegistry`.
 
-It does not contain deployment scripts, RPC configuration, private keys, broadcast configuration, wallet operations, or application integration code.
+It contains an offline, configuration-guarded deployment script but no RPC configuration, private keys, credentials, hardcoded deployment addresses, wallet operations, broadcast record, public deployment, or application integration code.
 
 ## Pinned tooling
 
-| Tool | Exact pinned version | Purpose |
-|---|---:|---|
-| Foundry Forge | `1.7.1` | Build, formatter, and local unit-test runner |
-| Solidity compiler | `0.8.28` | Solidity compiler provided by the `solc` npm package |
-| Solidity source pragma | `0.8.28` | Prevents compiling this project with another compiler version |
+| Tool                   | Exact pinned version | Purpose                                                       |
+| ---------------------- | -------------------: | ------------------------------------------------------------- |
+| Foundry Forge          |              `1.7.1` | Build, formatter, and local unit-test runner                  |
+| Solidity compiler      |             `0.8.28` | Solidity compiler provided by the `solc` npm package          |
+| Solidity source pragma |             `0.8.28` | Prevents compiling this project with another compiler version |
 
 The exact package artifacts and transitive package versions are locked in `package-lock.json`. The Foundry package is published by the `@foundry-rs` npm scope. `tools/forge.mjs` selects the corresponding locked platform package and forwards Forge's exit status, avoiding a floating global Foundry installation. The compiler implementation is the locked `solc` package's Solidity `0.8.28` Emscripten build.
 
@@ -29,7 +29,11 @@ npm ci --ignore-scripts
 npm run fmt:check
 npm run build
 npm test
+npm run build:identity
+npm run test:deployment
 ```
+
+`npm run build:identity` reports the local compiler/build/ABI/runtime identity without a network request. `npm run test:deployment` validates the deployment-script guards, strict manifest tooling, and controlled read-only RPC verification responses; it does not contact an RPC endpoint. See [`../docs/PHASE1_3_1_ARBITRUM_REGISTRY_DEPLOYMENT_READINESS.md`](../docs/PHASE1_3_1_ARBITRUM_REGISTRY_DEPLOYMENT_READINESS.md) for the later operator procedure and approval gates.
 
 To apply Foundry formatting locally:
 
