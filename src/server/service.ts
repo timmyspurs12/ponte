@@ -1,5 +1,5 @@
 import { sameOrigin } from "./security";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PoolClient } from "pg";
 import { transaction } from "./repository";
@@ -9,6 +9,10 @@ import type { Invoice, PaymentQuote, Status } from "../lib/models";
 export { ApiError } from "./errors";
 import { fail } from "./errors";
 import { authenticate, type Context } from "./auth";
+import {
+  createRoutingRequestFingerprint,
+  idempotencyKeySchema,
+} from "./routing-boundary";
 const uuid = z.uuid();
 const input = z
   .object({
@@ -209,15 +213,14 @@ export async function execute(request: Request, parts: string[]) {
   } catch {
     fail(400, "INVALID_JSON");
   }
-  const key = z
-    .string()
-    .min(8)
-    .max(128)
-    .regex(/^[\w-]+$/)
-    .parse(request.headers.get("idempotency-key"));
-  const fingerprint = createHash("sha256")
-    .update(`${method}:${url.pathname}:${text}`)
-    .digest("hex");
+  const key = idempotencyKeySchema.parse(
+    request.headers.get("idempotency-key"),
+  );
+  const fingerprint = createRoutingRequestFingerprint({
+    method,
+    pathname: url.pathname,
+    text,
+  });
   return transaction(async (db) => {
     await repository.lockIdempotencyKey(db, [`${ctx.business}:${key}`]);
     const old = await repository.findIdempotency(db, [ctx.business, key]);

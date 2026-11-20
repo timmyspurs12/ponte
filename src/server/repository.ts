@@ -235,6 +235,52 @@ export const lockIdempotencyKey = (db: PoolClient, values: unknown[]) =>
   db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", values);
 export const findIdempotency = (db: PoolClient, values: unknown[]) =>
   db.query("SELECT * FROM idempotency WHERE business_id=$1 AND key=$2", values);
+
+/**
+ * Non-authoritative result for a future Routing orchestration cost preflight.
+ * The final persistence transaction always repeats this lookup while holding
+ * the business/key advisory lock and reauthorizes membership before replay.
+ */
+export type RoutingIdempotencyPreflight =
+  | { kind: "miss" }
+  | { kind: "match"; response: unknown }
+  | { kind: "conflict" };
+
+/**
+ * Runs one short READ ONLY idempotency lookup and releases its client before
+ * resolving. It acquires no advisory, invoice, or quote lock and must never be
+ * used as a durable replay/conflict decision.
+ */
+export async function readRoutingIdempotencyPreflight(
+  businessId: string,
+  idempotencyKey: string,
+  requestFingerprint: string,
+): Promise<RoutingIdempotencyPreflight> {
+  const db = await pool.connect();
+  let transactionOpen = false;
+  try {
+    await db.query("BEGIN READ ONLY");
+    transactionOpen = true;
+    const result = await findIdempotency(db, [businessId, idempotencyKey]);
+    await db.query("COMMIT");
+    transactionOpen = false;
+    if (!result.rowCount) return { kind: "miss" };
+    return result.rows[0].fingerprint === requestFingerprint
+      ? { kind: "match", response: result.rows[0].response }
+      : { kind: "conflict" };
+  } catch (error) {
+    if (transactionOpen) {
+      try {
+        await db.query("ROLLBACK");
+      } catch {
+        // The original lookup failure remains authoritative.
+      }
+    }
+    throw error;
+  } finally {
+    db.release();
+  }
+}
 export const insertInvoice = (db: PoolClient, values: unknown[]) =>
   db.query(
     "INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,$4,$5,($6::jsonb - ARRAY['createdAt','updatedAt']))",

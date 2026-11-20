@@ -33,6 +33,10 @@ import {
   encryptEvidenceEnvelope,
 } from "./envelope";
 import {
+  EvidenceCandidatePreparationError,
+  type EvidenceCandidatePreparationErrorCode,
+} from "./errors";
+import {
   assertDekProviderResult,
   clearDekBestEffort,
   KMS_PROVIDER,
@@ -51,33 +55,10 @@ const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
 const PREPARED_CANDIDATE_DIGEST_DOMAIN = "PONTE_PREPARED_EVIDENCE_CANDIDATE_V1";
 const REQUEST_FINGERPRINT = /^[0-9a-f]{64}$/i;
 
-export type EvidenceCandidatePreparationErrorCode =
-  | "INVALID_INPUT"
-  | "PROVIDER_FAILURE"
-  | "PROVIDER_RESULT_INVALID"
-  | "ENCRYPTION_FAILED"
-  | "PREPARATION_FAILED";
-
-const ERROR_MESSAGES: Readonly<
-  Record<EvidenceCandidatePreparationErrorCode, string>
-> = Object.freeze({
-  INVALID_INPUT: "evidence candidate input is invalid",
-  PROVIDER_FAILURE: "evidence candidate provider operation failed",
-  PROVIDER_RESULT_INVALID: "evidence candidate provider result is invalid",
-  ENCRYPTION_FAILED: "evidence candidate encryption failed",
-  PREPARATION_FAILED: "evidence candidate preparation failed",
-});
-
-/** A fixed, non-sensitive error boundary for future API/service integration. */
-export class EvidenceCandidatePreparationError extends Error {
-  readonly code: EvidenceCandidatePreparationErrorCode;
-
-  constructor(code: EvidenceCandidatePreparationErrorCode) {
-    super(ERROR_MESSAGES[code]);
-    this.name = "EvidenceCandidatePreparationError";
-    this.code = code;
-  }
-}
+export {
+  EvidenceCandidatePreparationError,
+  type EvidenceCandidatePreparationErrorCode,
+} from "./errors";
 
 export type ReadyEvidencePreparationSnapshot = Extract<
   EvidencePreparationSnapshot,

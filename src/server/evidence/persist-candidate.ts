@@ -43,6 +43,10 @@ import {
   EVIDENCE_CONTENT_ALGORITHM,
   EVIDENCE_ENVELOPE_VERSION,
 } from "./envelope";
+import {
+  EvidencePersistenceError,
+  type EvidencePersistenceErrorCode,
+} from "./errors";
 import { assertDekWrappingMetadata } from "./kms";
 import {
   verifyPreparedEvidenceCandidateIntegrity,
@@ -55,42 +59,10 @@ const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
 const IDEMPOTENCY_KEY = /^[\w-]{8,128}$/;
 const REQUEST_FINGERPRINT = /^[0-9a-f]{64}$/;
 
-export type EvidencePersistenceErrorCode =
-  | "INVALID_CONTEXT"
-  | "IDEMPOTENCY_CONFLICT"
-  | "FORBIDDEN"
-  | "CANDIDATE_REQUIRED"
-  | "CANDIDATE_INVALID"
-  | "CANDIDATE_MISMATCH"
-  | "INVOICE_OR_QUOTE_UNAVAILABLE"
-  | "COMMIT_OUTCOME_UNKNOWN"
-  | "PERSISTENCE_FAILED";
-
-const ERROR_MESSAGES: Readonly<Record<EvidencePersistenceErrorCode, string>> =
-  Object.freeze({
-    INVALID_CONTEXT: "evidence persistence context is invalid",
-    IDEMPOTENCY_CONFLICT: "idempotency key conflicts with an existing request",
-    FORBIDDEN: "evidence persistence is not authorized",
-    CANDIDATE_REQUIRED: "prepared evidence candidate is required",
-    CANDIDATE_INVALID: "prepared evidence candidate is invalid",
-    CANDIDATE_MISMATCH:
-      "prepared evidence candidate no longer matches persisted state",
-    INVOICE_OR_QUOTE_UNAVAILABLE:
-      "invoice or quote is unavailable for evidence persistence",
-    COMMIT_OUTCOME_UNKNOWN: "evidence persistence commit outcome is unknown",
-    PERSISTENCE_FAILED: "evidence persistence failed",
-  });
-
-/** Fixed, non-sensitive internal failure boundary. */
-export class EvidencePersistenceError extends Error {
-  readonly code: EvidencePersistenceErrorCode;
-
-  constructor(code: EvidencePersistenceErrorCode) {
-    super(ERROR_MESSAGES[code]);
-    this.name = "EvidencePersistenceError";
-    this.code = code;
-  }
-}
+export {
+  EvidencePersistenceError,
+  type EvidencePersistenceErrorCode,
+} from "./errors";
 
 export interface PersistPreparedEvidenceCandidateInput {
   /** Trusted request context, never derived only from candidate fields. */
