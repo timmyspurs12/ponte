@@ -257,11 +257,13 @@ export async function __testOnlyRunReadOnlyTransaction<T>(
   db: ReadOnlyTransactionClient,
   work: (db: ReadOnlyTransactionClient) => Promise<T>,
 ): Promise<T> {
+  let beginAttempted = false;
   let transactionOpen = false;
   let commitAttempted = false;
   let destroyClient = false;
   let originalError: unknown;
   try {
+    beginAttempted = true;
     await db.query("BEGIN READ ONLY");
     transactionOpen = true;
     const result = await work(db);
@@ -271,6 +273,9 @@ export async function __testOnlyRunReadOnlyTransaction<T>(
     return result;
   } catch (error) {
     originalError = error;
+    // BEGIN acknowledgement failure cannot establish whether PostgreSQL opened
+    // a transaction, so this connection is never returned to the pool.
+    if (beginAttempted && !transactionOpen) destroyClient = true;
     if (transactionOpen) {
       // A failed COMMIT acknowledgement cannot prove connection state. Even if
       // ROLLBACK succeeds, this client is discarded rather than reused.

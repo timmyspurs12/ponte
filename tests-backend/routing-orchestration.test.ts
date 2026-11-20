@@ -684,7 +684,9 @@ interface ControlledReadOnlyClient {
 }
 
 function controlledReadOnlyClient(
-  failures: Partial<Record<"SELECT" | "COMMIT" | "ROLLBACK", Error>> = {},
+  failures: Partial<
+    Record<"BEGIN READ ONLY" | "SELECT" | "COMMIT" | "ROLLBACK", Error>
+  > = {},
 ): ControlledReadOnlyClient {
   const queries: string[] = [];
   const releases: boolean[] = [];
@@ -721,6 +723,22 @@ async function withFakePoolClient<T>(
 }
 
 test("read-only cleanup preserves original errors and discards uncertain clients", async () => {
+  const beginFailure = new Error("begin acknowledgement failure");
+  const failedBegin = controlledReadOnlyClient({
+    "BEGIN READ ONLY": beginFailure,
+  });
+  let workCalls = 0;
+  await assert.rejects(
+    __testOnlyRunReadOnlyTransaction(failedBegin.client, async () => {
+      workCalls += 1;
+      return "must not run";
+    }),
+    (error: unknown) => error === beginFailure,
+  );
+  assert.equal(workCalls, 0);
+  assert.deepEqual(failedBegin.queries, ["BEGIN READ ONLY"]);
+  assert.deepEqual(failedBegin.releases, [true]);
+
   const operationFailure = new Error("read query failure");
   const healthyRollback = controlledReadOnlyClient({
     SELECT: operationFailure,
