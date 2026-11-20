@@ -22,6 +22,7 @@ import {
   prepareEvidenceCandidate,
   verifyPreparedEvidenceCandidateIntegrity,
   type PrepareEvidenceCandidateInput,
+  type PreparedEvidenceCandidate,
 } from "../../src/server/evidence/prepare-candidate";
 
 const BUSINESS_ID = "22222222-2222-4222-8222-222222222222";
@@ -51,10 +52,8 @@ class SyntheticFakeDekProvider implements DekProvider {
     this.contexts.push(context.canonicalContext);
     if (this.throwError) throw this.throwError;
 
-    const plaintextDek = Buffer.from("42".repeat(32), "hex");
-    this.returnedDeks.push(plaintextDek);
-    return {
-      plaintextDek,
+    const result = {
+      plaintextDek: Buffer.from("42".repeat(32), "hex"),
       wrappedDek: Buffer.from("synthetic-wrapped-dek-v1", "utf8"),
       kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
       kmsKeyReference: "synthetic/test-candidate-key",
@@ -63,6 +62,9 @@ class SyntheticFakeDekProvider implements DekProvider {
       wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
       ...this.resultOverrides,
     } as CreatedAndWrappedDek;
+    if (Buffer.isBuffer(result.plaintextDek))
+      this.returnedDeks.push(result.plaintextDek);
+    return result;
   }
 }
 
@@ -146,6 +148,52 @@ async function captureZeroFills<T>(operation: () => Promise<T>): Promise<{
   } finally {
     Buffer.prototype.fill = originalFill;
   }
+}
+
+async function captureConsoleCalls<T>(operation: () => Promise<T>): Promise<{
+  result: T | undefined;
+  error: unknown;
+  calls: unknown[][];
+}> {
+  const calls: unknown[][] = [];
+  const capture = (...args: unknown[]) => calls.push(args);
+  const originals = {
+    debug: console.debug,
+    error: console.error,
+    info: console.info,
+    log: console.log,
+    warn: console.warn,
+  };
+  console.debug = capture;
+  console.error = capture;
+  console.info = capture;
+  console.log = capture;
+  console.warn = capture;
+
+  try {
+    return { result: await operation(), error: undefined, calls };
+  } catch (error) {
+    return { result: undefined, error, calls };
+  } finally {
+    console.debug = originals.debug;
+    console.error = originals.error;
+    console.info = originals.info;
+    console.log = originals.log;
+    console.warn = originals.warn;
+  }
+}
+
+function assertSanitizedPreparationError(
+  error: unknown,
+  code: EvidenceCandidatePreparationError["code"],
+  forbidden: readonly string[],
+): asserts error is EvidenceCandidatePreparationError {
+  assert.equal(error instanceof EvidenceCandidatePreparationError, true);
+  if (!(error instanceof EvidenceCandidatePreparationError)) return;
+  assert.equal(error.code, code);
+  const rendered = `${error.name}:${error.message}:${error.stack ?? ""}`;
+  for (const value of forbidden)
+    assert.equal(rendered.includes(value), false, `disclosed value: ${value}`);
 }
 
 function isPreparationError(
@@ -305,87 +353,464 @@ test("clears captured raw provider plaintext DEK when result validation fails", 
   );
 });
 
-test("sanitizes provider failures and does not log raw provider exceptions", async () => {
+test("rejects invalid provider results without disclosing metadata and clears raw DEKs", async () => {
+  type InvalidProviderResultCase = {
+    name: string;
+    dekLength: number;
+    overrides: (rawDek: Buffer) => Partial<CreatedAndWrappedDek>;
+    forbidden: readonly string[];
+  };
+  const invalidResults: readonly InvalidProviderResultCase[] = [
+    {
+      name: "short plaintext DEK",
+      dekLength: 31,
+      overrides: (plaintextDek) => ({ plaintextDek }),
+      forbidden: ["synthetic/test-candidate-key"],
+    },
+    {
+      name: "long plaintext DEK",
+      dekLength: 33,
+      overrides: (plaintextDek) => ({ plaintextDek }),
+      forbidden: ["synthetic/test-candidate-key"],
+    },
+    {
+      name: "empty wrapped DEK",
+      dekLength: 32,
+      overrides: (plaintextDek) => ({
+        plaintextDek,
+        wrappedDek: Buffer.alloc(0),
+      }),
+      forbidden: ["synthetic/test-candidate-key"],
+    },
+    {
+      name: "result provider differs from declared provider",
+      dekLength: 32,
+      overrides: (plaintextDek) => ({
+        plaintextDek,
+        kmsProvider: KMS_PROVIDER.AWS_KMS,
+        kmsKeyReference: "synthetic/test-aws-key",
+        kmsKeyVersion: "synthetic/aws-version-1",
+        wrappedDekAlgorithm:
+          WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
+        wrappedDekFormat:
+          WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
+      }),
+      forbidden: ["synthetic/test-aws-key", "synthetic/aws-version-1"],
+    },
+    {
+      name: "unsupported provider algorithm format combination",
+      dekLength: 32,
+      overrides: (plaintextDek) => ({
+        plaintextDek,
+        wrappedDekAlgorithm:
+          WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
+        wrappedDekFormat:
+          WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
+      }),
+      forbidden: [
+        WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
+        WRAPPED_DEK_FORMAT.AWS_KMS_GENERATE_DATA_KEY_CIPHERTEXT_BLOB_V1,
+      ],
+    },
+    {
+      name: "malformed KMS key reference",
+      dekLength: 32,
+      overrides: (plaintextDek) => ({
+        plaintextDek,
+        kmsKeyReference: "synthetic/private key reference",
+      }),
+      forbidden: ["synthetic/private key reference"],
+    },
+    {
+      name: "malformed KMS key version",
+      dekLength: 32,
+      overrides: (plaintextDek) => ({
+        plaintextDek,
+        kmsKeyVersion: "synthetic/private key version",
+      }),
+      forbidden: ["synthetic/private key version"],
+    },
+  ];
+
+  for (const invalid of invalidResults) {
+    const rawDek = Buffer.alloc(invalid.dekLength, 0x5a);
+    const rawDekHex = rawDek.toString("hex");
+    const provider = new SyntheticFakeDekProvider();
+    provider.resultOverrides = invalid.overrides(rawDek);
+    const observed = await captureConsoleCalls(() =>
+      captureZeroFills(() => prepareEvidenceCandidate(input(provider))),
+    );
+
+    assert.equal(observed.error, undefined, invalid.name);
+    assert.ok(observed.result, invalid.name);
+    assert.equal(observed.result.result, undefined, invalid.name);
+    assertSanitizedPreparationError(
+      observed.result.error,
+      "PROVIDER_RESULT_INVALID",
+      [rawDekHex, ...invalid.forbidden],
+    );
+    assert.equal(provider.calls, 1, invalid.name);
+    assert.strictEqual(provider.returnedDeks[0], rawDek, invalid.name);
+    assert.equal(
+      rawDek.equals(Buffer.alloc(rawDek.length)),
+      true,
+      invalid.name,
+    );
+    assert.equal(
+      provider.contexts[0].equals(Buffer.alloc(96)),
+      true,
+      invalid.name,
+    );
+    assert.equal(observed.result.cleared.includes(rawDek), true, invalid.name);
+    assert.equal(observed.calls.length, 0, invalid.name);
+  }
+});
+
+test("sanitizes provider exceptions, logs nothing, and clears pre-provider buffers", async () => {
   const provider = new SyntheticFakeDekProvider();
   provider.throwError = new Error("RAW_PROVIDER_SECRET_do_not_expose");
-  const calls: unknown[][] = [];
-  const originalError = console.error;
-  const originalWarn = console.warn;
-  console.error = (...args: unknown[]) => calls.push(args);
-  console.warn = (...args: unknown[]) => calls.push(args);
-  try {
-    await assert.rejects(
-      () => prepareEvidenceCandidate(input(provider)),
-      (error: unknown) => {
-        assert.equal(isPreparationError(error, "PROVIDER_FAILURE"), true);
-        assert.equal(
-          (error as Error).message.includes(
-            "RAW_PROVIDER_SECRET_do_not_expose",
-          ),
-          false,
-        );
-        return true;
-      },
-    );
-  } finally {
-    console.error = originalError;
-    console.warn = originalWarn;
-  }
-  assert.equal(calls.length, 0);
+  const observed = await captureConsoleCalls(() =>
+    captureZeroFills(() => prepareEvidenceCandidate(input(provider))),
+  );
+
+  assert.equal(observed.error, undefined);
+  assert.ok(observed.result);
+  assert.equal(observed.result.result, undefined);
+  assertSanitizedPreparationError(observed.result.error, "PROVIDER_FAILURE", [
+    "RAW_PROVIDER_SECRET_do_not_expose",
+    BUSINESS_ID,
+    INVOICE_ID,
+    QUOTE_ID,
+    ACTOR_ID,
+    REGISTRY,
+  ]);
+  assert.equal(provider.calls, 1);
+  assert.equal(provider.contexts[0].equals(Buffer.alloc(96)), true);
+  assert.equal(observed.calls.length, 0);
 });
 
-test("rejects invalid and stale snapshot/input forms before provider invocation", async () => {
-  const invalids: Array<PrepareEvidenceCandidateInput> = [];
-
-  const missingInvoice = input();
-  (
-    missingInvoice as unknown as { snapshot: EvidencePreparationSnapshot }
-  ).snapshot = {
-    kind: "invoice_missing",
+test("rejects every adversarial snapshot/input form before provider invocation", async () => {
+  type InvalidInputCase = {
+    name: string;
+    mutate: (request: PrepareEvidenceCandidateInput) => void;
+    forbidden?: readonly string[];
   };
-  invalids.push(missingInvoice);
+  const invalidCases: readonly InvalidInputCase[] = [
+    {
+      name: "missing ready snapshot",
+      mutate: (request) => {
+        (
+          request as unknown as { snapshot: EvidencePreparationSnapshot }
+        ).snapshot = { kind: "invoice_missing" };
+      },
+    },
+    {
+      name: "non-Funded invoice status",
+      mutate: (request) => {
+        (request.snapshot.invoice as { status: string }).status = "Routing";
+      },
+    },
+    {
+      name: "non-BRL generated invoice currency",
+      mutate: (request) => {
+        (
+          request.snapshot.invoice as { funding_currency: string }
+        ).funding_currency = "PRIVATE_USD";
+      },
+      forbidden: ["PRIVATE_USD"],
+    },
+    {
+      name: "non-BRL invoice JSON currency",
+      mutate: (request) => {
+        (
+          request.snapshot.invoice.data as { fundingCurrency: string }
+        ).fundingCurrency = "PRIVATE_USD";
+      },
+      forbidden: ["PRIVATE_USD"],
+    },
+    {
+      name: "invoice JSON funding minor differs from authoritative column",
+      mutate: (request) => {
+        (
+          request.snapshot.invoice.data as { fundingMinor: string }
+        ).fundingMinor = "2500001";
+      },
+      forbidden: ["2500001"],
+    },
+    {
+      name: "quote JSON funding minor differs from authoritative invoice column",
+      mutate: (request) => {
+        (request.snapshot.quote.data as { fundingMinor: string }).fundingMinor =
+          "2500001";
+      },
+      forbidden: ["2500001"],
+    },
+    {
+      name: "unsupported quote source",
+      mutate: (request) => {
+        (request.snapshot.quote as { source: string }).source =
+          "private-quote-source";
+      },
+      forbidden: ["private-quote-source"],
+    },
+    {
+      name: "false persisted quote simulated flag",
+      mutate: (request) => {
+        (request.snapshot.quote as { simulated: boolean }).simulated = false;
+      },
+    },
+    {
+      name: "false quote JSON simulated flag",
+      mutate: (request) => {
+        (request.snapshot.quote.data as { simulated: boolean }).simulated =
+          false;
+      },
+    },
+    {
+      name: "invalid quote expiry Date",
+      mutate: (request) => {
+        (request.snapshot.quote as { expires_at: Date }).expires_at = new Date(
+          Number.NaN,
+        );
+      },
+    },
+    {
+      name: "expired quote",
+      mutate: (request) => {
+        (request.snapshot.quote as { expires_at: Date }).expires_at = new Date(
+          0,
+        );
+      },
+    },
+    {
+      name: "missing quote routes",
+      mutate: (request) => {
+        delete (request.snapshot.quote.data as unknown as { routes?: unknown })
+          .routes;
+      },
+    },
+    {
+      name: "incomplete quote routes",
+      mutate: (request) => {
+        const data = request.snapshot.quote.data as unknown as {
+          routes: unknown[];
+        };
+        data.routes = data.routes.slice(0, 2);
+      },
+    },
+    {
+      name: "duplicated quote route ID",
+      mutate: (request) => {
+        const data = request.snapshot.quote.data as unknown as {
+          routes: Array<Record<string, unknown>>;
+        };
+        data.routes[2] = { ...data.routes[2], id: "split" };
+      },
+    },
+    {
+      name: "out-of-order quote routes",
+      mutate: (request) => {
+        const data = request.snapshot.quote.data as unknown as {
+          routes: unknown[];
+        };
+        data.routes = [data.routes[1], data.routes[0], data.routes[2]];
+      },
+    },
+    {
+      name: "selected canonical route absent from quote",
+      mutate: (request) => {
+        request.selectedRouteId = "multi";
+        const data = request.snapshot.quote.data as unknown as {
+          routes: unknown[];
+        };
+        data.routes = data.routes.slice(0, 2);
+      },
+    },
+    {
+      name: "unknown selected route",
+      mutate: (request) => {
+        request.selectedRouteId = "private-route" as "split";
+      },
+      forbidden: ["private-route"],
+    },
+    {
+      name: "invalid fixed quote rate",
+      mutate: (request) => {
+        (request.snapshot.quote.data.rate as { numerator: string }).numerator =
+          "524";
+      },
+      forbidden: ["524"],
+    },
+    {
+      name: "invalid fixed execution cost",
+      mutate: (request) => {
+        (
+          request.snapshot.quote.data as { executionCostMinor: string }
+        ).executionCostMinor =
+          "30000000000000000000000000000000000000000000000001";
+      },
+      forbidden: ["30000000000000000000000000000000000000000000000001"],
+    },
+    {
+      name: "malformed authenticated actor UUID",
+      mutate: (request) => {
+        request.createdByUserId = "private-malformed-actor";
+      },
+      forbidden: ["private-malformed-actor"],
+    },
+    {
+      name: "zero authenticated actor UUID",
+      mutate: (request) => {
+        request.createdByUserId = "00000000-0000-0000-0000-000000000000";
+      },
+    },
+    {
+      name: "malformed registry address",
+      mutate: (request) => {
+        request.registryAddress = "private-not-an-address";
+      },
+      forbidden: ["private-not-an-address"],
+    },
+    {
+      name: "zero registry address",
+      mutate: (request) => {
+        request.registryAddress = `0x${"00".repeat(20)}`;
+      },
+    },
+    {
+      name: "invalid request fingerprint",
+      mutate: (request) => {
+        request.requestFingerprint = "private-invalid-fingerprint";
+      },
+      forbidden: ["private-invalid-fingerprint"],
+    },
+    {
+      name: "missing provider object",
+      mutate: (request) => {
+        (request as unknown as { provider: unknown }).provider = undefined;
+      },
+    },
+    {
+      name: "malformed provider object",
+      mutate: (request) => {
+        (request as unknown as { provider: unknown }).provider = {
+          provider: KMS_PROVIDER.GCP_CLOUD_KMS,
+        };
+      },
+    },
+    {
+      name: "unsupported provider declaration",
+      mutate: (request) => {
+        (request as unknown as { provider: unknown }).provider = {
+          provider: "synthetic-unsupported-provider",
+          createAndWrapDek: async () => {
+            throw new Error("provider must not be called");
+          },
+        };
+      },
+      forbidden: ["synthetic-unsupported-provider"],
+    },
+  ];
 
-  const stale = input();
-  if (stale.snapshot.kind === "ready")
-    stale.snapshot.quote.expires_at = new Date(Date.now() - 1);
-  invalids.push(stale);
-
-  const invalidStatus = input();
-  if (invalidStatus.snapshot.kind === "ready")
-    invalidStatus.snapshot.invoice.status = "Routing";
-  invalids.push(invalidStatus);
-
-  const invalidRoute = input();
-  invalidRoute.selectedRouteId = "not-a-route" as "split";
-  invalids.push(invalidRoute);
-
-  const zeroRegistry = input();
-  zeroRegistry.registryAddress = `0x${"00".repeat(20)}`;
-  invalids.push(zeroRegistry);
-
-  const invalidFingerprint = input();
-  invalidFingerprint.requestFingerprint = "not-a-request-fingerprint";
-  invalids.push(invalidFingerprint);
-
-  for (const invalid of invalids) {
-    const provider = invalid.provider as SyntheticFakeDekProvider;
-    await assert.rejects(
-      () => prepareEvidenceCandidate(invalid),
-      (error: unknown) => isPreparationError(error, "INVALID_INPUT"),
+  for (const invalid of invalidCases) {
+    const provider = new SyntheticFakeDekProvider();
+    const request = input(provider);
+    invalid.mutate(request);
+    const observed = await captureConsoleCalls(() =>
+      captureZeroFills(() => prepareEvidenceCandidate(request)),
     );
-    assert.equal(provider.calls, 0);
+
+    assert.equal(observed.error, undefined, invalid.name);
+    assert.ok(observed.result, invalid.name);
+    assert.equal(observed.result.result, undefined, invalid.name);
+    assertSanitizedPreparationError(observed.result.error, "INVALID_INPUT", [
+      BUSINESS_ID,
+      INVOICE_ID,
+      QUOTE_ID,
+      ACTOR_ID,
+      REGISTRY,
+      ...(invalid.forbidden ?? []),
+    ]);
+    assert.equal(provider.calls, 0, invalid.name);
+    assert.equal(observed.calls.length, 0, invalid.name);
   }
 });
 
-test("prepared candidate digest detects mutable Buffer tampering", async () => {
+test("prepared candidate integrity detects binary, digest, and forged-content tampering", async () => {
   const candidate = await prepareEvidenceCandidate(input());
   assert.equal(verifyPreparedEvidenceCandidateIntegrity(candidate), true);
 
-  const original = candidate.ciphertext[0];
-  candidate.ciphertext[0] ^= 0xff;
-  assert.equal(verifyPreparedEvidenceCandidateIntegrity(candidate), false);
-  candidate.ciphertext[0] = original;
+  const inspectionCopies = {
+    authenticationTag: Buffer.from(candidate.authenticationTag),
+    ciphertext: Buffer.from(candidate.ciphertext),
+    nonce: Buffer.from(candidate.nonce),
+    publicEvidenceId: Buffer.from(candidate.publicEvidenceId),
+    wrappedDek: Buffer.from(candidate.wrappedDek),
+  };
+  for (const value of Object.values(inspectionCopies)) value.fill(0xff);
   assert.equal(verifyPreparedEvidenceCandidateIntegrity(candidate), true);
+
+  const binaryFields = [
+    "publicEvidenceId",
+    "ciphertext",
+    "nonce",
+    "authenticationTag",
+    "wrappedDek",
+  ] as const;
+  for (const field of binaryFields) {
+    const original = Buffer.from(candidate[field]);
+    candidate[field][0] ^= 0xff;
+    assert.equal(
+      verifyPreparedEvidenceCandidateIntegrity(candidate),
+      false,
+      field,
+    );
+    candidate[field].set(original);
+    assert.equal(
+      verifyPreparedEvidenceCandidateIntegrity(candidate),
+      true,
+      field,
+    );
+  }
+
+  const forgedQuoteCandidate = {
+    ...candidate,
+    canonicalQuoteData: {
+      ...candidate.canonicalQuoteData,
+      rate: {
+        ...candidate.canonicalQuoteData.rate,
+        numerator: "526",
+      },
+    },
+  } as unknown as PreparedEvidenceCandidate;
+  assert.equal(
+    verifyPreparedEvidenceCandidateIntegrity(forgedQuoteCandidate),
+    false,
+  );
+
+  const { wrappedDek: _wrappedDek, ...missingWrappedDek } = candidate;
+  const malformedCandidates: unknown[] = [
+    null,
+    undefined,
+    {},
+    { ...candidate, preparedCandidateDigest: "" },
+    { ...candidate, preparedCandidateDigest: "g".repeat(64) },
+    { ...candidate, preparedCandidateDigest: "0".repeat(64) },
+    missingWrappedDek,
+    {
+      ...candidate,
+      canonicalQuoteData: null,
+    },
+  ];
+  for (const malformed of malformedCandidates) {
+    let verified: boolean | undefined;
+    assert.doesNotThrow(() => {
+      verified = verifyPreparedEvidenceCandidateIntegrity(
+        malformed as PreparedEvidenceCandidate,
+      );
+    });
+    assert.equal(verified, false);
+  }
 });
 
 test("candidate preparation preserves the frozen commitment golden vector", () => {

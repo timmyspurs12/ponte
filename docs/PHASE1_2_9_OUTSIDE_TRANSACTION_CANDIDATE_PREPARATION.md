@@ -172,10 +172,18 @@ synthetic fake provider only. It exercises:
 
 - valid candidate construction, frozen output, existing builder/hash agreement,
   reconstructed-AAD decryption with a synthetic DEK, and non-secret output;
-- success-path cleanup and raw-DEK cleanup when validation fails;
-- sanitized provider failure and absence of module logging;
-- invalid/stale forms rejected before the fake provider is invoked; and
-- candidate-digest detection of mutable Buffer tampering.
+- success-path cleanup and raw-DEK cleanup for every tested invalid
+  provider-result shape;
+- sanitized provider exceptions and provider-result failures, with captured
+  console methods proving the module emits no raw exception, metadata, or
+  sensitive input values;
+- table-driven pre-provider rejection of adverse invoice/quote currencies and
+  amounts, quote source/simulation/expiry/routes/economics, actor, registry,
+  fingerprint, and malformed provider shapes, with a zero fake-provider call
+  count for every case; and
+- candidate-digest verification for each mutable binary field, malformed or
+  incomplete candidate-like values, forged quote content, and independently
+  inspected Buffer copies.
 
 The existing evidence suite continues to execute the frozen commitment, AAD,
 private-payload, KMS-context, and envelope golden vectors unchanged.
