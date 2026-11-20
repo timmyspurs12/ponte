@@ -141,8 +141,10 @@ function request(
     idempotencyKey: overrides.idempotencyKey ?? `routing-${randomUUID()}`,
     requestFingerprint: overrides.requestFingerprint ?? fingerprint(),
     selectedRouteId: "split" as const,
-    provider,
-    registryAddress: TEST_ONLY_REGISTRY,
+    resolvePreparationDependencies: () => ({
+      provider,
+      registryAddress: TEST_ONLY_REGISTRY,
+    }),
   };
 }
 
@@ -821,8 +823,13 @@ test("read-only repository errors are sanitized before the API boundary", async 
   assert.deepEqual(snapshotClient.releases, [false]);
 });
 
-test("ordinary Routing remains disconnected from the controlled orchestration seam", async () => {
+test("ordinary Routing delegates eligible commands without wrapping final persistence", async () => {
   const service = await readFile("src/server/service.ts", "utf8");
-  assert.doesNotMatch(service, /routing-orchestration/);
+  assert.match(service, /orchestratePreparedRoutingCandidate/);
+  assert.match(service, /routingTransitionSchema\.safeParse\(body\)/);
+  assert.doesNotMatch(
+    service,
+    /persist-candidate|persistPreparedEvidenceCandidate|insertSettlement/,
+  );
   assert.match(service, /return transaction\(async \(db\) =>/);
 });

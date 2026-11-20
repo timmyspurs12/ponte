@@ -3,8 +3,8 @@ import { z } from "zod";
 
 /**
  * The ordinary Routing request's idempotency grammar and raw-text fingerprint
- * are centralized here so a future orchestration cannot silently use a second
- * representation. The current service remains the active Routing writer.
+ * are centralized here so the service and evidence orchestration cannot use a
+ * second representation.
  */
 export const idempotencyKeySchema = z
   .string()
@@ -33,9 +33,8 @@ export function createRoutingRequestFingerprint({
 }
 
 /**
- * Structural routing-only command boundary for future orchestration callers.
- * The normal service still owns transition-state validation and its active
- * generic transaction path.
+ * Structural Routing command boundary. The service validates this before it
+ * delegates eligible Routing requests to the outside-transaction orchestration.
  */
 export const routingTransitionSchema = z
   .object({

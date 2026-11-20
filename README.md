@@ -14,6 +14,8 @@ Requires Node.js **22.17+**, npm and PostgreSQL 18. No hosted account or paid se
 
 The Node scripts load `.env.local`; existing environment variables take precedence. Commands do not require shell-specific environment syntax. Embedded PostgreSQL is a development convenience (a prerelease binary-distribution package), not a production database manager. Linux x64 is verified here; Windows/macOS are **not verified** in this phase. A separately installed PostgreSQL is the fallback if its binaries are unsupported.
 
+Routing evidence persistence is **disabled by default**. To exercise the local-only integration, explicitly set both commented `PONTE_LOCAL_EVIDENCE_TEST_*` values in `.env.example` to `1` and a non-zero EVM address, respectively. The guarded path requires non-production development authentication and a loopback database; it creates fresh synthetic test buffers, not a production KMS envelope or a deployed/anchored registry record. Do not enable it on a shared or production system. Set this opt-in before `npm run db:fixtures`, which intentionally creates Routing examples. A default `db:reset` still restores the base local seed but skips those Routing fixtures.
+
 `npm run db:migrate` is safe to repeat. To **delete all local simulation data**, run `npm run db:reset -- --confirm-local-reset`; this requires a loopback database, refuses production, and reseeds. Never point test/reset commands at valuable data. Back up a persistent database with PostgreSQL's standard tools before changing it.
 
 ### Production safety

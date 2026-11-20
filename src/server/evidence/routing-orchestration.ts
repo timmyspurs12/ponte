@@ -1,6 +1,6 @@
-// This module is an explicit future-orchestration seam. It is intentionally not
-// imported by the normal Routing service, does not choose a provider/registry,
-// and has no normal API activation path.
+// This server-only orchestration deliberately does not choose a production KMS
+// provider or registry. The normal Routing service supplies an explicit,
+// local-only preparation dependency resolver after all read-only preflight work.
 import "server-only";
 
 import {
@@ -24,6 +24,13 @@ import {
 import type { CanonicalRouteId } from "./commitment";
 import type { DekProvider } from "./kms";
 
+export interface RoutingPreparationDependencies {
+  /** Explicit provider injection; this orchestration never chooses one. */
+  provider: DekProvider;
+  /** Explicit address injection; this does not imply a deployment exists. */
+  registryAddress: string;
+}
+
 export interface RoutingOrchestrationInput {
   /** Trusted authenticated values; callers must not source these from the body. */
   businessId: string;
@@ -34,10 +41,13 @@ export interface RoutingOrchestrationInput {
   /** Exact normal HTTP method:path:raw-text SHA-256 fingerprint. */
   requestFingerprint: string;
   selectedRouteId: CanonicalRouteId;
-  /** Explicit injection only; normal runtime has no provider default. */
-  provider: DekProvider;
-  /** Explicit injection only; this module does not imply any deployment exists. */
-  registryAddress: string;
+  /**
+   * Resolved only after preflight and the read-only snapshot have completed.
+   * This preserves replay/conflict arbitration without making a provider a
+   * requirement for an already durable response.
+   */
+  resolvePreparationDependencies: () =>
+    RoutingPreparationDependencies | Promise<RoutingPreparationDependencies>;
 }
 
 export interface RoutingOrchestrationTestHooks {
@@ -90,13 +100,11 @@ async function recheckBeforeSnapshotRejection(
 }
 
 /**
- * Controlled seam for future integration tests and a separately approved
- * integration phase. The only final state authority is
- * persistPreparedEvidenceCandidate(), which takes its own final transaction.
- *
- * A matching/conflicting preflight deliberately invokes the final helper with
- * no candidate. Thus no provider is called for durable replay/conflict, while
- * final advisory-lock arbitration and membership reauthorization still occur.
+ * The only final state authority is persistPreparedEvidenceCandidate(), which
+ * takes its own final transaction. Matching/conflicting preflight deliberately
+ * invokes that helper with no candidate. Thus no provider is resolved or called
+ * for durable replay/conflict, while final advisory-lock arbitration and
+ * membership reauthorization still occur.
  */
 export async function orchestratePreparedRoutingCandidate(
   input: RoutingOrchestrationInput,
@@ -147,13 +155,14 @@ export async function orchestratePreparedRoutingCandidate(
   // released. No advisory, invoice, or quote lock is acquired before provider
   // preparation; the final helper owns all authoritative locks and writes.
   await hooks?.beforePreparation?.();
+  const dependencies = await input.resolvePreparationDependencies();
   const candidate: PreparedEvidenceCandidate = await prepareEvidenceCandidate({
     snapshot,
     selectedRouteId: input.selectedRouteId,
-    registryAddress: input.registryAddress,
+    registryAddress: dependencies.registryAddress,
     createdByUserId: input.actorUserId,
     requestFingerprint: input.requestFingerprint,
-    provider: input.provider,
+    provider: dependencies.provider,
   });
 
   const result = await persistPreparedEvidenceCandidate({

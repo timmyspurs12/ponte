@@ -705,7 +705,7 @@ test("lost COMMIT acknowledgement destroys certainty and only same-key replay re
   assert.equal((replay.response as { status: string }).status, "Routing");
 });
 
-test("persistence remains server-only and unreachable from ordinary Routing/API/client imports", async () => {
+test("final persistence remains server-only and is reached only through orchestration", async () => {
   const [persistence, service, appRoute, clientService] = await Promise.all([
     readFile("src/server/evidence/persist-candidate.ts", "utf8"),
     readFile("src/server/service.ts", "utf8"),
@@ -713,6 +713,7 @@ test("persistence remains server-only and unreachable from ordinary Routing/API/
     readFile("src/lib/services.ts", "utf8"),
   ]);
   assert.match(persistence, /^import "server-only";/m);
+  assert.match(service, /orchestratePreparedRoutingCandidate/);
   for (const source of [service, appRoute, clientService])
     assert.doesNotMatch(
       source,

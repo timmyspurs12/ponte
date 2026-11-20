@@ -12,7 +12,15 @@ import { authenticate, type Context } from "./auth";
 import {
   createRoutingRequestFingerprint,
   idempotencyKeySchema,
+  routingTransitionSchema,
 } from "./routing-boundary";
+import {
+  orchestratePreparedRoutingCandidate,
+  type RoutingOrchestrationTestHooks,
+  type RoutingPreparationDependencies,
+} from "./evidence/routing-orchestration";
+import { mapEvidenceError } from "./evidence/error-boundary";
+import { resolveLocalRoutingEvidencePreparationDependencies } from "./evidence/local-routing-config";
 const uuid = z.uuid();
 const input = z
   .object({
@@ -82,7 +90,38 @@ async function event(
     i.status,
   ]);
 }
+
+interface ExecuteTestDependencies {
+  resolveRoutingPreparationDependencies?: () =>
+    RoutingPreparationDependencies | Promise<RoutingPreparationDependencies>;
+  routingOrchestrationHooks?: RoutingOrchestrationTestHooks;
+}
+
+/** Normal API entrypoint: Routing uses only the guarded local configuration. */
 export async function execute(request: Request, parts: string[]) {
+  return executeWithDependencies(request, parts);
+}
+
+/**
+ * Test-only service entrypoint for deterministic provider/race coverage. It is
+ * unavailable outside Node's test environment and is never used by the route
+ * handler or local configuration boundary.
+ */
+export async function __testOnlyExecute(
+  request: Request,
+  parts: string[],
+  dependencies: ExecuteTestDependencies,
+) {
+  if (process.env.NODE_ENV !== "test")
+    throw new Error("test-only service dependencies are unavailable");
+  return executeWithDependencies(request, parts, dependencies);
+}
+
+async function executeWithDependencies(
+  request: Request,
+  parts: string[],
+  dependencies?: ExecuteTestDependencies,
+) {
   const ctx = await authenticate(request),
     url = new URL(request.url),
     method = request.method;
@@ -221,6 +260,34 @@ export async function execute(request: Request, parts: string[]) {
     pathname: url.pathname,
     text,
   });
+  const routingCommand =
+    id && resource === "transitions" && method === "POST"
+      ? routingTransitionSchema.safeParse(body)
+      : undefined;
+  if (id && routingCommand?.success) {
+    try {
+      const result = await orchestratePreparedRoutingCandidate(
+        {
+          businessId: ctx.business,
+          actorUserId: ctx.user,
+          invoiceId: id,
+          quoteId: routingCommand.data.quoteId,
+          idempotencyKey: key,
+          requestFingerprint: fingerprint,
+          selectedRouteId: routingCommand.data.route,
+          resolvePreparationDependencies:
+            dependencies?.resolveRoutingPreparationDependencies ??
+            resolveLocalRoutingEvidencePreparationDependencies,
+        },
+        dependencies?.routingOrchestrationHooks,
+      );
+      return result.response;
+    } catch (error) {
+      const mapped = mapEvidenceError(error);
+      if (mapped) throw mapped;
+      throw error;
+    }
+  }
   return transaction(async (db) => {
     await repository.lockIdempotencyKey(db, [`${ctx.business}:${key}`]);
     const old = await repository.findIdempotency(db, [ctx.business, key]);
@@ -313,27 +380,12 @@ export async function execute(request: Request, parts: string[]) {
           };
         }
         if (command.status === "Routing") {
+          // A structurally complete Routing command was delegated before this
+          // generic transaction began. Retain the established validation for a
+          // missing field, but never let this legacy path create a settlement.
           if (!command.quoteId || !command.route)
             fail(422, "QUOTE_AND_ROUTE_REQUIRED");
-          const qr = await repository.findValidQuote(db, [
-            ctx.business,
-            id,
-            command.quoteId,
-          ]);
-          if (!qr.rowCount) fail(409, "QUOTE_EXPIRED_OR_MISSING");
-          const q: PaymentQuote = qr.rows[0].data,
-            r = q.routes.find((r) => r.id === command.route)!;
-          await repository.insertSettlement(db, [
-            randomUUID(),
-            ctx.business,
-            id,
-            command.quoteId,
-            command.route,
-            r.outputMinor,
-            r.minimumOutputMinor,
-          ]);
-          i.selectedRoute = command.route;
-          i.quote = q;
+          fail(500, "INTERNAL_ERROR");
         }
         if (command.status === "Settled") {
           const s = await repository.lockValidSettlement(db, [

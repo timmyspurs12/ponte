@@ -15,8 +15,8 @@
     "db:local": "tsx scripts/local-postgres.ts",
     "db:migrate": "node --env-file-if-exists=.env.local --import tsx scripts/database.ts",
     "db:seed": "node --env-file-if-exists=.env.local --import tsx scripts/database.ts --seed",
-    "db:fixtures": "node --env-file-if-exists=.env.local --import tsx scripts/seed-fixtures.ts",
-    "test:backend": "node --conditions=react-server --env-file-if-exists=.env.local --import tsx --test tests-backend/*.test.ts",
+    "db:fixtures": "node --conditions=react-server --env-file-if-exists=.env.local --import tsx scripts/seed-fixtures.ts",
+    "test:backend": "node scripts/run-backend-tests.mjs",
     "db:reset": "node --env-file-if-exists=.env.local --import tsx scripts/reset-database.ts",
     "test:migrations": "node --env-file-if-exists=.env.local --import tsx scripts/test-migrations.ts"
   },

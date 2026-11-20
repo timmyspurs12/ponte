@@ -13,7 +13,12 @@ export async function resetFixtures() {
   }
   execFileSync(
     process.execPath,
-    ["--import", "tsx", "scripts/seed-fixtures.ts"],
+    [
+      "--conditions=react-server",
+      "--import",
+      "tsx",
+      "scripts/seed-fixtures.ts",
+    ],
     { env: process.env, stdio: "pipe" },
   );
 }
