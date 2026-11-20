@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { after, test } from "node:test";
 import { quote } from "../src/lib/quotes";
 import {
+  assertPreparedCandidateMatchesLockedRows,
   EvidencePersistenceError,
   persistPreparedEvidenceCandidate,
   type EvidencePersistenceTestHooks,
@@ -140,10 +141,24 @@ async function createContext(): Promise<Context> {
   return { businessId, actorUserId, invoiceId, quoteId, invoice };
 }
 
+async function createActiveMutationActor(context: Context): Promise<string> {
+  const actorUserId = randomUUID();
+  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+    actorUserId,
+    `${actorUserId}@example.invalid`,
+  ]);
+  await pool.query(
+    "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'operator','active')",
+    [context.businessId, actorUserId],
+  );
+  return actorUserId;
+}
+
 async function prepare(
   context: Context,
   fingerprint = requestFingerprint(),
   provider = new SyntheticDekProvider(),
+  actorUserId = context.actorUserId,
 ): Promise<{
   candidate: PreparedEvidenceCandidate;
   provider: SyntheticDekProvider;
@@ -159,7 +174,7 @@ async function prepare(
     snapshot,
     selectedRouteId: "split",
     registryAddress: REGISTRY_ADDRESS,
-    createdByUserId: context.actorUserId,
+    createdByUserId: actorUserId,
     requestFingerprint: fingerprint,
     provider,
   });
@@ -179,6 +194,20 @@ async function counts(context: Context) {
     [context.businessId, context.invoiceId],
   );
   return result.rows[0];
+}
+
+async function assertNoPersistenceWrites(
+  context: Context,
+  expectedStatus = "Funded",
+): Promise<void> {
+  assert.deepEqual(await counts(context), {
+    evidence: "0",
+    outbox: "0",
+    settlements: "0",
+    events: "0",
+    idempotency: "0",
+    status: expectedStatus,
+  });
 }
 
 function isPersistenceError(
@@ -274,48 +303,215 @@ test("same-key races serialize into one persistence and an authorized candidate-
   });
 });
 
-test("final locked rows reject candidate drift and PostgreSQL-time quote expiry before any write", async () => {
-  const changed = await createContext();
-  const { candidate: changedCandidate } = await prepare(changed);
-  await pool.query(
-    "UPDATE quotes SET data=jsonb_set(data,'{routes,1,outputMinor}',to_jsonb('1'::text)) WHERE id=$1",
-    [changed.quoteId],
+test(
+  "different idempotency keys and actors racing the same invoice leave one routed persistence and no loser writes",
+  { timeout: 5000 },
+  async () => {
+    const context = await createContext();
+    const secondActorUserId = await createActiveMutationActor(context);
+    const firstFingerprint = requestFingerprint("ab");
+    const secondFingerprint = requestFingerprint("cd");
+    const { candidate: firstCandidate } = await prepare(
+      context,
+      firstFingerprint,
+    );
+    const { candidate: secondCandidate } = await prepare(
+      context,
+      secondFingerprint,
+      new SyntheticDekProvider(),
+      secondActorUserId,
+    );
+    const firstInput = persistenceInput(
+      context,
+      firstCandidate,
+      `invoice-race-first-${randomUUID()}`,
+      firstFingerprint,
+    );
+    const secondInput = persistenceInput(
+      { ...context, actorUserId: secondActorUserId },
+      secondCandidate,
+      `invoice-race-second-${randomUUID()}`,
+      secondFingerprint,
+    );
+
+    const outcomes = await Promise.allSettled([
+      persistPreparedEvidenceCandidate(firstInput),
+      persistPreparedEvidenceCandidate(secondInput),
+    ]);
+    const persisted = outcomes.find(
+      (outcome) => outcome.status === "fulfilled",
+    );
+    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
+    assert.ok(persisted && persisted.status === "fulfilled");
+    assert.equal(persisted.value.kind, "persisted");
+    assert.ok(rejected && rejected.status === "rejected");
+    assert.equal(
+      isPersistenceError("CANDIDATE_MISMATCH")(rejected.reason),
+      true,
+    );
+
+    assert.deepEqual(await counts(context), {
+      evidence: "1",
+      outbox: "1",
+      settlements: "1",
+      events: "1",
+      idempotency: "1",
+      status: "Routing",
+    });
+    const idempotency = await pool.query<{ key: string }>(
+      "SELECT key FROM idempotency WHERE business_id=$1 ORDER BY key",
+      [context.businessId],
+    );
+    assert.equal(idempotency.rowCount, 1);
+    assert.ok(
+      [firstInput.idempotencyKey, secondInput.idempotencyKey].includes(
+        idempotency.rows[0].key,
+      ),
+    );
+  },
+);
+
+test("final locked rows reject persisted invoice, quote, economics, and route drift before any write", async () => {
+  const scenarios: Array<{
+    name: string;
+    mutate: (context: Context) => Promise<void>;
+    expectedStatus?: string;
+  }> = [
+    {
+      name: "invoice status",
+      mutate: async (context) => {
+        await pool.query(
+          "UPDATE invoices SET status='Failed',data=jsonb_set(data,'{status}',to_jsonb('Failed'::text)) WHERE id=$1",
+          [context.invoiceId],
+        );
+      },
+      expectedStatus: "Failed",
+    },
+    {
+      name: "authoritative invoice funding amount",
+      mutate: async (context) => {
+        await pool.query(
+          "UPDATE invoices SET funding_minor=2500002,data=jsonb_set(jsonb_set(data,'{fundingMinor}',to_jsonb('2500002'::text)),'{amount}',to_jsonb(25000.02::numeric)) WHERE id=$1",
+          [context.invoiceId],
+        );
+      },
+    },
+    {
+      name: "quote JSON simulated flag",
+      mutate: async (context) => {
+        await pool.query(
+          "UPDATE quotes SET data=jsonb_set(data,'{simulated}',to_jsonb(false)) WHERE id=$1",
+          [context.quoteId],
+        );
+      },
+    },
+    {
+      name: "quote JSON funding amount",
+      mutate: async (context) => {
+        await pool.query(
+          "UPDATE quotes SET data=jsonb_set(data,'{fundingMinor}',to_jsonb('2500002'::text)) WHERE id=$1",
+          [context.quoteId],
+        );
+      },
+    },
+    {
+      name: "quote fixed economics",
+      mutate: async (context) => {
+        await pool.query(
+          "UPDATE quotes SET data=jsonb_set(data,'{rate,numerator}',to_jsonb('524'::text)) WHERE id=$1",
+          [context.quoteId],
+        );
+      },
+    },
+    {
+      name: "quote route definition",
+      mutate: async (context) => {
+        await pool.query(
+          "UPDATE quotes SET data=jsonb_set(data,'{routes,1,outputMinor}',to_jsonb('1'::text)) WHERE id=$1",
+          [context.quoteId],
+        );
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const context = await createContext();
+    const { candidate } = await prepare(context);
+    await scenario.mutate(context);
+    await assert.rejects(
+      persistPreparedEvidenceCandidate(persistenceInput(context, candidate)),
+      isPersistenceError("CANDIDATE_MISMATCH"),
+      scenario.name,
+    );
+    await assertNoPersistenceWrites(context, scenario.expectedStatus);
+  }
+});
+
+test("quote source and relational simulated flag are constrained, while final comparison rejects either hypothetical stale row", async () => {
+  const context = await createContext();
+  const fingerprint = requestFingerprint();
+  const { candidate } = await prepare(context, fingerprint);
+
+  await assert.rejects(
+    pool.query("UPDATE quotes SET source='other-source' WHERE id=$1", [
+      context.quoteId,
+    ]),
+    (error: unknown) => (error as { code?: string }).code === "23514",
   );
   await assert.rejects(
-    persistPreparedEvidenceCandidate(
-      persistenceInput(changed, changedCandidate),
-    ),
+    pool.query("UPDATE quotes SET simulated=false WHERE id=$1", [
+      context.quoteId,
+    ]),
+    (error: unknown) => (error as { code?: string }).code === "23514",
+  );
+
+  const snapshot = await readEvidencePreparationSnapshot(
+    context.businessId,
+    context.invoiceId,
+    context.quoteId,
+  );
+  if (snapshot.kind !== "ready")
+    assert.fail(`expected constrained quote snapshot, got ${snapshot.kind}`);
+  const verificationContext = {
+    businessId: context.businessId,
+    actorUserId: context.actorUserId,
+    requestFingerprint: fingerprint,
+  };
+  assert.throws(
+    () =>
+      assertPreparedCandidateMatchesLockedRows(
+        candidate,
+        verificationContext,
+        snapshot.invoice,
+        { ...snapshot.quote, source: "other-source" },
+      ),
     isPersistenceError("CANDIDATE_MISMATCH"),
   );
-  assert.deepEqual(await counts(changed), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
-  });
+  assert.throws(
+    () =>
+      assertPreparedCandidateMatchesLockedRows(
+        candidate,
+        verificationContext,
+        snapshot.invoice,
+        { ...snapshot.quote, simulated: false },
+      ),
+    isPersistenceError("CANDIDATE_MISMATCH"),
+  );
+  await assertNoPersistenceWrites(context);
+});
 
-  const expired = await createContext();
-  const { candidate: expiredCandidate } = await prepare(expired);
+test("PostgreSQL-time quote expiry rejects the candidate before any write", async () => {
+  const context = await createContext();
+  const { candidate } = await prepare(context);
   await pool.query(
     "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 millisecond' WHERE id=$1",
-    [expired.quoteId],
+    [context.quoteId],
   );
   await assert.rejects(
-    persistPreparedEvidenceCandidate(
-      persistenceInput(expired, expiredCandidate),
-    ),
+    persistPreparedEvidenceCandidate(persistenceInput(context, candidate)),
     isPersistenceError("INVOICE_OR_QUOTE_UNAVAILABLE"),
   );
-  assert.deepEqual(await counts(expired), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
-  });
+  await assertNoPersistenceWrites(context);
 });
 
 test("revoked or viewer memberships cannot persist or disclose a durable replay", async () => {

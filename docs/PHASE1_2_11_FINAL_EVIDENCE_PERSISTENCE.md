@@ -82,32 +82,51 @@ validator and is not used in final persistence.
 
 This path distinguishes outcomes after `COMMIT` is issued:
 
-- an acknowledged `COMMIT` returns the persisted result;
-- a definitive PostgreSQL rejection (a non-connection SQLSTATE) rolls back and
-  propagates to the fixed persistence failure boundary;
-- a connection/protocol/transport loss, including a no-SQLSTATE failure, is
-  ambiguous. The client is destroyed without a speculative rollback and the
-  caller receives `COMMIT_OUTCOME_UNKNOWN`.
+| Commit observation                                                                                                               | Classification              | Wrapper behavior                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Acknowledged `COMMIT`                                                                                                            | Success                     | Return the committed result.                                                                                   |
+| Valid definitive PostgreSQL SQLSTATE, such as `23505`                                                                            | Definitive server rejection | Attempt `ROLLBACK`, preserve the original server error, and return the client unless rollback itself fails.    |
+| PostgreSQL class `08` (connection exception), shutdown family `57P0`, or `40003` (`statement_completion_unknown`)                | Ambiguous                   | Do not speculate with `ROLLBACK`; destroy the client and surface `COMMIT_OUTCOME_UNKNOWN` through persistence. |
+| Missing/non-string code or a non-SQLSTATE code, including Node `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, and protocol/transport labels | Ambiguous                   | Do not speculate with `ROLLBACK`; destroy the client and surface `COMMIT_OUTCOME_UNKNOWN` through persistence. |
+
+The classifier recognizes a PostgreSQL SQLSTATE only when it has a documented
+PostgreSQL class and is exactly five uppercase alphanumeric characters. This
+prevents a five-letter Node transport code such as `EPIPE` from being mistaken
+for a server rejection. `40003` is explicitly ambiguous because PostgreSQL
+states that statement completion is unknown. Any non-SQLSTATE code is
+ambiguous: it does not establish whether PostgreSQL processed the `COMMIT`.
 
 A caller must not infer a failed mutation from `COMMIT_OUTCOME_UNKNOWN`.
 Recovery is restricted to retrying the same business/key/fingerprint: the
 advisory lock and durable idempotency row then produce an authorized replay if
-the server committed. A different fingerprint conflicts.
+the server committed. A different fingerprint conflicts. The local simulated
+acknowledgement-loss test is not a real network-partition test.
 
 ## Local test coverage
 
 The unit and isolated local-PostgreSQL tests cover:
 
 - metadata-only KMS validation without a plaintext DEK;
-- acknowledged, definitively rejected, and simulated lost-acknowledgement
-  commits, including destruction of the uncertain client;
+- acknowledged `COMMIT`; definitive `23505`; ambiguous `08006`, `40003`,
+  `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, and no-code failures. Each ambiguous
+  case asserts no speculative rollback and `release(true)`; callback failure
+  with rollback failure preserves the callback error and also destroys its
+  client;
 - copied-candidate integrity rejection and sanitized errors;
-- final locked-row revalidation, actual PostgreSQL quote expiry, and the
-  frozen synthetic split settlement vector (`473904` expected /
-  `471534` minimum) with no transaction hash;
+- final locked-row revalidation after persisted invoice status/funding changes,
+  quote JSON simulated/funding/economics/route changes, and actual PostgreSQL
+  quote expiry. The source and relational `quotes.simulated` columns have only
+  one schema-permitted value, so local PostgreSQL tests assert those constraints
+  reject an invalid change and the final comparator rejects either hypothetical
+  stale value without weakening schema constraints;
+- the frozen synthetic split settlement vector (`473904` expected / `471534`
+  minimum) with no transaction hash;
 - active-membership locking, revocation/viewer denial, and replay
   reauthorization;
-- same-key races, candidate-free replay, and changed-fingerprint conflicts;
+- same-key races, candidate-free replay, changed-fingerprint conflicts, and a
+  two-actor/different-idempotency-key race on one invoice/quote. Exactly one
+  request persists; the other reaches final invoice-state revalidation and
+  fails with `CANDIDATE_MISMATCH`, leaving no loser idempotency or domain rows;
 - atomic rollback after each write boundary (settlement, evidence, outbox,
   invoice, event, idempotency);
 - pending outbox insertion, immutable evidence insertion, `Routing` invoice

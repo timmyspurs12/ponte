@@ -7,25 +7,28 @@ import {
   transactionWithCommitOutcome,
 } from "../../src/server/repository";
 
-type QueryOutcome = "acknowledged" | "definitive-rejection" | "ambiguous-loss";
+interface SyntheticTransactionPlan {
+  commitError?: Error;
+  rollbackError?: Error;
+}
+
+interface ObservedClientUse {
+  queries: string[];
+  releases: boolean[];
+}
 
 async function withSyntheticClient<T>(
-  outcome: QueryOutcome,
-  run: (observed: { queries: string[]; releases: boolean[] }) => Promise<T>,
+  plan: SyntheticTransactionPlan,
+  run: (observed: ObservedClientUse) => Promise<T>,
 ): Promise<T> {
   const originalConnect = pool.connect.bind(pool);
-  const observed = { queries: [] as string[], releases: [] as boolean[] };
+  const observed: ObservedClientUse = { queries: [], releases: [] };
   const client = {
     async query(command: string) {
       observed.queries.push(command);
-      if (command === "COMMIT" && outcome === "definitive-rejection")
-        throw Object.assign(new Error("definitive rejection"), {
-          code: "23505",
-        });
-      if (command === "COMMIT" && outcome === "ambiguous-loss")
-        throw Object.assign(new Error("transport acknowledgement lost"), {
-          code: "08006",
-        });
+      if (command === "COMMIT" && plan.commitError) throw plan.commitError;
+      if (command === "ROLLBACK" && plan.rollbackError)
+        throw plan.rollbackError;
       return { rowCount: 0, rows: [] };
     },
     release(destroy?: boolean) {
@@ -43,8 +46,12 @@ async function withSyntheticClient<T>(
   }
 }
 
+function errorWithCode(code: string): Error {
+  return Object.assign(new Error(`synthetic ${code}`), { code });
+}
+
 test("evidence transaction returns only after an acknowledged COMMIT", async () => {
-  await withSyntheticClient("acknowledged", async (observed) => {
+  await withSyntheticClient({}, async (observed) => {
     assert.equal(
       await transactionWithCommitOutcome(async () => "committed"),
       "committed",
@@ -54,24 +61,49 @@ test("evidence transaction returns only after an acknowledged COMMIT", async () 
   });
 });
 
-test("definitive COMMIT rejection rolls back and preserves the definitive error", async () => {
-  await withSyntheticClient("definitive-rejection", async (observed) => {
+for (const [label, commitError] of [
+  ["ECONNRESET", errorWithCode("ECONNRESET")],
+  ["ETIMEDOUT", errorWithCode("ETIMEDOUT")],
+  ["EPIPE", errorWithCode("EPIPE")],
+  ["no code", new Error("synthetic transport loss")],
+  ["SQLSTATE 40003", errorWithCode("40003")],
+  ["SQLSTATE 08006", errorWithCode("08006")],
+] as const) {
+  test(`ambiguous COMMIT ${label} avoids ROLLBACK and destroys the client`, async () => {
+    await withSyntheticClient({ commitError }, async (observed) => {
+      await assert.rejects(
+        transactionWithCommitOutcome(async () => "unknown"),
+        (error: unknown) => error instanceof CommitOutcomeUnknownError,
+      );
+      assert.deepEqual(observed.queries, ["BEGIN", "COMMIT"]);
+      assert.deepEqual(observed.releases, [true]);
+    });
+  });
+}
+
+test("definitive SQLSTATE rejection rolls back and preserves the original server error", async () => {
+  const serverError = errorWithCode("23505");
+  await withSyntheticClient({ commitError: serverError }, async (observed) => {
     await assert.rejects(
       transactionWithCommitOutcome(async () => "never returned"),
-      (error: unknown) => (error as { code?: string }).code === "23505",
+      (error: unknown) => error === serverError,
     );
     assert.deepEqual(observed.queries, ["BEGIN", "COMMIT", "ROLLBACK"]);
     assert.deepEqual(observed.releases, [false]);
   });
 });
 
-test("ambiguous COMMIT loss avoids ROLLBACK and destroys the uncertain client", async () => {
-  await withSyntheticClient("ambiguous-loss", async (observed) => {
+test("callback failure preserves the callback error when rollback also fails and destroys the client", async () => {
+  const callbackError = new Error("synthetic callback failure");
+  const rollbackError = new Error("synthetic rollback failure");
+  await withSyntheticClient({ rollbackError }, async (observed) => {
     await assert.rejects(
-      transactionWithCommitOutcome(async () => "unknown"),
-      (error: unknown) => error instanceof CommitOutcomeUnknownError,
+      transactionWithCommitOutcome(async () => {
+        throw callbackError;
+      }),
+      (error: unknown) => error === callbackError,
     );
-    assert.deepEqual(observed.queries, ["BEGIN", "COMMIT"]);
+    assert.deepEqual(observed.queries, ["BEGIN", "ROLLBACK"]);
     assert.deepEqual(observed.releases, [true]);
   });
 });

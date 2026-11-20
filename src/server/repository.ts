@@ -154,12 +154,18 @@ export class CommitOutcomeUnknownError extends Error {
   }
 }
 
+// PostgreSQL's documented SQLSTATE classes. Requiring both a known class and
+// five uppercase alphanumeric characters keeps transport labels such as EPIPE
+// (which happens to be five uppercase letters) out of the server-error path.
+const POSTGRESQL_SQLSTATE =
+  /^(?:00|01|02|03|08|09|0A|0B|0F|0L|0P|0Z|20|21|22|23|24|25|26|27|28|2B|2D|2F|34|38|39|3B|3D|3F|40|42|44|53|54|55|57|58|72|F0|HV|P0|XX)[0-9A-Z]{3}$/;
+
 function commitOutcomeIsUnknown(error: unknown): boolean {
   const code = (error as { code?: unknown })?.code;
-  if (typeof code !== "string") return true;
-  // Non-connection SQLSTATEs are definitive PostgreSQL rejections. Connection
-  // failures and shutdown-family errors can occur after the server processed COMMIT.
-  return code.startsWith("08") || code.startsWith("57P0");
+  if (typeof code !== "string" || !POSTGRESQL_SQLSTATE.test(code)) return true;
+  // Connection exceptions, shutdown-family reports, and PostgreSQL's explicit
+  // statement-completion-unknown result cannot establish whether COMMIT won.
+  return code.startsWith("08") || code.startsWith("57P0") || code === "40003";
 }
 
 /**
