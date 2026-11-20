@@ -30,6 +30,8 @@ This phase does not modify the registry ABI, Solidity behavior, commitment forma
 | `viaIR`                        |                                `false` |
 | Compiler resolution            | local `solc` wrapper; `offline = true` |
 
+`contracts/foundry.toml` explicitly declares `evm_version = "prague"`. This pins the existing tested compiler target rather than changing it; the artifact identity command must continue to report the same `prague` value and bytecode hashes after every approved build.
+
 Run, from `contracts/`:
 
 ```sh
@@ -173,15 +175,17 @@ npm run verify:deployment -- \
 Before it performs any contract call, it validates the manifest against the freshly rebuilt local artifact. It then executes only these read-only JSON-RPC requests:
 
 1. `eth_chainId`, requiring `421614`;
-2. `eth_getCode` for the manifest registry address, hashing returned runtime bytecode with Keccak-256 and comparing it to the manifest;
-3. `eth_call` to `admin()`;
-4. `eth_call` to `isAttestor(administrator)`, requiring `false`;
-5. `eth_call` to `isAttestor(initialAttestor)`, requiring `true`;
-6. `eth_call` to `evidenceHead(bytes32(0))`, expecting the empty initial head.
+2. `eth_getTransactionReceipt` for the manifest deployment transaction hash, requiring a receipt whose transaction hash, successful status, contract address, block number, and nonzero block hash match the manifest;
+3. `eth_getBlockByNumber` for that manifest block, requiring the canonical block number and hash, with the hash exactly matching the receipt block hash;
+4. `eth_getCode` for the manifest registry address, hashing returned runtime bytecode with Keccak-256 and comparing it to the manifest;
+5. `eth_call` to `admin()`;
+6. `eth_call` to `isAttestor(administrator)`, requiring `false`;
+7. `eth_call` to `isAttestor(initialAttestor)`, requiring `true`;
+8. `eth_call` to `evidenceHead(bytes32(0))`, expecting the empty initial head.
 
-A wrong chain stops before bytecode access. A bytecode mismatch stops before role/interface calls. No request can sign, broadcast, deploy, fund, mutate roles, or anchor evidence.
+A wrong chain stops before receipt access. A missing, failed, malformed, mismatched, or noncanonical deployment receipt stops before bytecode access. A bytecode mismatch stops before role/interface calls. The verifier reports fixed failure codes such as `DEPLOYMENT_RECEIPT_MISSING`, `DEPLOYMENT_RECEIPT_FAILED`, `DEPLOYMENT_RECEIPT_TRANSACTION_HASH_MISMATCH`, `DEPLOYMENT_RECEIPT_CONTRACT_ADDRESS_MISMATCH`, `DEPLOYMENT_RECEIPT_BLOCK_NUMBER_MISMATCH`, `DEPLOYMENT_RECEIPT_BLOCK_HASH_INVALID`, and `DEPLOYMENT_CANONICAL_BLOCK_HASH_MISMATCH`.
 
-The command emits only a fixed JSON result shape with a status of `verified`, `failed`, `rpc_error`, `invalid_manifest`, or `invalid_arguments`. It reports machine-readable check outcomes and fixed error categories rather than RPC URLs, credentials, or provider error text.
+No request can sign, broadcast, deploy, fund, mutate roles, or anchor evidence. The command emits only a fixed JSON result shape with a status of `verified`, `failed`, `rpc_error`, `invalid_manifest`, or `invalid_arguments`. It reports machine-readable check outcomes and fixed error categories rather than RPC URLs, credentials, raw receipt/block objects, or provider error text.
 
 ## 7. Local tests versus public deployment
 
@@ -189,9 +193,10 @@ The Foundry contract suite uses `vm.chainId(421614)` to exercise the constructor
 
 Passing those tests establishes only local behavior:
 
-- bytecode reproducibility under the pinned local compiler;
+- bytecode reproducibility under the pinned local compiler, including the explicit `prague` target;
 - configuration guard correctness;
-- strict manifest validation; and
+- strict manifest validation;
+- receipt transaction/address/status/block provenance checks; and
 - deterministic read-only verification behavior against fake responses.
 
 It does **not** establish an approved account, funded address, live RPC behavior, public deployment, block-explorer source verification, testnet confirmation, or attestor authorization on any public chain.

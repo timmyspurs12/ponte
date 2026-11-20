@@ -58,6 +58,33 @@ function parseRpcQuantity(value) {
   return BigInt(value).toString();
 }
 
+function canonicalRpcQuantity(value) {
+  return `0x${BigInt(value).toString(16)}`;
+}
+
+function receiptBytes32(value) {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value))
+    return null;
+  const normalized = value.toLowerCase();
+  return normalized === `0x${"0".repeat(64)}` ? null : normalized;
+}
+
+function receiptAddress(value) {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(value))
+    return null;
+  const normalized = value.toLowerCase();
+  return normalized === `0x${"0".repeat(40)}` ? null : normalized;
+}
+
+function receiptQuantity(value) {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) return null;
+  return BigInt(value).toString();
+}
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function encodeAddressArgument(address) {
   return `${REGISTRY_INTERFACE_SELECTORS.isAttestor}${"0".repeat(24)}${address.slice(2)}`;
 }
@@ -98,6 +125,16 @@ function baseResult(manifest) {
     },
     checks: {
       chainId: emptyCheck(ARBITRUM_SEPOLIA_CHAIN_ID),
+      deploymentReceipt: {
+        transactionHash: emptyCheck(manifest.deployment.transactionHash),
+        status: emptyCheck("0x1"),
+        contractAddress: emptyCheck(manifest.deployment.registryAddress),
+        blockNumber: emptyCheck(manifest.deployment.blockNumber),
+        blockHash: emptyCheck("nonzero"),
+        canonicalBlockNumber: emptyCheck(manifest.deployment.blockNumber),
+        canonicalBlockHash: emptyCheck("matches receipt block hash"),
+        ok: null,
+      },
       runtimeBytecode: emptyCheck(manifest.deployment.runtimeBytecodeHash),
       administrator: {
         ...emptyCheck(manifest.roles.administrator),
@@ -121,6 +158,12 @@ function rpcErrorResult(result, error) {
   return result;
 }
 
+function failedResult(result, errorCode) {
+  result.status = "failed";
+  result.errorCode = errorCode;
+  return result;
+}
+
 /**
  * Verifies a deployed registry through an injected JSON-RPC function.
  * The function never creates a signer, broadcasts, or mutates chain state.
@@ -139,7 +182,115 @@ export async function verifyRegistryDeployment(manifestInput, rpcCall) {
   }
   result.checks.chainId.actual = chainId;
   result.checks.chainId.ok = chainId === ARBITRUM_SEPOLIA_CHAIN_ID;
-  if (!result.checks.chainId.ok) return result;
+  if (!result.checks.chainId.ok)
+    return failedResult(result, "CHAIN_ID_MISMATCH");
+
+  let receipt;
+  try {
+    receipt = await rpcCall("eth_getTransactionReceipt", [
+      manifest.deployment.transactionHash,
+    ]);
+  } catch (error) {
+    return rpcErrorResult(result, error);
+  }
+  if (receipt === null)
+    return failedResult(result, "DEPLOYMENT_RECEIPT_MISSING");
+  if (!isRecord(receipt))
+    return failedResult(result, "DEPLOYMENT_RECEIPT_INVALID");
+
+  const receiptTransactionHash = receiptBytes32(receipt.transactionHash);
+  if (!receiptTransactionHash) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_TRANSACTION_HASH_INVALID");
+  }
+  result.checks.deploymentReceipt.transactionHash.actual =
+    receiptTransactionHash;
+  result.checks.deploymentReceipt.transactionHash.ok =
+    receiptTransactionHash === manifest.deployment.transactionHash;
+  if (!result.checks.deploymentReceipt.transactionHash.ok) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_TRANSACTION_HASH_MISMATCH");
+  }
+
+  const receiptStatus = receiptQuantity(receipt.status);
+  if (receiptStatus === null) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_STATUS_INVALID");
+  }
+  const canonicalReceiptStatus = canonicalRpcQuantity(receiptStatus);
+  result.checks.deploymentReceipt.status.actual = canonicalReceiptStatus;
+  result.checks.deploymentReceipt.status.ok = canonicalReceiptStatus === "0x1";
+  if (!result.checks.deploymentReceipt.status.ok) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_FAILED");
+  }
+
+  const receiptContractAddress = receiptAddress(receipt.contractAddress);
+  if (!receiptContractAddress) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_CONTRACT_ADDRESS_INVALID");
+  }
+  result.checks.deploymentReceipt.contractAddress.actual =
+    receiptContractAddress;
+  result.checks.deploymentReceipt.contractAddress.ok =
+    receiptContractAddress === manifest.deployment.registryAddress;
+  if (!result.checks.deploymentReceipt.contractAddress.ok) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_CONTRACT_ADDRESS_MISMATCH");
+  }
+
+  const receiptBlockNumber = receiptQuantity(receipt.blockNumber);
+  if (receiptBlockNumber === null) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_BLOCK_NUMBER_INVALID");
+  }
+  result.checks.deploymentReceipt.blockNumber.actual = receiptBlockNumber;
+  result.checks.deploymentReceipt.blockNumber.ok =
+    receiptBlockNumber === manifest.deployment.blockNumber;
+  if (!result.checks.deploymentReceipt.blockNumber.ok) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_BLOCK_NUMBER_MISMATCH");
+  }
+
+  const receiptBlockHash = receiptBytes32(receipt.blockHash);
+  if (!receiptBlockHash) {
+    return failedResult(result, "DEPLOYMENT_RECEIPT_BLOCK_HASH_INVALID");
+  }
+  result.checks.deploymentReceipt.blockHash.actual = receiptBlockHash;
+  result.checks.deploymentReceipt.blockHash.ok = true;
+
+  let canonicalBlock;
+  try {
+    canonicalBlock = await rpcCall("eth_getBlockByNumber", [
+      canonicalRpcQuantity(manifest.deployment.blockNumber),
+      false,
+    ]);
+  } catch (error) {
+    return rpcErrorResult(result, error);
+  }
+  if (canonicalBlock === null) {
+    return failedResult(result, "DEPLOYMENT_CANONICAL_BLOCK_MISSING");
+  }
+  if (!isRecord(canonicalBlock)) {
+    return failedResult(result, "DEPLOYMENT_CANONICAL_BLOCK_INVALID");
+  }
+
+  const canonicalBlockNumber = receiptQuantity(canonicalBlock.number);
+  if (canonicalBlockNumber === null) {
+    return failedResult(result, "DEPLOYMENT_CANONICAL_BLOCK_NUMBER_INVALID");
+  }
+  result.checks.deploymentReceipt.canonicalBlockNumber.actual =
+    canonicalBlockNumber;
+  result.checks.deploymentReceipt.canonicalBlockNumber.ok =
+    canonicalBlockNumber === manifest.deployment.blockNumber;
+  if (!result.checks.deploymentReceipt.canonicalBlockNumber.ok) {
+    return failedResult(result, "DEPLOYMENT_CANONICAL_BLOCK_NUMBER_MISMATCH");
+  }
+
+  const canonicalBlockHash = receiptBytes32(canonicalBlock.hash);
+  if (!canonicalBlockHash) {
+    return failedResult(result, "DEPLOYMENT_CANONICAL_BLOCK_HASH_INVALID");
+  }
+  result.checks.deploymentReceipt.canonicalBlockHash.actual =
+    canonicalBlockHash;
+  result.checks.deploymentReceipt.canonicalBlockHash.ok =
+    canonicalBlockHash === receiptBlockHash;
+  if (!result.checks.deploymentReceipt.canonicalBlockHash.ok) {
+    return failedResult(result, "DEPLOYMENT_CANONICAL_BLOCK_HASH_MISMATCH");
+  }
+  result.checks.deploymentReceipt.ok = true;
 
   let runtimeBytecode;
   try {
@@ -159,7 +310,9 @@ export async function verifyRegistryDeployment(manifestInput, rpcCall) {
   result.checks.runtimeBytecode.actual = runtimeBytecodeHash;
   result.checks.runtimeBytecode.ok =
     runtimeBytecodeHash === manifest.deployment.runtimeBytecodeHash;
-  if (!result.checks.runtimeBytecode.ok) return result;
+  if (!result.checks.runtimeBytecode.ok) {
+    return failedResult(result, "RUNTIME_BYTECODE_HASH_MISMATCH");
+  }
 
   let administrator;
   let administratorIsAttestor;
@@ -225,14 +378,19 @@ export async function verifyRegistryDeployment(manifestInput, rpcCall) {
     result.checks.interface.isAttestor.ok &&
     result.checks.interface.evidenceHead.ok;
 
-  if (
-    result.checks.administrator.ok &&
-    result.checks.administrator.attestorStatus.ok &&
-    result.checks.initialAttestor.ok &&
-    result.checks.interface.ok
-  ) {
-    result.status = "verified";
+  if (!result.checks.administrator.ok) {
+    return failedResult(result, "ADMINISTRATOR_MISMATCH");
   }
+  if (!result.checks.administrator.attestorStatus.ok) {
+    return failedResult(result, "ADMINISTRATOR_ATTESTOR_ROLE_OVERLAP");
+  }
+  if (!result.checks.initialAttestor.ok) {
+    return failedResult(result, "INITIAL_ATTESTOR_MISMATCH");
+  }
+  if (!result.checks.interface.ok) {
+    return failedResult(result, "REGISTRY_INTERFACE_MISMATCH");
+  }
+  result.status = "verified";
   return result;
 }
 
