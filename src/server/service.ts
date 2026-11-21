@@ -96,6 +96,8 @@ interface ExecuteTestDependencies {
   resolveRoutingPreparationDependencies?: () =>
     RoutingPreparationDependencies | Promise<RoutingPreparationDependencies>;
   routingOrchestrationHooks?: RoutingOrchestrationTestHooks;
+  /** Test-only verified context injection; production always calls authenticate. */
+  authenticate?: (request: Request) => Promise<Context>;
 }
 
 /** Normal API entrypoint: Routing uses only the guarded local configuration. */
@@ -123,7 +125,10 @@ async function executeWithDependencies(
   parts: string[],
   dependencies?: ExecuteTestDependencies,
 ) {
-  const ctx = await authenticate(request),
+  if (dependencies?.authenticate && process.env.NODE_ENV !== "test")
+    throw new Error("test-only authentication injection is unavailable");
+  const ctx = await (dependencies?.authenticate?.(request) ??
+      authenticate(request)),
     url = new URL(request.url),
     method = request.method;
   if (parts.length === 1 && parts[0] === "activity" && method === "GET") {

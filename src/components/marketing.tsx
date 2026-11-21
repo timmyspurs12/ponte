@@ -185,7 +185,7 @@ export function Marketing() {
         </nav>
         <div className="header-actions">
           <LanguageSelector />
-          <Link href="/app" className="sign-in">
+          <Link href="/sign-in" className="sign-in">
             {" "}
             {t("Sign in")} <ArrowUpRight size={14} />
           </Link>

@@ -7,6 +7,7 @@ Status: implemented local/CI simulation foundation, 16 November 2026. No public 
 Use **Next.js Node Route Handlers + TypeScript + Zod 4 + node-postgres + PostgreSQL 18**, within the existing modular monolith. Keep the approved UI and async InvoiceService contract.
 
 Official references consulted:
+
 - [Next.js Route Handlers](https://nextjs.org/docs/app/getting-started/route-handlers): native request/response handlers fit this application's API without a second server or CORS deployment.
 - [Next.js authentication guide](https://nextjs.org/docs/app/guides/authentication): authentication, sessions and authorization are separate; enforce authorization on data access, not only navigation.
 - [PostgreSQL explicit locking](https://www.postgresql.org/docs/current/explicit-locking.html): row locks serialize competing financial mutations; transaction-scoped advisory locks serialize idempotency keys.
@@ -40,13 +41,13 @@ Application-level tenant predicates plus composite FKs provide isolation. **RLS 
 
 ## State machine and atomicity
 
-| From | Allowed targets |
-|---|---|
-| Draft | Pending payment, Failed |
-| Pending payment | Funded, Failed |
-| Funded | Routing, Failed |
-| Routing | Settled, Failed |
-| Settled / Failed | none |
+| From             | Allowed targets         |
+| ---------------- | ----------------------- |
+| Draft            | Pending payment, Failed |
+| Pending payment  | Funded, Failed          |
+| Funded           | Routing, Failed         |
+| Routing          | Settled, Failed         |
+| Settled / Failed | none                    |
 
 Invoice creation is Draft. The UI then explicitly requests Pending payment. If the second request fails, the durable Draft remains discoverable and can be activated from its detail screen—no compensating deletion of financial history.
 
@@ -58,13 +59,17 @@ The HTTP request ID is an observability identifier, separate from durable domain
 
 ## Authentication and security boundary
 
-**Production always fails closed with 503 `AUTH_NOT_CONFIGURED`, even if all development flags are set.** `/dev-login` returns 404 in production. Do not weaken this to enable a demo deployment.
+Production uses the official Auth.js (`next-auth`) GitHub OAuth App Router handler. It **fails closed with 503 `AUTH_NOT_CONFIGURED`** if its server-only configuration is absent, malformed, or contradictory. `/dev-login` returns 404 in production and `PONTE_DEV_*` values are never considered by the production path.
 
-Local access requires `PONTE_DEV_AUTH=1`, an unguessable 32–128-character token, configured UUID user/business and an active membership. `/dev-login` exchanges the token for an eight-hour HttpOnly, SameSite=Strict cookie; Secure is added under HTTPS. Bearer tokens are supported for local API tests. Tokens are compared via equal-size SHA256 digests with constant-time comparison. Session rotation/revocation is by changing the local token; cookie expiry is not a full production session system. No production identity provider or credentials have been invented.
+GitHub's stable numeric account ID is the sole external identity subject. A successful callback creates at most one immutable `external_identities(provider='github', subject)` mapping to an internal user; GitHub email, name, and login are not authorization inputs. The legacy required `users.email` value for OAuth-created records is a non-routable technical placeholder. Database constraints and an immutability trigger reject duplicate/repointed mappings. Auth.js sessions are encrypted JWT cookies; production sets `Secure`, `HttpOnly`, and `SameSite=Lax`. OAuth state/CSRF checks are supplied by Auth.js, callback destinations are restricted to the canonical `NEXTAUTH_URL` origin, and the browser-visible session projection excludes OAuth tokens, secrets, internal IDs, roles, and business IDs.
 
-The configured dev identity is **one local identity**, not user impersonation or a user-facing multi-account login. Cross-tenant tests provision a second membership/tenant and change only trusted server context. Production needs an established authentication library/provider with verified session mapping, tenant selection, revocation, authorization rechecks and security review before any writable deployment.
+The configuration is intentionally a narrow, one-workspace policy: `PONTE_AUTH_BUSINESS_ID` selects the existing private business; `PONTE_AUTH_ADMIN_GITHUB_IDS` is an exact numeric-ID allowlist that may receive the configured bootstrap `admin` membership only upon first mapping. It never creates a business and never rewrites/re-enables an existing membership. When the explicit `PONTE_PUBLIC_DEMO_READ_ONLY=1` flag names a different existing synthetic demo business, a first-time otherwise-unprovisioned GitHub identity may receive only `viewer` there. No callback grants operator access or any access merely for being authenticated. The demo tenant must contain synthetic data only.
 
-Authenticated API requests are limited to 120 per user+tenant per database minute, atomically across processes; exceeded counters return 429/Retry-After. Invalid bearer guesses do not reach tenant data; production-grade anonymous/login abuse control is still a deployment gate. JSON mutation streams are capped at 16 KiB; IDs/strings/amounts/date schemas are bounded and strict. Cross-origin mutation origins are rejected; cookies are SameSite=Strict and no CORS credentials are granted. Data errors return safe codes; only server logs carry internal failures. No logging of development tokens is intentional.
+Every protected request resolves the session subject through `external_identities` and re-reads an **active** database membership before it chooses a business/role. Disabled or revoked memberships immediately become 403 even while an OAuth session remains valid. Same-tenant reads retain viewer access; the mutation boundary independently rejects `viewer`. Cross-tenant invoice/evidence lookups remain 404.
+
+Local access still requires `PONTE_DEV_AUTH=1`, an unguessable 32–128-character token, configured UUID user/business and an active membership. `/dev-login` exchanges it for an eight-hour HttpOnly, SameSite=Strict cookie; Secure is added under HTTPS. Bearer tokens remain only for local API tests. The configured dev identity is one local identity, not user impersonation or a production fallback.
+
+Authenticated API requests are limited to 120 per user+tenant per database minute, atomically across processes; exceeded counters return 429/Retry-After. Invalid bearer guesses do not reach tenant data; production-grade anonymous/login abuse control is still a deployment gate. JSON mutation streams are capped at 16 KiB; IDs/strings/amounts/date schemas are bounded and strict. Cross-origin mutation origins are rejected and no CORS credentials are granted. Data errors return safe codes; only server logs carry internal failures. No logging of development tokens is intentional.
 
 `/pay/[id]` retains the approved presentation but is **not an anonymous bearer/capability link**. Authorization is required and guessing another invoice UUID never bypasses its tenant.
 
@@ -76,12 +81,12 @@ See [FINANCIAL_MODEL.md](FINANCIAL_MODEL.md). API funding is canonical integer *
 
 Official free tiers checked 16 November 2026; quotas/terms can change. No account, project or database was provisioned.
 
-| Option | Official free-tier snapshot | Fit / limitations |
-|---|---|---|
-| Local PG / CI PG service | No hosted service account | Selected **now**: fully reproducible, no paid resources, CI validates ordinary PostgreSQL rather than a mock |
-| [Neon](https://neon.com/pricing) | $0; 100 projects; 100 CU-hours/month/project; 1 GB/project; scale to zero | Preferred **candidate** for future managed PostgreSQL: SQL portability and no extra auth/storage stack; sleeping compute/cold starts and quota monitoring required |
-| [Supabase](https://supabase.com/pricing) | $0; 500 MB DB, two active projects, pause after one week inactivity; 50k MAU, 5 GB egress, 1 GB file storage | Useful if its auth/storage become deliberate requirements; more services than Phase 2A needs; free pause/storage constraints |
-| [Vercel Hobby](https://vercel.com/docs/plans/hobby) | Free app tier; 4 active CPU-hours, 360 GB-hours memory, 1M function invocations, 100 GB fast transfer/month | Next.js app-host candidate, **not a PostgreSQL database**; free limits, eligibility/commercial terms and a separate DB must be reviewed. Not an authorization to deploy |
+| Option                                              | Official free-tier snapshot                                                                                  | Fit / limitations                                                                                                                                                       |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Local PG / CI PG service                            | No hosted service account                                                                                    | Selected **now**: fully reproducible, no paid resources, CI validates ordinary PostgreSQL rather than a mock                                                            |
+| [Neon](https://neon.com/pricing)                    | $0; 100 projects; 100 CU-hours/month/project; 1 GB/project; scale to zero                                    | Preferred **candidate** for future managed PostgreSQL: SQL portability and no extra auth/storage stack; sleeping compute/cold starts and quota monitoring required      |
+| [Supabase](https://supabase.com/pricing)            | $0; 500 MB DB, two active projects, pause after one week inactivity; 50k MAU, 5 GB egress, 1 GB file storage | Useful if its auth/storage become deliberate requirements; more services than Phase 2A needs; free pause/storage constraints                                            |
+| [Vercel Hobby](https://vercel.com/docs/plans/hobby) | Free app tier; 4 active CPU-hours, 360 GB-hours memory, 1M function invocations, 100 GB fast transfer/month  | Next.js app-host candidate, **not a PostgreSQL database**; free limits, eligibility/commercial terms and a separate DB must be reviewed. Not an authorization to deploy |
 
 Free limits are not a production availability, compliance or unlimited-usage promise. Do not activate paid upgrades/trials, attach payment methods or rely on pricing permanence. A future host choice must be reapproved with exact projected usage and eligibility.
 
@@ -90,7 +95,7 @@ Free limits are not a production availability, compliance or unlimited-usage pro
 **Not deployed and not production-ready.** Before asking for secrets or creating resources:
 
 1. Obtain approval for exact app host, managed PG plan/region and any cost ceiling. Review data residency and free-plan eligibility. Vercel's connected status is not permission to deploy.
-2. Choose an established production auth provider/library and session model; implement and test it. Until then production financial endpoints remain closed.
+2. Create separate GitHub OAuth Apps for development and production only after approval; register the exact production callback, place `AUTH_SECRET`/GitHub credentials in the approved server-only secret store, provision the intended existing business/memberships, and security-review the deployment configuration. Authentication code is implemented, but credentials/resources are intentionally not created by this repository.
 3. Supply server-only `DATABASE_URL` through the approved secret manager, with verified TLS (do not disable certificate validation), pooled app connection and separate migration connection/role. Keep the app near the database. Review total serverless pool concurrency (current per-process max=5).
 4. Apply reviewed migrations as a separate release step; never run reset/fixtures or schema changes inside requests. Take a backup, test restoring it and plan forward-fix/rollback compatibility.
 5. Configure least-privilege grants, secret rotation, HTTPS, allowed origin/proxy policy, login/API abuse prevention, monitoring/redacted logs/alerts, retention and backups. Confirm Postgres timeouts and capacity; bound/monitor long list/history queries as data grows.

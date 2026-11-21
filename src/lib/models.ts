@@ -137,6 +137,16 @@ export type InvoiceEvidenceStatus =
       anchoring: { verified: false; status: "not_verified" };
     };
 
+export interface WorkspaceAuthentication {
+  authenticated: true;
+  accountLabel: string;
+  access: {
+    role: "admin" | "operator" | "viewer";
+    readOnly: boolean;
+    publicDemo: boolean;
+  } | null;
+}
+
 export interface InvoiceService {
   activity(): Promise<BusinessActivityEvent[]>;
   list(): Promise<Invoice[]>;

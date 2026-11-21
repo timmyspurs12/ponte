@@ -193,12 +193,7 @@ for (const locale of ["pt-BR", "en-US"] as const) {
       await anonymousPage.goto(`http://localhost:3000/pay/${invoice.id}`);
       await expect(
         anonymousPage.getByRole("main").getByRole("alert"),
-      ).toContainText(
-        translate(
-          locale,
-          "Could not load the workspace. Sign in locally or try again.",
-        ),
-      );
+      ).toContainText(translate(locale, "Sign in required"));
       await expect(
         anonymousPage.getByRole("heading", {
           name: invoice.supplier,

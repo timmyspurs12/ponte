@@ -4,6 +4,35 @@ export const ptBR: Record<string, string> = {
     "Não foi possível carregar o ambiente. Entre localmente ou tente novamente.",
   "Local sign in": "Acesso local",
   "Try again": "Tentar novamente",
+  "Secure workspace access": "Acesso seguro ao ambiente",
+  "Sign in to PONTE": "Entrar na PONTE",
+  "Use GitHub to authenticate. Access is granted only by an active PONTE membership.":
+    "Use o GitHub para autenticar. O acesso é concedido somente por uma associação ativa na PONTE.",
+  "Continue with GitHub": "Continuar com GitHub",
+  "GitHub authentication does not grant workspace access by itself.":
+    "A autenticação do GitHub, por si só, não concede acesso ao ambiente.",
+  "Read-only demo access": "Acesso de demonstração somente para leitura",
+  "Authenticated workspace": "Ambiente autenticado",
+  "Access denied": "Acesso negado",
+  "Sign out": "Sair",
+  "Read-only demo": "Demonstração somente para leitura",
+  "You can view this synthetic demo workspace but cannot change invoices or Routing.":
+    "Você pode visualizar este ambiente de demonstração sintético, mas não pode alterar faturas ou o Roteamento.",
+  "Sign in required": "É necessário entrar",
+  "Sign in with GitHub to request workspace access.":
+    "Entre com GitHub para solicitar acesso ao ambiente.",
+  "Sign-in is unavailable": "A entrada não está disponível",
+  "Workspace authentication is not configured. Please try again later.":
+    "A autenticação do ambiente não está configurada. Tente novamente mais tarde.",
+  "Workspace access denied": "Acesso ao ambiente negado",
+  "Your GitHub account is signed in, but it does not have an active membership for this workspace.":
+    "Sua conta GitHub está autenticada, mas não possui uma associação ativa para este ambiente.",
+  "Could not load the workspace. Please try again.":
+    "Não foi possível carregar o ambiente. Tente novamente.",
+  "This synthetic demo workspace does not allow invoice changes.":
+    "Este ambiente de demonstração sintético não permite alterações de faturas.",
+  "This demo workspace is read-only.":
+    "Este ambiente de demonstração é somente para leitura.",
 
   "PONTE — A better way across borders":
     "PONTE — Um caminho melhor entre fronteiras",

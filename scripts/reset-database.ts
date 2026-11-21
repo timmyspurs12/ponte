@@ -12,9 +12,29 @@ async function main() {
     );
   const pool = new Pool({ connectionString: url.toString() });
   try {
-    await pool.query(
-      "TRUNCATE idempotency,payment_events,evidence_outbox,route_decision_evidence,settlements,quotes,payments,invoices,rate_limits,memberships,users,businesses",
+    // Permit reset to recover a disposable database that predates the newest
+    // migration; the following seed command will apply it before adding data.
+    const hasExternalIdentities = await pool.query<{ relation: string | null }>(
+      "SELECT to_regclass('public.external_identities') AS relation",
     );
+    const tables = [
+      "idempotency",
+      "payment_events",
+      "evidence_outbox",
+      "route_decision_evidence",
+      "settlements",
+      "quotes",
+      "payments",
+      "invoices",
+      "rate_limits",
+      "memberships",
+      ...(hasExternalIdentities.rows[0].relation
+        ? ["external_identities"]
+        : []),
+      "users",
+      "businesses",
+    ];
+    await pool.query(`TRUNCATE ${tables.join(",")}`);
   } finally {
     await pool.end();
   }

@@ -3,6 +3,7 @@ import { LanguageSelector, useLocale } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { signIn, signOut } from "next-auth/react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import {
   ArrowUpRight,
@@ -12,8 +13,16 @@ import {
   FileText,
   Building2,
 } from "lucide-react";
-import { Invoice, BusinessActivityEvent } from "@/lib/models";
-import { invoiceService as service } from "@/lib/services";
+import {
+  Invoice,
+  BusinessActivityEvent,
+  WorkspaceAuthentication,
+} from "@/lib/models";
+import {
+  ApiRequestError,
+  invoiceService as service,
+  workspaceAuthentication,
+} from "@/lib/services";
 import { Logo, Cta } from "./ui";
 import { Marketing } from "./marketing";
 import { Developers } from "./developers";
@@ -27,24 +36,46 @@ export default function Ponte() {
   const pathname = usePathname();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [activity, setActivity] = useState<BusinessActivityEvent[]>([]);
+  const [authentication, setAuthentication] =
+    useState<WorkspaceAuthentication | null>(null);
+  const [loadError, setLoadError] = useState<
+    "unavailable" | "unauthenticated" | "error" | null
+  >(null);
   const [toast, setToast] = useState("");
-  const [loadError, setLoadError] = useState(false);
   async function refresh() {
     try {
+      const auth = await workspaceAuthentication();
+      setAuthentication(auth);
+      if (!auth.access) {
+        setInvoices(null);
+        setActivity([]);
+        setLoadError(null);
+        return;
+      }
       const [records, events] = await Promise.all([
         service.list(),
         service.activity(),
       ]);
       setInvoices(records);
       setActivity(events);
-      setLoadError(false);
-    } catch {
-      setLoadError(true);
+      setLoadError(null);
+    } catch (error) {
+      setAuthentication(null);
+      setLoadError(
+        error instanceof ApiRequestError && error.status === 401
+          ? "unauthenticated"
+          : error instanceof ApiRequestError && error.status === 503
+            ? "unavailable"
+            : "error",
+      );
     }
   }
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (location.pathname !== "/" && location.pathname !== "/developers")
+      if (
+        location.pathname.startsWith("/app") ||
+        location.pathname.startsWith("/pay/")
+      )
         void refresh();
     }, 0);
     return () => clearTimeout(timer);
@@ -56,8 +87,12 @@ export default function Ponte() {
     }
   }, [toast]);
   const isMarketing = pathname === "/";
+  const signInPage = pathname === "/sign-in";
+  const localDevelopment = process.env.NODE_ENV !== "production";
   const developer = pathname === "/developers";
   const publicPage = pathname.startsWith("/pay/");
+  const access = authentication?.access ?? null;
+  const readOnly = access?.readOnly ?? false;
   const id = pathname.split("/").pop();
   const detail =
     publicPage || (pathname.startsWith("/app/invoices/") && id !== "new");
@@ -74,6 +109,37 @@ export default function Ponte() {
     <MotionConfig reducedMotion="user">
       {isMarketing ? (
         <Marketing />
+      ) : signInPage ? (
+        <main id="main" className="auth-page wrap">
+          <section className="auth-card" aria-labelledby="sign-in-title">
+            <Logo />
+            <span className="section-label">
+              {t("Secure workspace access")}
+            </span>
+            <h1 id="sign-in-title">{t("Sign in to PONTE")}</h1>
+            <p>
+              {t(
+                "Use GitHub to authenticate. Access is granted only by an active PONTE membership.",
+              )}
+            </p>
+            <button
+              className="button full-button"
+              onClick={() => void signIn("github", { callbackUrl: "/app" })}
+            >
+              {t("Continue with GitHub")}
+            </button>
+            <small>
+              {t(
+                "GitHub authentication does not grant workspace access by itself.",
+              )}
+            </small>
+            {localDevelopment && (
+              <Link className="text-link" href="/dev-login">
+                {t("Local sign in")}
+              </Link>
+            )}
+          </section>
+        </main>
       ) : developer ? (
         <Developers />
       ) : valid ? (
@@ -104,36 +170,79 @@ export default function Ponte() {
                 </nav>
               )}
               <LanguageSelector />
-              <div className="workspace">
-                <span className="workspace-icon">
-                  <Building2 size={17} />
-                </span>
-                <span>
-                  Aurora Comércio<small>{t("Demo workspace")}</small>
-                </span>
-                <span className="avatar">AC</span>
-              </div>
+              {authentication?.authenticated && (
+                <div className="workspace">
+                  <span className="workspace-icon">
+                    <Building2 size={17} />
+                  </span>
+                  <span>
+                    {authentication.accountLabel}
+                    <small>
+                      {access?.publicDemo
+                        ? t("Read-only demo access")
+                        : access
+                          ? t("Authenticated workspace")
+                          : t("Access denied")}
+                    </small>
+                  </span>
+                  {authentication.access &&
+                    authentication.accountLabel.startsWith("GitHub") && (
+                      <button
+                        className="workspace-sign-out"
+                        onClick={() => void signOut({ callbackUrl: "/" })}
+                      >
+                        {t("Sign out")}
+                      </button>
+                    )}
+                </div>
+              )}
             </div>
           </header>
           <div className="demo-banner">
             <span className="live-dot" />
-            <strong>{t("Demo mode")}</strong>
+            <strong>{t(readOnly ? "Read-only demo" : "Demo mode")}</strong>
             <span>
               {" "}
               {t(
-                "Explore freely. No real funds, wallets or payment services are connected.",
+                readOnly
+                  ? "You can view this synthetic demo workspace but cannot change invoices or Routing."
+                  : "Explore freely. No real funds, wallets or payment services are connected.",
               )}{" "}
             </span>
           </div>
           <main className="app-main wrap" id="main">
-            {loadError ? (
+            {loadError === "unauthenticated" ? (
               <section className="empty" role="alert">
+                <h1>{t("Sign in required")}</h1>
+                <p>{t("Sign in with GitHub to request workspace access.")}</p>
+                <Link className="button" href="/sign-in">
+                  {t("Sign in")}
+                </Link>
+              </section>
+            ) : loadError === "unavailable" ? (
+              <section className="empty" role="alert">
+                <h1>{t("Sign-in is unavailable")}</h1>
                 <p>
                   {t(
-                    "Could not load the workspace. Sign in locally or try again.",
+                    "Workspace authentication is not configured. Please try again later.",
                   )}
                 </p>
-                <Link href="/dev-login">{t("Local sign in")}</Link>
+              </section>
+            ) : authentication && !access ? (
+              <section className="empty" role="alert">
+                <h1>{t("Workspace access denied")}</h1>
+                <p>
+                  {t(
+                    "Your GitHub account is signed in, but it does not have an active membership for this workspace.",
+                  )}
+                </p>
+                <button onClick={() => void signOut({ callbackUrl: "/" })}>
+                  {t("Sign out")}
+                </button>
+              </section>
+            ) : loadError === "error" ? (
+              <section className="empty" role="alert">
+                <p>{t("Could not load the workspace. Please try again.")}</p>
                 <button onClick={() => void refresh()}>{t("Try again")}</button>
               </section>
             ) : !invoices ? (
@@ -149,6 +258,7 @@ export default function Ponte() {
                   refresh={refresh}
                   notify={setToast}
                   publicPage={publicPage}
+                  readOnly={readOnly}
                 />
               ) : (
                 <div className="empty">
@@ -164,7 +274,21 @@ export default function Ponte() {
                 </div>
               )
             ) : pathname === "/app/invoices/new" ? (
-              <CreateInvoice refresh={refresh} notify={setToast} />
+              readOnly ? (
+                <section className="empty" role="status">
+                  <h1>{t("Read-only demo access")}</h1>
+                  <p>
+                    {t(
+                      "This synthetic demo workspace does not allow invoice changes.",
+                    )}
+                  </p>
+                  <Link className="button" href="/app/invoices">
+                    {t("Back to invoices")}
+                  </Link>
+                </section>
+              ) : (
+                <CreateInvoice refresh={refresh} notify={setToast} />
+              )
             ) : pathname === "/app/invoices" ? (
               <>
                 <div className="page-title">
@@ -176,9 +300,11 @@ export default function Ponte() {
                     <h1>{t("Invoices")}</h1>
                     <p>{t("Every supplier. Every payment. One clear view.")}</p>
                   </div>
-                  <Cta href="/app/invoices/new">
-                    <Plus size={16} /> {t("Create invoice")}{" "}
-                  </Cta>
+                  {!readOnly && (
+                    <Cta href="/app/invoices/new">
+                      <Plus size={16} /> {t("Create invoice")}{" "}
+                    </Cta>
+                  )}
                 </div>
                 <div className="list-summary">
                   <span>
@@ -204,7 +330,11 @@ export default function Ponte() {
                 <InvoiceTable invoices={invoices} />
               </>
             ) : (
-              <Overview invoices={invoices} activity={activity} />
+              <Overview
+                invoices={invoices}
+                activity={activity}
+                readOnly={readOnly}
+              />
             )}
           </main>
           <footer className="app-footer wrap">

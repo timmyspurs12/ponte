@@ -17,9 +17,11 @@ import { InvoiceTable } from "./invoice-table";
 export function Overview({
   invoices,
   activity,
+  readOnly = false,
 }: {
   invoices: Invoice[];
   activity: BusinessActivityEvent[];
+  readOnly?: boolean;
 }) {
   const { t, money, date } = useLocale();
 
@@ -36,7 +38,7 @@ export function Overview({
           <h1>{t("A clear view of what’s moving.")}</h1>
           <p>{t("Welcome back to Aurora Comércio.")}</p>
         </div>
-        <Cta href="/app/invoices/new">{t("Create invoice")}</Cta>
+        {!readOnly && <Cta href="/app/invoices/new">{t("Create invoice")}</Cta>}
       </div>
       <div className="metrics">
         <article>

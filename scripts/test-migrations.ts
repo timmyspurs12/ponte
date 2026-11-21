@@ -372,6 +372,9 @@ async function main() {
     await db.query("BEGIN");
     await db.query(await migration("005_local_test_provider_provenance"));
     await db.query("COMMIT");
+    await db.query("BEGIN");
+    await db.query(await migration("006_github_external_identities"));
+    await db.query("COMMIT");
     const preservedGcpProvenance = await db.query(
       "SELECT kms_provider,wrapped_dek_algorithm,wrapped_dek_format,kms_key_reference,kms_key_version FROM route_decision_evidence WHERE id=$1",
       [historicalGcpEvidence.id],
@@ -383,6 +386,33 @@ async function main() {
       kms_key_reference: GCP_PROVENANCE.keyReference,
       kms_key_version: GCP_PROVENANCE.keyVersion,
     });
+
+    const identityUser = randomUUID();
+    const replacementUser = randomUUID();
+    await db.query("INSERT INTO users(id,email) VALUES($1,$2),($3,$4)", [
+      identityUser,
+      `${identityUser}@example.invalid`,
+      replacementUser,
+      `${replacementUser}@example.invalid`,
+    ]);
+    await db.query(
+      "INSERT INTO external_identities(provider,subject,user_id,display_name) VALUES('github','9000000001',$1,'migration-user')",
+      [identityUser],
+    );
+    await assert.rejects(
+      db.query(
+        "INSERT INTO external_identities(provider,subject,user_id,display_name) VALUES('github','9000000001',$1,'other-user')",
+        [replacementUser],
+      ),
+      unique,
+    );
+    await assert.rejects(
+      db.query(
+        "UPDATE external_identities SET user_id=$1 WHERE provider='github' AND subject='9000000001'",
+        [replacementUser],
+      ),
+      /External identity mappings are immutable/,
+    );
 
     const preservedInvoice = (
       await db.query(
@@ -659,6 +689,7 @@ async function main() {
           "003_route_decision_evidence",
           "004_kms_envelope_metadata",
           "005_local_test_provider_provenance",
+          "006_github_external_identities",
         ],
       );
     } finally {
