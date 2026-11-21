@@ -86,6 +86,25 @@ export interface DekProvider {
   createAndWrapDek(context: DekWrappingContext): Promise<CreatedAndWrappedDek>;
 }
 
+/**
+ * Exact persisted wrapping metadata, opaque wrapped bytes, and the original
+ * canonical wrapping context required to recover one DEK. Synthetic providers
+ * are deliberately not required to implement this separate capability.
+ */
+export interface DekUnwrappingInput extends DekWrappingMetadata {
+  readonly wrappedDek: Buffer;
+  readonly canonicalContext: Buffer;
+}
+
+/**
+ * Narrow recovery boundary. A successful caller owns the returned 32-byte DEK
+ * and must clear it best effort after use; no plaintext fallback exists.
+ */
+export interface DekUnwrapper {
+  readonly provider: KmsProviderIdentifier;
+  unwrapDek(input: DekUnwrappingInput): Promise<Buffer>;
+}
+
 export class DekProviderContractError extends Error {
   constructor(message: string) {
     super(message);

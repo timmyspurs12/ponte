@@ -12,6 +12,8 @@ import {
   WRAPPED_DEK_FORMAT,
   type CreatedAndWrappedDek,
   type DekProvider,
+  type DekUnwrapper,
+  type DekUnwrappingInput,
   type DekWrappingContext,
 } from "./kms";
 
@@ -20,6 +22,9 @@ export const APPROVED_GCP_KMS_LOCATION = "africa-south1";
 
 const MAX_HSM_REQUEST_BYTES = 8 * 1024;
 const DEK_BYTES = 32;
+const GCP_CRYPTO_KEY_RESOURCE = new RegExp(
+  "^projects/(?<project>[a-z][a-z0-9-]{4,28}[a-z0-9])/locations/(?<location>[a-z0-9-]{1,63})/keyRings/(?<keyRing>[A-Za-z0-9_-]{1,63})/cryptoKeys/(?<cryptoKey>[A-Za-z0-9_-]{1,63})$",
+);
 const GCP_CRYPTO_KEY_VERSION_RESOURCE = new RegExp(
   "^projects/(?<project>[a-z][a-z0-9-]{4,28}[a-z0-9])/locations/(?<location>[a-z0-9-]{1,63})/keyRings/(?<keyRing>[A-Za-z0-9_-]{1,63})/cryptoKeys/(?<cryptoKey>[A-Za-z0-9_-]{1,63})/cryptoKeyVersions/(?<version>[1-9][0-9]{0,18})$",
 );
@@ -50,6 +55,27 @@ export interface GcpKmsEncryptResponse {
   readonly verifiedAdditionalAuthenticatedDataCrc32c?: boolean | null;
 }
 
+/** Narrow non-secret subset of an official KMS Decrypt request. */
+export interface GcpKmsDecryptRequest {
+  /** CryptoKey parent, never a CryptoKeyVersion. */
+  readonly name: string;
+  readonly ciphertext: Buffer;
+  readonly additionalAuthenticatedData: Buffer;
+  readonly ciphertextCrc32c: Readonly<{ value: number }>;
+  readonly additionalAuthenticatedDataCrc32c: Readonly<{ value: number }>;
+}
+
+/**
+ * Narrow subset of an official KMS Decrypt response. No Encrypt-style verified
+ * request flags exist on this response; plaintextCrc32c is mandatory here.
+ */
+export interface GcpKmsDecryptResponse {
+  readonly plaintext?: Buffer | Uint8Array | string | null;
+  readonly plaintextCrc32c?: Readonly<{
+    value?: GoogleInt64Value | null;
+  }> | null;
+}
+
 /**
  * No SDK handle leaks across this boundary. The official client factory below
  * is never called by the normal Routing path in this phase.
@@ -58,6 +84,9 @@ export interface GcpKmsClient {
   encrypt(
     request: GcpKmsEncryptRequest,
   ): Promise<readonly [GcpKmsEncryptResponse]>;
+  decrypt(
+    request: GcpKmsDecryptRequest,
+  ): Promise<readonly [GcpKmsDecryptResponse]>;
 }
 
 export interface GcpKmsDekProviderOptions {
@@ -67,13 +96,16 @@ export interface GcpKmsDekProviderOptions {
   readonly client: GcpKmsClient;
 }
 
-export interface ParsedGcpCryptoKeyVersion {
-  readonly cryptoKeyVersion: string;
+interface ParsedGcpCryptoKey {
   readonly cryptoKeyReference: string;
   readonly project: string;
   readonly location: typeof APPROVED_GCP_KMS_LOCATION;
   readonly keyRing: string;
   readonly cryptoKey: string;
+}
+
+export interface ParsedGcpCryptoKeyVersion extends ParsedGcpCryptoKey {
+  readonly cryptoKeyVersion: string;
   readonly version: string;
 }
 
@@ -87,6 +119,15 @@ function clearDekOnFailure(value: Buffer | undefined): void {
   if (!value) return;
   try {
     clearDekBestEffort(value);
+  } catch {
+    // Best effort only. Cleanup must not replace the fixed provider error.
+  }
+}
+
+function clearBytesBestEffort(value: Uint8Array | undefined): void {
+  if (!value) return;
+  try {
+    value.fill(0);
   } catch {
     // Best effort only. Cleanup must not replace the fixed provider error.
   }
@@ -114,6 +155,21 @@ export function crc32c(value: Uint8Array): number {
   return (checksum ^ 0xffffffff) >>> 0;
 }
 
+function parseGcpCryptoKey(resourceName: unknown): ParsedGcpCryptoKey {
+  if (typeof resourceName !== "string") return providerFailure();
+  const match = GCP_CRYPTO_KEY_RESOURCE.exec(resourceName);
+  if (!match?.groups || match.groups.location !== APPROVED_GCP_KMS_LOCATION)
+    return providerFailure();
+  const { project, location, keyRing, cryptoKey } = match.groups;
+  return Object.freeze({
+    cryptoKeyReference: resourceName,
+    project,
+    location: location as typeof APPROVED_GCP_KMS_LOCATION,
+    keyRing,
+    cryptoKey,
+  });
+}
+
 /**
  * Accepts only the immutable, exact resource form accepted by the Encrypt API.
  * In particular, a CryptoKey parent, primary-version indirection, alias, wrong
@@ -126,18 +182,15 @@ export function parseGcpCryptoKeyVersion(
   const match = GCP_CRYPTO_KEY_VERSION_RESOURCE.exec(resourceName);
   if (!match?.groups || match.groups.location !== APPROVED_GCP_KMS_LOCATION)
     return providerFailure();
-  const { project, location, keyRing, cryptoKey, version } = match.groups;
+  const { version } = match.groups;
   const cryptoKeyReference = resourceName.slice(
     0,
     resourceName.lastIndexOf("/cryptoKeyVersions/"),
   );
+  const parent = parseGcpCryptoKey(cryptoKeyReference);
   return Object.freeze({
+    ...parent,
     cryptoKeyVersion: resourceName,
-    cryptoKeyReference,
-    project,
-    location: location as typeof APPROVED_GCP_KMS_LOCATION,
-    keyRing,
-    cryptoKey,
     version,
   });
 }
@@ -176,6 +229,15 @@ function responseCiphertext(value: unknown): Buffer | undefined {
   return ciphertext.length > 0 ? ciphertext : undefined;
 }
 
+function responsePlaintext(
+  value: unknown,
+): Readonly<{ raw: Uint8Array; dek: Buffer }> | undefined {
+  if (Buffer.isBuffer(value)) return { raw: value, dek: value };
+  if (value instanceof Uint8Array)
+    return { raw: value, dek: Buffer.from(value) };
+  return undefined;
+}
+
 function assertWrappingContext(value: DekWrappingContext): Buffer {
   if (
     !value ||
@@ -186,6 +248,44 @@ function assertWrappingContext(value: DekWrappingContext): Buffer {
     return providerFailure();
   }
   return value.canonicalContext;
+}
+
+function assertGcpUnwrappingInput(
+  input: DekUnwrappingInput,
+  expectedCryptoKeyReference: string,
+  expectedCryptoKeyVersion: string,
+): Readonly<{ wrappedDek: Buffer; canonicalContext: Buffer }> {
+  if (!input || typeof input !== "object") return providerFailure();
+  if (
+    input.kmsProvider !== KMS_PROVIDER.GCP_CLOUD_KMS ||
+    input.wrappedDekAlgorithm !==
+      WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION ||
+    input.wrappedDekFormat !==
+      WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1 ||
+    !Buffer.isBuffer(input.wrappedDek) ||
+    input.wrappedDek.length < 1
+  ) {
+    return providerFailure();
+  }
+  const storedCryptoKey = parseGcpCryptoKey(input.kmsKeyReference);
+  const storedCryptoKeyVersion = parseGcpCryptoKeyVersion(input.kmsKeyVersion);
+  if (
+    storedCryptoKey.cryptoKeyReference !==
+      storedCryptoKeyVersion.cryptoKeyReference ||
+    input.kmsKeyReference !== expectedCryptoKeyReference ||
+    input.kmsKeyVersion !== expectedCryptoKeyVersion
+  ) {
+    return providerFailure();
+  }
+  const canonicalContext = assertWrappingContext({
+    canonicalContext: input.canonicalContext,
+  });
+  if (input.wrappedDek.length + canonicalContext.length > MAX_HSM_REQUEST_BYTES)
+    return providerFailure();
+  return Object.freeze({
+    wrappedDek: input.wrappedDek,
+    canonicalContext,
+  });
 }
 
 /**
@@ -203,6 +303,17 @@ export function createGoogleCloudKmsClient(): GcpKmsClient {
         plaintext: request.plaintext,
         additionalAuthenticatedData: request.additionalAuthenticatedData,
         plaintextCrc32c: request.plaintextCrc32c,
+        additionalAuthenticatedDataCrc32c:
+          request.additionalAuthenticatedDataCrc32c,
+      });
+      return [response] as const;
+    },
+    async decrypt(request: GcpKmsDecryptRequest) {
+      const [response] = await client.decrypt({
+        name: request.name,
+        ciphertext: request.ciphertext,
+        additionalAuthenticatedData: request.additionalAuthenticatedData,
+        ciphertextCrc32c: request.ciphertextCrc32c,
         additionalAuthenticatedDataCrc32c:
           request.additionalAuthenticatedDataCrc32c,
       });
@@ -226,11 +337,11 @@ export function createGcpKmsDekProviderWithApplicationDefaultCredentials(
 }
 
 /**
- * Genuine Google Cloud KMS Encrypt adapter, pinned to one immutable version.
- * It has no key-management methods, no fallback, no environment lookup, and no
- * network/credential side effect until createAndWrapDek is called.
+ * Genuine Google Cloud KMS Encrypt/Decrypt adapter, pinned to one immutable
+ * version. It has no key-management methods, no fallback, no environment
+ * lookup, and no network/credential side effect until an operation is called.
  */
-export class GcpKmsDekProvider implements DekProvider {
+export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
   readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;
   readonly cryptoKeyVersion: string;
   readonly cryptoKeyReference: string;
@@ -238,7 +349,11 @@ export class GcpKmsDekProvider implements DekProvider {
 
   constructor(options: GcpKmsDekProviderOptions) {
     const parsed = parseGcpCryptoKeyVersion(options?.cryptoKeyVersion);
-    if (!options?.client || typeof options.client.encrypt !== "function")
+    if (
+      !options?.client ||
+      typeof options.client.encrypt !== "function" ||
+      typeof options.client.decrypt !== "function"
+    )
       providerFailure();
     this.cryptoKeyVersion = parsed.cryptoKeyVersion;
     this.cryptoKeyReference = parsed.cryptoKeyReference;
@@ -293,6 +408,59 @@ export class GcpKmsDekProvider implements DekProvider {
       return providerFailure();
     } finally {
       if (!succeeded) clearDekOnFailure(plaintextDek);
+    }
+  }
+
+  /**
+   * Recovers one exact persisted GCP-wrapped DEK. The caller owns a successful
+   * returned 32-byte DEK and must clear it best effort after envelope use.
+   */
+  async unwrapDek(input: DekUnwrappingInput): Promise<Buffer> {
+    let rawRecoveredDek: Uint8Array | undefined;
+    let recoveredDek: Buffer | undefined;
+    let succeeded = false;
+    try {
+      const { wrappedDek, canonicalContext } = assertGcpUnwrappingInput(
+        input,
+        this.cryptoKeyReference,
+        this.cryptoKeyVersion,
+      );
+      const request: GcpKmsDecryptRequest = Object.freeze({
+        // Google KMS Decrypt intentionally takes the CryptoKey parent. KMS
+        // selects the version identified by the ciphertext, never this adapter
+        // configuration's CryptoKeyVersion resource.
+        name: this.cryptoKeyReference,
+        ciphertext: wrappedDek,
+        additionalAuthenticatedData: canonicalContext,
+        ciphertextCrc32c: Object.freeze({ value: crc32c(wrappedDek) }),
+        additionalAuthenticatedDataCrc32c: Object.freeze({
+          value: crc32c(canonicalContext),
+        }),
+      });
+      const [response] = await this.client.decrypt(request);
+      const plaintext = responsePlaintext(response?.plaintext);
+      rawRecoveredDek = plaintext?.raw;
+      recoveredDek = plaintext?.dek;
+      const plaintextChecksum = responseCrc32c(response?.plaintextCrc32c);
+      if (
+        !recoveredDek ||
+        recoveredDek.length !== DEK_BYTES ||
+        plaintextChecksum === undefined ||
+        plaintextChecksum !== crc32c(recoveredDek)
+      ) {
+        return providerFailure();
+      }
+
+      succeeded = true;
+      return recoveredDek;
+    } catch {
+      return providerFailure();
+    } finally {
+      if (!succeeded) clearDekOnFailure(recoveredDek);
+      // GAX returns Buffer in Node. If another Uint8Array implementation was
+      // received, return a caller-owned Buffer copy and clear the source.
+      if (rawRecoveredDek && rawRecoveredDek !== recoveredDek)
+        clearBytesBestEffort(rawRecoveredDek);
     }
   }
 }

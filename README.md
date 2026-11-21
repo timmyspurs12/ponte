@@ -4,7 +4,7 @@
 
 ## Run locally
 
-Requires Node.js **22.17+**, npm and PostgreSQL 18. No hosted account or paid service is required.
+Requires Node.js **22.17+** (the package declares Node 22+ because the dormant Google Cloud KMS SDK requires it), npm and PostgreSQL 18. No hosted account or paid service is required.
 
 1. `npm ci`
 2. Copy `.env.example` to `.env.local`. Generate a local token with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and put it in `PONTE_DEV_TOKEN`. Do not commit this file or share the token.
