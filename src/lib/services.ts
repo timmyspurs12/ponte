@@ -3,6 +3,7 @@ import type {
   InvoiceInput,
   InvoiceService,
   BusinessActivityEvent,
+  InvoiceEvidenceStatus,
   Status,
 } from "./models";
 import { majorToMinor } from "./quotes";
@@ -11,6 +12,7 @@ async function api<T>(
   body?: unknown,
   method = "POST",
   resource = "invoices",
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api/v1/${resource}${path}`, {
     method: body === undefined ? "GET" : method,
@@ -23,6 +25,7 @@ async function api<T>(
           },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
+    signal,
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error?.code ?? "REQUEST_FAILED");
@@ -65,5 +68,14 @@ export const invoiceService: InvoiceService = {
       ...(route ? { route } : {}),
       ...(quoteId ? { quoteId } : {}),
     });
+  },
+  evidence(id: string, signal?: AbortSignal) {
+    return api<InvoiceEvidenceStatus>(
+      `/${id}/evidence`,
+      undefined,
+      "GET",
+      "invoices",
+      signal,
+    );
   },
 };

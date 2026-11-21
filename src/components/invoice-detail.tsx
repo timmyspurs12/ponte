@@ -20,6 +20,7 @@ import { Invoice, Status } from "@/lib/models";
 import { minorToDisplayNumber } from "@/lib/quotes";
 import { invoiceService as service } from "@/lib/services";
 import { Badge } from "./ui";
+import { InvoiceEvidencePanel } from "./invoice-evidence-panel";
 export function InvoiceDetail({
   invoice,
   refresh,
@@ -191,6 +192,11 @@ export function InvoiceDetail({
               )}
             </dl>
           </section>
+          <InvoiceEvidencePanel
+            key={`${invoice.id}-${invoice.status}`}
+            invoiceId={invoice.id}
+            refreshKey={invoice.status}
+          />
           <AnimatePresence mode="wait">
             <motion.section
               key={invoice.status}

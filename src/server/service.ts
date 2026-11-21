@@ -21,6 +21,7 @@ import {
 } from "./evidence/routing-orchestration";
 import { mapEvidenceError } from "./evidence/error-boundary";
 import { resolveLocalRoutingEvidencePreparationDependencies } from "./evidence/local-routing-config";
+import { invoiceEvidenceStatus } from "./evidence/status";
 const uuid = z.uuid();
 const input = z
   .object({
@@ -190,6 +191,14 @@ async function executeWithDependencies(
       }
       const i = await get(db, ctx, id);
       if (!resource) return i;
+      if (resource === "evidence") {
+        const result = await repository.findInvoiceEvidenceStatus(
+          db,
+          ctx.business,
+          i.id,
+        );
+        return invoiceEvidenceStatus(i.id, result.rows[0]);
+      }
       if (parts[3]) {
         const result = await repository.findResource(
           db,

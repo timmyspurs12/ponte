@@ -305,6 +305,45 @@ export const ptBR: Record<string, string> = {
   "Route selected": "Rota selecionada",
   "Receipt generated": "Comprovante gerado",
   "Payment details": "Detalhes do pagamento",
+  "Evidence status": "Status da evidência",
+  "Loading evidence status…": "Carregando status da evidência…",
+  "Evidence status is unavailable. No persistence or anchoring result is shown until the authorized status read succeeds.":
+    "O status da evidência não está disponível. Nenhum resultado de persistência ou ancoragem é exibido até a leitura autorizada ser concluída.",
+  "No evidence record": "Nenhum registro de evidência",
+  "No evidence record has been persisted for this invoice.":
+    "Nenhum registro de evidência foi persistido para esta fatura.",
+  "Evidence persisted": "Evidência persistida",
+  "Awaiting submission": "Aguardando envio",
+  "A pending outbox record establishes that submission is still awaiting work.":
+    "Um registro de outbox pendente indica que o envio ainda aguarda processamento.",
+  "Outbox state: {state}": "Estado do outbox: {state}",
+  "This is an operational outbox state only. It does not verify anchoring.":
+    "Este é apenas um estado operacional do outbox. Ele não verifica ancoragem.",
+  "No outbox record": "Nenhum registro de outbox",
+  "No outbox record is stored for this evidence.":
+    "Nenhum registro de outbox está armazenado para esta evidência.",
+  "Anchoring not verified": "Ancoragem não verificada",
+  "No independently verified transaction receipt and registry event are persisted. This evidence is not presented as submitted, confirmed, or anchored.":
+    "Nenhum comprovante de transação e evento de registro verificados de forma independente foram persistidos. Esta evidência não é apresentada como enviada, confirmada ou ancorada.",
+  "Evidence public ID": "ID público da evidência",
+  "Payload commitment": "Compromisso de payload",
+  "Previous payload hash": "Hash do payload anterior",
+  "Evidence kind / schema": "Tipo / esquema da evidência",
+  "Chain ID / registry": "ID da rede / registro",
+  Sequence: "Sequência",
+  "Recorded provider": "Provedor registrado",
+  Persisted: "Persistida",
+  "Local test provider": "Provedor de teste local",
+  "Evidence was prepared and persisted locally. Synthetic test bytes were used; no real cloud KMS operation occurred. No Arbitrum transaction has been verified.":
+    "A evidência foi preparada e persistida localmente. Bytes de teste sintéticos foram usados; nenhuma operação real de KMS em nuvem ocorreu. Nenhuma transação Arbitrum foi verificada.",
+  "Google Cloud KMS metadata": "Metadados do Google Cloud KMS",
+  "Genuine Google Cloud KMS provider metadata is recorded. This does not prove registry anchoring.":
+    "Metadados genuínos do provedor Google Cloud KMS estão registrados. Isso não comprova ancoragem no registro.",
+  "AWS KMS metadata": "Metadados do AWS KMS",
+  "Genuine AWS KMS provider metadata is recorded. This does not prove registry anchoring.":
+    "Metadados genuínos do provedor AWS KMS estão registrados. Isso não comprova ancoragem no registro.",
+  "This payload hash commits to the prepared evidence record. It does not reveal the private payload and does not prove an on-chain transaction or registry anchoring.":
+    "Este hash de payload compromete o registro de evidência preparado. Ele não revela o payload privado e não comprova uma transação on-chain ou ancoragem no registro.",
   "BRL funding → USDG settlement": "Origem em BRL → Liquidação em USDG",
   Supplier: "Fornecedor",
   "Recipient · Arbitrum format": "Destinatário · Formato Arbitrum",

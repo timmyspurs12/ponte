@@ -61,6 +61,11 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   await expect(
     page.getByRole("heading", { name: "Ready for settlement" }),
   ).toBeVisible();
+  await expect(
+    page.getByTestId("invoice-evidence-panel").getByText("Evidence persisted", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "Ready for settlement" }),

@@ -47,8 +47,54 @@ JSON bodies are strict; unknown fields (including caller-supplied status, receip
 | GET `/invoices/:id/quotes/:quoteId` | UUID | Same-tenant, same-invoice quote record |
 | GET `/invoices/:id/settlements` | — | Array, zero/one locked settlement record with server-owned `simulated: true` |
 | GET `/invoices/:id/activity` | — | Append-only correlated event history |
+| GET `/invoices/:id/evidence` | — | Read-only public commitment and exact persisted outbox state; never private evidence/envelope material |
 
 Invoice-scoped history endpoints return that invoice's complete history in this foundation. Pagination applies to the top-level invoice collection and business-wide activity; a production history-retention/cursor strategy remains a scaling gate. Same-timestamp event ordering is not a sequence-number guarantee.
+
+### Invoice evidence status
+
+`GET /invoices/:id/evidence` has the same active-tenant read boundary as `GET /invoices/:id`: active admin/operator and active viewer memberships may read their own business's invoice; a disabled/missing membership is 403 and another business's invoice is 404. It is read-only apart from the established authenticated rate-limit accounting. The response is `Cache-Control: no-store` and uses the normal `{ "data": ..., "requestId": ... }` envelope.
+
+When no evidence exists, `data` is exactly the empty state:
+
+```json
+{
+  "state": "missing",
+  "invoiceId": "invoice-uuid",
+  "evidence": null
+}
+```
+
+When evidence exists, the deliberate public projection is:
+
+```json
+{
+  "state": "persisted",
+  "invoiceId": "invoice-uuid",
+  "evidence": {
+    "publicEvidenceId": "0x32-byte-hex",
+    "evidenceKind": 1,
+    "evidenceSchemaVersion": 1,
+    "chainId": "421614",
+    "registryAddress": "0x20-byte-hex",
+    "sequence": "1",
+    "previousPayloadHash": "0x32-byte-hex",
+    "payloadHash": "0x32-byte-hex",
+    "provenance": {
+      "provider": "local-test-only",
+      "category": "synthetic-local-test",
+      "disclosure": "Synthetic local-test bytes were used. No real cloud KMS operation occurred."
+    },
+    "createdAt": "2026-11-19T00:00:00.000Z",
+    "outboxSubmissionState": "pending"
+  },
+  "anchoring": { "verified": false, "status": "not_verified" }
+}
+```
+
+`outboxSubmissionState` is the exact stored outbox value (`pending`, `submitted`, `confirmed`, `retryable`, `failed`, or `reconciliation_required`) or `null` if no outbox row exists. It is operational metadata, **not** an anchoring assertion. This phase persists neither an independently verified chain receipt nor a verified registry event, so the endpoint never returns a transaction hash, block number, confirmation, `submitted`, `confirmed`, or `anchored` product claim. It always reports `anchoring.verified: false` for persisted evidence.
+
+`local-test-only` visibly identifies synthetic local bytes, not a real cloud KMS operation or Arbitrum result. `gcp-cloud-kms`/`aws-kms` disclosures identify recorded genuine-provider metadata only; they do not prove a provider RPC or registry anchoring. The API never returns ciphertext, wrapped DEKs, plaintext DEKs, nonce, authentication tag, AAD/wrapping context, private payload, salts, private preimages, key references, provider errors, or raw database errors. It performs no decryption.
 
 ### Invoice fields
 

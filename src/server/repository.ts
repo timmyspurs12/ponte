@@ -119,6 +119,24 @@ export interface PendingEvidenceOutboxInsert {
   evidenceRecordId: string;
 }
 
+/**
+ * Public-commitment-only projection for the invoice evidence status endpoint.
+ * Sensitive envelope, KMS, and private-payload columns are deliberately absent.
+ */
+export interface InvoiceEvidenceStatusRow {
+  public_evidence_id: Buffer;
+  evidence_schema_version: number;
+  chain_id: string;
+  registry_address: Buffer;
+  sequence: string;
+  evidence_kind: number;
+  previous_payload_hash: Buffer;
+  payload_hash: Buffer;
+  kms_provider: string;
+  created_at: Date;
+  submission_state: string | null;
+}
+
 const globalDb = globalThis as unknown as { pontePool?: Pool };
 export const pool = (globalDb.pontePool ??= new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -538,6 +556,22 @@ export function findInvoice(
     [business, id],
   );
 }
+
+/**
+ * Reads only the safe public commitment projection for one tenant-scoped
+ * invoice. Do not expand this SELECT with encrypted envelope/KMS secret fields.
+ */
+export function findInvoiceEvidenceStatus(
+  db: PoolClient,
+  business: string,
+  invoice: string,
+) {
+  return db.query<InvoiceEvidenceStatusRow>(
+    "SELECT e.public_evidence_id,e.evidence_schema_version,e.chain_id,e.registry_address,e.sequence,e.evidence_kind,e.previous_payload_hash,e.payload_hash,e.kms_provider,e.created_at,o.submission_state FROM route_decision_evidence e LEFT JOIN evidence_outbox o ON o.evidence_record_id=e.id WHERE e.business_id=$1 AND e.invoice_id=$2",
+    [business, invoice],
+  );
+}
+
 export function history(
   db: PoolClient,
   business: string,
