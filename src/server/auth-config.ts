@@ -3,7 +3,10 @@ import { z } from "zod";
 
 const businessId = z.uuid();
 const githubSubject = /^[1-9][0-9]{0,19}$/;
-const clientId = /^[A-Za-z0-9_-]{8,256}$/;
+// GitHub-issued OAuth client IDs include opaque alphanumeric values and the
+// `Iv1.` prefix with a 16-character alphanumeric suffix. Keep the dotted form
+// precise: a dot is not otherwise a valid client-ID character.
+const clientId = /^(?:Iv1\.[A-Za-z0-9]{16}|[A-Za-z0-9_-]{8,256})$/;
 const clientSecret = /^[A-Za-z0-9_-]{20,512}$/;
 const authSecret = /^[\x21-\x7e]{32,512}$/;
 

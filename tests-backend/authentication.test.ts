@@ -594,6 +594,79 @@ test("production OAuth configuration fails closed and never accepts a developmen
   }
 });
 
+test("GitHub OAuth client IDs accept issued dotted values without weakening configuration validation", async () => {
+  const dottedClientId = "Iv1.example123456789";
+  assert.equal(
+    readProductionAuthConfig(
+      validEnvironment({ AUTH_GITHUB_ID: dottedClientId }),
+    )?.githubClientId,
+    dottedClientId,
+  );
+  assert.equal(
+    readProductionAuthConfig(validEnvironment())?.githubClientId,
+    "Ov23liPonte123456",
+  );
+
+  for (const invalidClientId of [
+    "Iv1.example123456789 ",
+    "https://github.com/Iv1.example123456789",
+    "Iv1.example123456789/path",
+    "Iv1.example123456789!",
+    "Ov23.invalid-client-id",
+    "Iv1.example12345678",
+    "a".repeat(257),
+  ])
+    assert.equal(
+      readProductionAuthConfig(
+        validEnvironment({ AUTH_GITHUB_ID: invalidClientId }),
+      ),
+      null,
+      invalidClientId,
+    );
+
+  // Changing the accepted ID shape must not relax the independent secret or
+  // missing-configuration requirements.
+  assert.equal(
+    readProductionAuthConfig(validEnvironment({ AUTH_GITHUB_ID: undefined })),
+    null,
+  );
+  assert.equal(
+    readProductionAuthConfig(
+      validEnvironment({ AUTH_GITHUB_SECRET: "c".repeat(19) }),
+    ),
+    null,
+  );
+
+  await withProductionAuthEnvironment(
+    { AUTH_GITHUB_ID: dottedClientId },
+    async () => {
+      // A valid dotted client ID reaches the normal unauthenticated boundary,
+      // rather than being treated as AUTH_NOT_CONFIGURED.
+      const protectedResponse = await apiRouteGet(
+        new NextRequest("https://ponte.example.test/api/v1/invoices"),
+        { params: Promise.resolve({ path: ["invoices"] }) },
+      );
+      assert.equal(protectedResponse.status, 401);
+      assert.deepEqual((await protectedResponse.json()).error, {
+        code: "UNAUTHENTICATED",
+      });
+
+      // This metadata endpoint does not initiate OAuth, but proves the guarded
+      // Auth.js route also accepts the exact same production configuration.
+      const providersResponse = await authRouteGet(
+        new NextRequest("https://ponte.example.test/api/auth/providers"),
+        { params: Promise.resolve({ nextauth: ["providers"] }) },
+      );
+      assert.equal(providersResponse.status, 200);
+      const providers = (await providersResponse.json()) as Record<
+        string,
+        { id?: unknown }
+      >;
+      assert.equal(providers.github?.id, "github");
+    },
+  );
+});
+
 test("OAuth state and PKCE, redirect destination, and browser session projection stay bounded", () => {
   assert.deepEqual(githubOAuthChecks, ["pkce", "state"]);
   assert.equal(
