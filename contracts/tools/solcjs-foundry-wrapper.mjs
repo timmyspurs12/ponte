@@ -23,24 +23,45 @@ for (let index = 2; index < process.argv.length; index += 1) {
 
 const standardJson = sanitizedArgs.includes("--standard-json");
 const child = spawn(process.execPath, [solcjs, ...sanitizedArgs], {
-  stdio: standardJson ? ["inherit", "pipe", "inherit"] : "inherit"
+  stdio: standardJson ? ["inherit", "pipe", "inherit"] : "inherit",
 });
+
+let pendingStdoutWrites = 0;
+let childResult = null;
+
+function finishAfterStdoutDrains() {
+  if (childResult === null || pendingStdoutWrites !== 0) return;
+  if (childResult.signal) {
+    process.kill(process.pid, childResult.signal);
+    return;
+  }
+  process.exitCode = childResult.code ?? 1;
+}
+
+function forwardStdout(chunk) {
+  pendingStdoutWrites += 1;
+  process.stdout.write(chunk, () => {
+    pendingStdoutWrites -= 1;
+    finishAfterStdoutDrains();
+  });
+}
 
 if (standardJson) {
   let stdoutPrefix = "";
   let hasWrittenJson = false;
+  child.stdout.setEncoding("utf8");
 
   child.stdout.on("data", (chunk) => {
     if (hasWrittenJson) {
-      process.stdout.write(chunk);
+      forwardStdout(chunk);
       return;
     }
 
-    stdoutPrefix += chunk.toString("utf8");
+    stdoutPrefix += chunk;
     const jsonStart = stdoutPrefix.indexOf("{");
     if (jsonStart !== -1) {
       hasWrittenJson = true;
-      process.stdout.write(stdoutPrefix.slice(jsonStart));
+      forwardStdout(stdoutPrefix.slice(jsonStart));
       stdoutPrefix = "";
     }
   });
@@ -51,10 +72,10 @@ child.on("error", (error) => {
   process.exitCode = 1;
 });
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-  process.exitCode = code ?? 1;
+// Foundry consumes wrapper stdout as one Standard JSON document. Wait for every
+// forwarded write callback so a large solcjs response cannot be truncated when
+// the compiler closes before the wrapper's stdout has drained.
+child.on("close", (code, signal) => {
+  childResult = { code, signal };
+  finishAfterStdoutDrains();
 });

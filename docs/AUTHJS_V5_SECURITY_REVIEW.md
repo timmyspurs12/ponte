@@ -30,11 +30,11 @@ Older listed NextAuth advisories affect historical v3/v4 ranges only and are out
 
 ## npm audit result
 
-`npm audit --omit=dev --json` was run after the lockfile refresh. It reports **two production findings**, neither in `next-auth` nor `@auth/core`:
+The later focused dependency follow-up upgrades the direct production dependency to exact `ethers@6.17.0`, whose published manifest pins `ws@8.21.0`. The root production lockfile now contains one `ws` package, at `8.21.0` through `ethers@6.17.0`.
 
-| Dependency path                          | Findings                                                                                                                                                                                                                                    | Audit-proposed remediation  | Decision                                                                                                                                                                                                                                      |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| direct `ethers@6.16.0` → transitive `ws` | moderate [GHSA-58qx-3vcg-4xpx](https://github.com/advisories/GHSA-58qx-3vcg-4xpx), uninitialized-memory disclosure; high [GHSA-96hv-2xvq-fx4p](https://github.com/advisories/GHSA-96hv-2xvq-fx4p), fragmented-message memory-exhaustion DoS | `ethers@6.17.0` (non-major) | Not changed in this authentication-focused review. It is not an Auth.js dependency and the repository's payment/chain dependency behavior needs separately scoped regression review. No `npm audit fix` or destructive audit command was run. |
+`npm audit --omit=dev` now reports **zero production vulnerabilities**. This resolves both prior `ws` findings: moderate [GHSA-58qx-3vcg-4xpx](https://github.com/advisories/GHSA-58qx-3vcg-4xpx), fixed in `ws@8.20.1`, and high [GHSA-96hv-2xvq-fx4p](https://github.com/advisories/GHSA-96hv-2xvq-fx4p), fixed in `ws@8.21.0`. No `npm audit fix` or destructive audit command was run.
+
+A full root `npm audit` still reports seven **development-only moderate** findings in the lint toolchain through `typescript-eslint` → `@typescript-eslint/typescript-estree` → `minimatch` ([GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)). They are not present in the omit-dev production tree and were not changed by this focused production dependency update.
 
 ## Acceptance evidence added
 
