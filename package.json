@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
@@ -21,7 +21,8 @@
     "db:fixtures": "node --env-file-if-exists=.env.local --import ./scripts/test-server-only-stub.mjs --import tsx scripts/seed-fixtures.ts",
     "test:backend": "node scripts/run-backend-tests.mjs",
     "db:reset": "node --env-file-if-exists=.env.local --import tsx scripts/reset-database.ts",
-    "test:migrations": "node --env-file-if-exists=.env.local --import tsx scripts/test-migrations.ts"
+    "test:migrations": "node --env-file-if-exists=.env.local --import tsx scripts/test-migrations.ts",
+    "db:bootstrap-business": "node --env-file-if-exists=.env.local --import tsx scripts/bootstrap-production-business.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.0",

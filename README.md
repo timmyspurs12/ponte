@@ -4,7 +4,7 @@
 
 ## Run locally
 
-Requires Node.js **22.17+** (the package declares Node 22+ because the dormant Google Cloud KMS SDK requires it), npm and PostgreSQL 18. No hosted account or paid service is required.
+Requires Node.js **24.22.1** (pinned in [`.node-version`](.node-version) and constrained by `engines.node`), npm and PostgreSQL 18. No hosted account or paid service is required. The deliberate runtime-update procedure and the tested Render production procedure are in [the Stage A Render runbook](docs/RENDER_STAGE_A_DEPLOYMENT_RUNBOOK.md).
 
 1. `npm ci`
 2. Copy `.env.example` to `.env.local`. Generate a local token with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and put it in `PONTE_DEV_TOKEN`. Do not commit this file or share the token.
@@ -17,6 +17,8 @@ The Node scripts load `.env.local`; existing environment variables take preceden
 Routing evidence persistence is **disabled by default**. To exercise the local-only integration, explicitly set both commented `PONTE_LOCAL_EVIDENCE_TEST_*` values in `.env.example` to `1` and a non-zero EVM address, respectively. The guarded path requires `NODE_ENV=development` or `test`, development authentication, and a loopback database; it creates fresh `local-test-only` buffers, not a production KMS envelope or a deployed/anchored registry record. Do not enable it on a shared, preview, staging, or production system. Set this opt-in before `npm run db:fixtures`, which intentionally creates Routing examples. A default `db:reset` still restores the base local seed but skips those Routing fixtures.
 
 `npm run db:migrate` is safe to repeat. To **delete all local simulation data**, run `npm run db:reset -- --confirm-local-reset`; this requires a loopback database, refuses production, and reseeds. Never point test/reset commands at valuable data. Back up a persistent database with PostgreSQL's standard tools before changing it.
+
+A distinct `npm run db:bootstrap-business -- --confirm-production --business-id "<PRIVATE_BUSINESS_UUID>" --business-name "<PRIVATE_BUSINESS_NAME>"` command is the narrowly guarded production-only initializer for one private business; it is not a seed command and refuses non-production or loopback execution. Follow the full manual order, secret handling, and first-admin procedure in [the Stage A Render runbook](docs/RENDER_STAGE_A_DEPLOYMENT_RUNBOOK.md). Do not run it against this local database.
 
 ### Production GitHub OAuth and safety
 
