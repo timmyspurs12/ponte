@@ -26,10 +26,14 @@ const testFiles = readdirSync("tests-backend")
 const result = spawnSync(
   process.execPath,
   [
-    "--conditions=react-server",
+    "--import",
+    "./scripts/test-server-only-stub.mjs",
     "--import",
     "tsx",
     "--test",
+    // Tests intentionally change process-level auth policy and share one
+    // disposable PostgreSQL database, so parallel files would race both.
+    "--test-concurrency=1",
     ...testFiles,
     ...process.argv.slice(2),
   ],

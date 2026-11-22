@@ -44,9 +44,9 @@ export default function Ponte() {
   const [toast, setToast] = useState("");
   async function refresh() {
     try {
-      const auth = await workspaceAuthentication();
-      setAuthentication(auth);
-      if (!auth.access) {
+      const authContext = await workspaceAuthentication();
+      setAuthentication(authContext);
+      if (!authContext.access) {
         setInvoices(null);
         setActivity([]);
         setLoadError(null);

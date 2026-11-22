@@ -2,6 +2,8 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { Session } from "next-auth";
+import { encode } from "next-auth/jwt";
+import { NextRequest } from "next/server";
 import {
   __testOnlyAuthenticateProduction,
   authenticate,
@@ -12,12 +14,14 @@ import {
   provisionGithubIdentity,
 } from "../src/server/external-identities";
 import {
+  authSessionCookieName,
   readProductionAuthConfig,
   type ProductionAuthConfig,
 } from "../src/server/auth-config";
 import { ApiError, __testOnlyExecute } from "../src/server/service";
 import { pool } from "../src/server/repository";
 import { GET as authRouteGet } from "../src/app/api/auth/[...nextauth]/route";
+import { GET as apiRouteGet } from "../src/app/api/v1/[...path]/route";
 import {
   browserSession,
   githubOAuthChecks,
@@ -26,6 +30,22 @@ import {
 
 let githubSequence = BigInt(Date.now());
 const githubId = (_suffix: string) => `9${(githubSequence++).toString()}`;
+const productionAuthEnvironmentNames = [
+  "NODE_ENV",
+  "AUTH_SECRET",
+  "AUTH_GITHUB_ID",
+  "AUTH_GITHUB_SECRET",
+  "AUTH_URL",
+  "NEXTAUTH_URL",
+  "NEXTAUTH_SECRET",
+  "PONTE_AUTH_BUSINESS_ID",
+  "PONTE_AUTH_ADMIN_GITHUB_IDS",
+  "PONTE_PUBLIC_DEMO_READ_ONLY",
+  "PONTE_PUBLIC_DEMO_BUSINESS_ID",
+  "PONTE_DEV_AUTH",
+  "PONTE_DEV_TOKEN",
+] as const;
+
 const validEnvironment = (
   overrides: Record<string, string | undefined> = {},
 ) => ({
@@ -38,6 +58,66 @@ const validEnvironment = (
   PONTE_PUBLIC_DEMO_READ_ONLY: "0",
   ...overrides,
 });
+
+async function withProductionAuthEnvironment<T>(
+  overrides: Record<string, string | undefined>,
+  work: () => Promise<T>,
+): Promise<T> {
+  const before = Object.fromEntries(
+    productionAuthEnvironmentNames.map((name) => [name, process.env[name]]),
+  );
+  try {
+    Object.assign(process.env, validEnvironment(overrides), {
+      NODE_ENV: "production",
+    });
+    return await work();
+  } finally {
+    const environment = process.env as Record<string, string | undefined>;
+    for (const name of productionAuthEnvironmentNames) {
+      const value = before[name];
+      if (value === undefined) delete environment[name];
+      else environment[name] = value;
+    }
+  }
+}
+
+async function githubSessionCookie(
+  subject: string,
+  login = "safe-github-login",
+): Promise<string> {
+  const secret = process.env.AUTH_SECRET;
+  if (typeof secret !== "string") throw new Error("missing test auth secret");
+  const cookieName = authSessionCookieName();
+  const token = await encode({
+    secret,
+    salt: cookieName,
+    maxAge: 8 * 60 * 60,
+    // Deliberately include prohibited server-side values. browserSession must
+    // never return any of these through the actual /api/auth/session handler.
+    token: {
+      githubSubject: subject,
+      githubLogin: login,
+      userId: randomUUID(),
+      externalIdentityId: randomUUID(),
+      businessId: randomUUID(),
+      role: "admin",
+      access_token: "oauth-access-token-must-not-leak",
+      refresh_token: "oauth-refresh-token-must-not-leak",
+      client_secret: "oauth-client-secret-must-not-leak",
+      sessionSecret: "session-secret-must-not-leak",
+    },
+  });
+  return `${cookieName}=${token}`;
+}
+
+async function invoicesResponse(cookie: string): Promise<Response> {
+  return apiRouteGet(
+    new NextRequest("https://ponte.example.test/api/v1/invoices", {
+      headers: { cookie },
+    }),
+    { params: Promise.resolve({ path: ["invoices"] }) },
+  );
+}
 
 function config(
   administratorBusinessId: string,
@@ -122,6 +202,47 @@ test("GitHub numeric identity mapping is stable, one-time, and not e-mail based"
   assert.equal(user.rows[0].email, `github-${subject}@identity.invalid`);
 });
 
+test("same e-mail with a different GitHub numeric subject cannot inherit membership", async () => {
+  const privateBusiness = await business("OAuth same-email isolation business");
+  const administratorSubject = githubId("same-email-admin");
+  const attackerSubject = githubId("same-email-attacker");
+  const policy = config(privateBusiness, administratorSubject);
+  const administratorProfile = githubIdentityFromProfile({
+    id: Number(administratorSubject),
+    login: "same-email-admin",
+    email: "shared@example.test",
+  });
+  const attackerProfile = githubIdentityFromProfile({
+    id: Number(attackerSubject),
+    login: "same-email-attacker",
+    email: "shared@example.test",
+  });
+  assert.notEqual(administratorProfile?.subject, attackerProfile?.subject);
+
+  const administrator = await provisionGithubIdentity(
+    administratorProfile!,
+    policy,
+  );
+  const attacker = await provisionGithubIdentity(attackerProfile!, policy);
+  assert.notEqual(administrator.userId, attacker.userId);
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT 1 FROM memberships WHERE business_id=$1 AND user_id=$2",
+        [privateBusiness, attacker.userId],
+      )
+    ).rowCount,
+    0,
+  );
+  await assert.rejects(
+    __testOnlyAuthenticateProduction(apiRequest(), {
+      config: policy,
+      session: { subject: attacker.subject, login: attacker.login },
+    }),
+    apiError("FORBIDDEN"),
+  );
+});
+
 test("duplicate provider subjects and identity remapping are rejected by PostgreSQL", async () => {
   const privateBusiness = await business("OAuth identity uniqueness business");
   const subject = githubId("102");
@@ -172,6 +293,35 @@ test("configured public-demo onboarding grants only a viewer and server mutation
       isPublicDemo: context.isPublicDemo,
     },
     { business: demoBusiness, role: "viewer", isPublicDemo: true },
+  );
+  const privateInvoice = randomUUID();
+  const privateReference = `PRIVATE-${privateInvoice}`;
+  await pool.query(
+    "INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,100,'Draft',$4)",
+    [
+      privateInvoice,
+      privateBusiness,
+      privateReference,
+      JSON.stringify({
+        id: privateInvoice,
+        reference: privateReference,
+        supplier: "Production-only supplier",
+        wallet: `0x${"b".repeat(40)}`,
+        fundingCurrency: "BRL",
+        settlementCurrency: "USDG",
+        fundingMinor: "100",
+        amount: 1,
+        due: "2027-12-20",
+        description: "Synthetic demo must not read this",
+        status: "Draft",
+      }),
+    ],
+  );
+  await assert.rejects(
+    __testOnlyExecute(apiRequest(), ["invoices", privateInvoice], {
+      authenticate: async (): Promise<Context> => context,
+    }),
+    apiError("NOT_FOUND"),
   );
   await assert.rejects(
     __testOnlyExecute(apiRequest("POST"), ["invoices"], {
@@ -261,6 +411,98 @@ test("production context preserves cross-business invoice and evidence isolation
     );
 });
 
+test("actual Auth.js session endpoint is a minimal safe browser projection", async () => {
+  await withProductionAuthEnvironment({}, async () => {
+    const cookie = await githubSessionCookie("9000000001");
+    const response = await authRouteGet(
+      new NextRequest("https://ponte.example.test/api/auth/session", {
+        headers: { cookie },
+      }),
+    );
+    assert.equal(response.status, 200);
+    const session = (await response.json()) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(session).sort(), ["expires"]);
+    assert.equal(typeof session.expires, "string");
+
+    const serialized = JSON.stringify(session);
+    for (const prohibited of [
+      "githubSubject",
+      "githubLogin",
+      "userId",
+      "externalIdentityId",
+      "businessId",
+      "role",
+      "access_token",
+      "refresh_token",
+      "client_secret",
+      "sessionSecret",
+      "oauth-access-token-must-not-leak",
+      "oauth-refresh-token-must-not-leak",
+      "oauth-client-secret-must-not-leak",
+      "session-secret-must-not-leak",
+      process.env.AUTH_SECRET!,
+    ])
+      assert.equal(serialized.includes(prohibited), false, prohibited);
+  });
+});
+
+test("malformed Auth.js session cookie cannot access the protected API", async () => {
+  await withProductionAuthEnvironment({}, async () => {
+    const response = await invoicesResponse(
+      `${authSessionCookieName()}=not-an-authjs-jwe`,
+    );
+    assert.equal(response.status, 401);
+    assert.deepEqual((await response.json()).error, {
+      code: "UNAUTHENTICATED",
+    });
+
+    // Production rejects any Bearer value before Auth.js parses it, including
+    // malformed values that older getToken()-based paths could throw on.
+    const bearerResponse = await apiRouteGet(
+      new NextRequest("https://ponte.example.test/api/v1/invoices", {
+        headers: { authorization: "Bearer %" },
+      }),
+      { params: Promise.resolve({ path: ["invoices"] }) },
+    );
+    assert.equal(bearerResponse.status, 401);
+    assert.deepEqual((await bearerResponse.json()).error, {
+      code: "UNAUTHENTICATED",
+    });
+  });
+});
+
+test("Auth.js rechecks active PostgreSQL membership after session issuance", async () => {
+  const privateBusiness = await business("OAuth fresh membership business");
+  const subject = githubId("fresh-membership");
+  await withProductionAuthEnvironment(
+    {
+      PONTE_AUTH_BUSINESS_ID: privateBusiness,
+      PONTE_AUTH_ADMIN_GITHUB_IDS: subject,
+    },
+    async () => {
+      const policy = readProductionAuthConfig();
+      assert.notEqual(policy, null);
+      const identity = await provisionGithubIdentity(
+        { subject, login: "fresh-membership-admin" },
+        policy!,
+      );
+      const cookie = await githubSessionCookie(subject, identity.login);
+      const beforeDisable = await invoicesResponse(cookie);
+      assert.equal(beforeDisable.status, 200);
+
+      await pool.query(
+        "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
+        [privateBusiness, identity.userId],
+      );
+      const afterDisable = await invoicesResponse(cookie);
+      assert.equal(afterDisable.status, 403);
+      assert.deepEqual((await afterDisable.json()).error, {
+        code: "FORBIDDEN",
+      });
+    },
+  );
+});
+
 test("production OAuth configuration fails closed and never accepts a development bearer token", async () => {
   assert.equal(readProductionAuthConfig({}), null);
   assert.equal(
@@ -280,13 +522,21 @@ test("production OAuth configuration fails closed and never accepts a developmen
     ),
     null,
   );
+  assert.equal(
+    readProductionAuthConfig(
+      validEnvironment({ AUTH_URL: "https://attacker.example.test" }),
+    ),
+    null,
+  );
 
   const names = [
     "NODE_ENV",
     "AUTH_SECRET",
     "AUTH_GITHUB_ID",
     "AUTH_GITHUB_SECRET",
+    "AUTH_URL",
     "NEXTAUTH_URL",
+    "NEXTAUTH_SECRET",
     "PONTE_AUTH_BUSINESS_ID",
     "PONTE_AUTH_ADMIN_GITHUB_IDS",
     "PONTE_PUBLIC_DEMO_READ_ONLY",
@@ -318,6 +568,14 @@ test("production OAuth configuration fails closed and never accepts a developmen
       authenticate(new Request("https://ponte.example.test/api/v1/invoices")),
       apiError("AUTH_NOT_CONFIGURED"),
     );
+    const protectedUnavailable = await apiRouteGet(
+      new NextRequest("https://ponte.example.test/api/v1/invoices"),
+      { params: Promise.resolve({ path: ["invoices"] }) },
+    );
+    assert.equal(protectedUnavailable.status, 503);
+    assert.deepEqual((await protectedUnavailable.json()).error, {
+      code: "AUTH_NOT_CONFIGURED",
+    });
     const unavailable = await authRouteGet(
       new Request("https://ponte.example.test/api/auth/providers"),
       { params: Promise.resolve({ nextauth: ["providers"] }) },
@@ -336,8 +594,8 @@ test("production OAuth configuration fails closed and never accepts a developmen
   }
 });
 
-test("OAuth state, redirect destination, and browser session projection stay bounded", () => {
-  assert.deepEqual(githubOAuthChecks, ["state"]);
+test("OAuth state and PKCE, redirect destination, and browser session projection stay bounded", () => {
+  assert.deepEqual(githubOAuthChecks, ["pkce", "state"]);
   assert.equal(
     safeAuthRedirect(
       "https://attacker.example/steal",
@@ -359,10 +617,6 @@ test("OAuth state, redirect destination, and browser session projection stay bou
   } as Session);
   assert.deepEqual(session, {
     expires: "2030-01-01T00:00:00.000Z",
-    user: {
-      name: "GitHub user",
-      image: "https://avatars.example.test/u/1",
-    },
   });
   assert.equal(JSON.stringify(session).includes("access_token"), false);
   assert.equal(

@@ -70,6 +70,11 @@ export function readProductionAuthConfig(
   const githubClientId = env.AUTH_GITHUB_ID;
   const githubClientSecret = env.AUTH_GITHUB_SECRET;
   const baseUrl = parseBaseUrl(env.NEXTAUTH_URL);
+  // Auth.js v5 prefers AUTH_URL when present. Accept it only when it resolves
+  // to the same strict canonical origin as the established NEXTAUTH_URL policy;
+  // otherwise a second environment variable could override callback/session URLs.
+  const authUrl =
+    env.AUTH_URL === undefined ? undefined : parseBaseUrl(env.AUTH_URL);
   const administratorBusinessId = env.PONTE_AUTH_BUSINESS_ID;
   const administratorGithubSubjects = parseAdministratorSubjects(
     env.PONTE_AUTH_ADMIN_GITHUB_IDS,
@@ -83,6 +88,7 @@ export function readProductionAuthConfig(
     !githubClientSecret ||
     !clientSecret.test(githubClientSecret) ||
     !baseUrl ||
+    (env.AUTH_URL !== undefined && authUrl !== baseUrl) ||
     !administratorBusinessId ||
     !businessId.safeParse(administratorBusinessId).success ||
     !administratorGithubSubjects ||

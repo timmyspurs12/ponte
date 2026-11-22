@@ -1,4 +1,4 @@
-import { resetFixtures } from "./setup-database";
+import { clearDevelopmentRateLimit, resetFixtures } from "./setup-database";
 let seedId = "";
 import { test, expect } from "@playwright/test";
 import { demoQuote } from "../src/lib/quotes";
@@ -152,6 +152,11 @@ test("language selector and bilingual layouts at all five supported widths", asy
           });
       }
     }
+    // This viewport matrix intentionally makes many real read requests. It
+    // tests layout/localization rather than rate limiting, so start the next
+    // viewport with a fresh disposable test budget; backend tests cover the
+    // production 120-request limiter itself.
+    await clearDevelopmentRateLimit();
   }
   expect(errors).toEqual([]);
 });

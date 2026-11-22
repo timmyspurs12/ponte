@@ -42,7 +42,11 @@ async function main() {
   // Routing fixtures require the same explicit local evidence opt-in as the
   // application. A default reset still leaves a usable clean local seed.
   if (process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER === "1")
-    commands.push(["--conditions=react-server", "scripts/seed-fixtures.ts"]);
+    commands.push([
+      "--import",
+      "./scripts/test-server-only-stub.mjs",
+      "scripts/seed-fixtures.ts",
+    ]);
   for (const args of commands)
     execFileSync(process.execPath, ["--import", "tsx", ...args], {
       stdio: "inherit",

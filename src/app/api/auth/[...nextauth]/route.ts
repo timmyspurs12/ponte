@@ -1,4 +1,5 @@
-import { authHandler } from "@/auth";
+import { NextRequest } from "next/server";
+import { handlers } from "@/auth";
 import {
   isProductionRuntime,
   readProductionAuthConfig,
@@ -6,7 +7,7 @@ import {
 
 export const runtime = "nodejs";
 
-function unavailable() {
+function unavailable(): Response {
   return Response.json(
     { error: { code: "AUTH_NOT_CONFIGURED" } },
     { status: 503, headers: { "Cache-Control": "no-store" } },
@@ -15,14 +16,19 @@ function unavailable() {
 
 async function handler(
   request: Request,
-  context: { params: Promise<{ nextauth: string[] }> },
-) {
-  // Do not let missing/invalid production settings reach Auth.js' generic
-  // provider errors, and never substitute the local development token.
-  if (isProductionRuntime() && !readProductionAuthConfig())
+  _context?: { params: Promise<{ nextauth: string[] }> },
+): Promise<Response> {
+  // Do not let a missing or invalid production policy reach Auth.js' generic
+  // error object, where a consumer might mistake that object for a session.
+  // Development authentication never uses this OAuth handler.
+  if (isProductionRuntime() && readProductionAuthConfig() === null)
     return unavailable();
   try {
-    return await authHandler(request, context);
+    const nextRequest =
+      request instanceof NextRequest ? request : new NextRequest(request);
+    return request.method === "POST"
+      ? await handlers.POST(nextRequest)
+      : await handlers.GET(nextRequest);
   } catch {
     return Response.json(
       { error: { code: "AUTH_UNAVAILABLE" } },
@@ -31,4 +37,6 @@ async function handler(
   }
 }
 
+// These wrappers preserve a fail-closed configuration boundary around the
+// official Auth.js v5 `handlers` export.
 export { handler as GET, handler as POST };

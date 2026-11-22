@@ -1,17 +1,15 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { getToken } from "next-auth/jwt";
 import { NextRequest } from "next/server";
 import {
-  authSessionCookieName,
   isProductionRuntime,
   readProductionAuthConfig,
   type ProductionAuthConfig,
 } from "./auth-config";
-import { githubSessionClaims } from "../auth";
+import { auth, githubSessionClaims } from "../auth";
 import { findGithubIdentity } from "./external-identities";
 import { pool } from "./repository";
-import { fail } from "./errors";
+import { ApiError, fail } from "./errors";
 
 const uuid = z.uuid();
 export type Context = {
@@ -81,17 +79,28 @@ async function githubSessionFromRequest(
 ): Promise<GithubSession | null> {
   // Production sessions are cookie-only. In particular, a local development
   // bearer token (or any caller-supplied bearer value) is never an OAuth API
-  // credential, even though Auth.js' generic token helper supports headers.
+  // credential.
   if (request.headers.has("authorization")) return null;
-  const config = readProductionAuthConfig();
-  if (!config) return fail(503, "AUTH_NOT_CONFIGURED");
-  const token = await getToken({
-    req: new NextRequest(request),
-    secret: config.secret,
-    cookieName: authSessionCookieName(),
-    secureCookie: true,
+  if (readProductionAuthConfig() === null)
+    return fail(503, "AUTH_NOT_CONFIGURED");
+
+  // This is the official Auth.js v5 route-handler wrapper pattern. The wrapper
+  // receives a server-side session with its encrypted JWT claims; its local
+  // closure is per request, so no claims can bleed between concurrent calls.
+  // Crucially, githubSessionClaims validates the exact fields instead of using
+  // the truthiness of `req.auth`/a session object as authorization proof.
+  let claims: GithubSession | null = null;
+  // The v5 lazy initializer resolves its route wrapper asynchronously before
+  // it can bind the request-specific configuration.
+  const withAuth = await auth((authRequest) => {
+    claims = githubSessionClaims(authRequest.auth);
+    return new Response(null, { status: 204 });
   });
-  return githubSessionClaims(token);
+  const response = await withAuth(new NextRequest(request), {
+    params: Promise.resolve({}),
+  });
+  if (!(response instanceof Response) || !response.ok) return null;
+  return claims;
 }
 
 async function contextForGithubSession(
@@ -117,9 +126,16 @@ async function contextForGithubSession(
 async function authenticateProduction(request: Request): Promise<Context> {
   const config = readProductionAuthConfig();
   if (!config) return fail(503, "AUTH_NOT_CONFIGURED");
-  const session = await githubSessionFromRequest(request);
-  if (!session) return fail(401, "UNAUTHENTICATED");
-  return contextForGithubSession(session, config);
+  try {
+    const session = await githubSessionFromRequest(request);
+    if (session === null) return fail(401, "UNAUTHENTICATED");
+    return contextForGithubSession(session, config);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    // Auth.js decryption/config/provider and identity-store failures never
+    // become an authenticated request or a permissive fallback.
+    return fail(503, "AUTH_UNAVAILABLE");
+  }
 }
 
 async function authenticateDevelopment(
@@ -212,8 +228,14 @@ export async function publicAuthenticationContext(
 
   const config = readProductionAuthConfig();
   if (!config) return fail(503, "AUTH_NOT_CONFIGURED");
-  const session = await githubSessionFromRequest(request);
-  if (!session) return fail(401, "UNAUTHENTICATED");
+  let session: GithubSession | null;
+  try {
+    session = await githubSessionFromRequest(request);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    return fail(503, "AUTH_UNAVAILABLE");
+  }
+  if (session === null) return fail(401, "UNAUTHENTICATED");
   const identity = await findGithubIdentity(session.subject);
   if (!identity)
     return {
@@ -250,6 +272,6 @@ export async function __testOnlyAuthenticateProduction(
   if (process.env.NODE_ENV !== "test")
     throw new Error("test-only production authentication is unavailable");
   void request;
-  if (!options.session) return fail(401, "UNAUTHENTICATED");
+  if (options.session === null) return fail(401, "UNAUTHENTICATED");
   return contextForGithubSession(options.session, options.config);
 }
