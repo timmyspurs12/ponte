@@ -226,6 +226,21 @@ const EXPECTED_PAYMENTS = PUBLIC_DEMO_INVOICES.filter((invoice) =>
 const EXPECTED_SETTLEMENTS = EXPECTED_QUOTES;
 
 /**
+ * The exact shape of the synthetic payload, derived from the fixture module.
+ *
+ * Exported so that an independent verifier (the `demo-verify` database
+ * operation) compares against the same numbers the provisioner writes instead
+ * of restating them. A second hard-coded copy is how a verification command
+ * quietly stops verifying anything.
+ */
+export const PUBLIC_DEMO_EXPECTED_COUNTS = Object.freeze({
+  invoices: EXPECTED_INVOICES,
+  quotes: EXPECTED_QUOTES,
+  payments: EXPECTED_PAYMENTS,
+  settlements: EXPECTED_SETTLEMENTS,
+});
+
+/**
  * Inserts one row only when it is absent; otherwise proves that the existing
  * row is exactly the expected synthetic record. A mismatch is a conflict — this
  * command never updates, deletes, or repairs existing data.

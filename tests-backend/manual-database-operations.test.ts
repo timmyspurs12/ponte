@@ -139,6 +139,7 @@ test("an already recorded migration is not replayed", async () => {
 
 test("verify is read-only and reports pending migrations", async () => {
   const { pool, statements } = fakePool((sql) => {
+    if (sql.includes("to_regclass")) return { rows: [{ present: true }] };
     if (sql.startsWith("SELECT name FROM schema_migrations")) {
       return { rows: [{ name: "001_foundation" }] };
     }
@@ -147,11 +148,69 @@ test("verify is read-only and reports pending migrations", async () => {
   const result = await verifyMigrations(pool);
   assert.deepEqual(result.recorded, ["001_foundation"]);
   assert.ok(result.pending.length >= 5);
-  assert.equal(statements.length, 1);
+  assert.equal(result.ledgerPresent, true);
+  assert.equal(statements.length, 2);
+  // The existence check precedes the read: on a fresh database the read would
+  // raise 42P01 before the operator ever saw a report.
+  assert.match(
+    statements[0],
+    /to_regclass\('(?:public\.)?schema_migrations'\)/,
+  );
   assert.equal(
-    statements[0].startsWith("SELECT name FROM schema_migrations"),
+    statements[1].startsWith("SELECT name FROM schema_migrations"),
     true,
   );
+  for (const sql of statements) {
+    assert.equal(
+      /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)/i.test(sql),
+      false,
+      sql,
+    );
+  }
+});
+
+test("a never-migrated database is reported, not crashed", async () => {
+  // Models a fresh Neon project: `schema_migrations` does not exist, so the
+  // ledger read is skipped entirely and every file on disk is pending.
+  const { pool, statements } = fakePool((sql) =>
+    sql.includes("to_regclass") ? { rows: [{ present: false }] } : { rows: [] },
+  );
+  const result = await verifyMigrations(pool);
+  assert.deepEqual(result.recorded, []);
+  assert.equal(result.ledgerPresent, false);
+  const files = await listMigrationFiles();
+  assert.deepEqual(
+    result.pending,
+    files.map((file) => file.slice(0, -4)),
+  );
+  assert.equal(
+    statements.some((sql) =>
+      sql.startsWith("SELECT name FROM schema_migrations"),
+    ),
+    false,
+    "reading a table that does not exist is what raised 42P01",
+  );
+  for (const sql of statements) {
+    assert.equal(
+      /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)/i.test(sql),
+      false,
+      sql,
+    );
+  }
+});
+
+test("a genuine connection failure is never suppressed", async () => {
+  // Only a *missing table* is tolerated. A refused connection, bad credentials
+  // or a missing database must still reach the operator.
+  const failure = Object.assign(new Error("connect ECONNREFUSED"), {
+    code: "ECONNREFUSED",
+  });
+  const pool = {
+    query: async () => {
+      throw failure;
+    },
+  } as unknown as Pool;
+  await assert.rejects(() => verifyMigrations(pool), /ECONNREFUSED/);
 });
 
 test("the migrate operation applies forward-only and reports a summary", async () => {
@@ -172,15 +231,22 @@ test("the migrate operation applies forward-only and reports a summary", async (
   assert.deepEqual(statements, []);
 });
 
-test("verify reports the two demo invariants without writing", async () => {
+test("verify reports schema and chain invariants without writing", async () => {
   const { pool, statements } = fakePool((sql) => {
     if (sql.startsWith("SELECT name FROM schema_migrations")) {
       return { rows: [{ name: "001_foundation" }] };
     }
-    if (sql.includes("demo_memberships")) {
+    if (sql.includes("to_regclass('public.settlements')")) {
+      return { rows: [{ present: true }] };
+    }
+    if (sql.includes("chain_hashes")) {
       return {
         rows: [
-          { demo_memberships: "0", chain_hashes: "0", evidence_records: "0" },
+          {
+            chain_hashes: "0",
+            evidence_records: "0",
+            outbox_records: "0",
+          },
         ],
       };
     }
@@ -193,20 +259,99 @@ test("verify reports the two demo invariants without writing", async () => {
       verifyMigrations: async () => ({
         recorded: ["001_foundation", "002_operational_tables"],
         pending: [],
+        ledgerPresent: true,
       }),
     },
   );
   assert.equal(result.ok, true);
   assert.match(result.lines.join(" "), /2 migration\(s\) recorded/);
-  assert.match(result.lines.join(" "), /Synthetic demo memberships: 0/);
   assert.match(result.lines.join(" "), /Chain transactions: 0/);
+  // No global membership claim: a first-time viewer legitimately creates one,
+  // and `verify` was not told which tenant to look at.
+  assert.equal(/memberships/i.test(result.lines.join(" ")), false);
   for (const sql of statements) {
     assert.equal(
       /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i.test(sql),
       false,
       sql,
     );
+    assert.equal(/FROM memberships/i.test(sql), false, sql);
   }
+});
+
+test("verify on a fresh database succeeds and lists every pending file", async () => {
+  const { pool, statements } = fakePool((sql) => {
+    if (sql.includes("today_marker")) return { rows: [{ present: false }] };
+    if (sql.includes("to_regclass('public.settlements')")) {
+      return { rows: [{ present: false }] };
+    }
+    if (sql.includes("chain_hashes")) {
+      return {
+        rows: [
+          { chain_hashes: "0", evidence_records: "0", outbox_records: "0" },
+        ],
+      };
+    }
+    return { rows: [] };
+  });
+  const files = (await listMigrationFiles()).map((file) => file.slice(0, -4));
+  const result = await runDatabaseOperation(
+    pool,
+    { operation: "verify" },
+    {
+      verifyMigrations: async () => ({
+        recorded: [],
+        pending: files,
+        ledgerPresent: false,
+      }),
+    },
+  );
+  assert.equal(result.ok, true, result.lines.join("\n"));
+  const text = result.lines.join("\n");
+  assert.match(text, /never been migrated/);
+  assert.match(
+    text,
+    /Not yet applied: all \d+ migration\(s\) on disk are pending/,
+  );
+  for (const name of files) assert.ok(text.includes(name), name);
+  assert.match(text, /Nothing was written/);
+  // No DDL and no mutation, even though the schema is empty.
+  for (const sql of statements) {
+    assert.equal(
+      /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)/i.test(sql),
+      false,
+      sql,
+    );
+  }
+});
+
+test("verify reports a partially migrated database without failing", async () => {
+  const { pool } = fakePool((sql) => {
+    if (sql.includes("to_regclass('public.settlements')")) {
+      return { rows: [{ present: true }] };
+    }
+    if (sql.includes("chain_hashes")) {
+      return {
+        rows: [
+          { chain_hashes: "0", evidence_records: "0", outbox_records: "0" },
+        ],
+      };
+    }
+    return { rows: [] };
+  });
+  const result = await runDatabaseOperation(
+    pool,
+    { operation: "verify" },
+    {
+      verifyMigrations: async () => ({
+        recorded: ["001_foundation"],
+        pending: ["002_operational_tables"],
+        ledgerPresent: true,
+      }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.match(result.lines.join(" "), /1 migration\(s\) recorded; 1 pending/);
 });
 
 test("tenant operations refuse to run before the schema is current", async () => {
@@ -221,6 +366,7 @@ test("tenant operations refuse to run before the schema is current", async () =>
       verifyMigrations: async () => ({
         recorded: ["001_foundation"],
         pending: ["006_github_external_identities"],
+        ledgerPresent: true,
       }),
       bootstrapBusiness: async () => {
         bootstrapped = true;
@@ -248,6 +394,7 @@ test("business bootstrap creates no user or membership", async () => {
       verifyMigrations: async () => ({
         recorded: ["001_foundation"],
         pending: [],
+        ledgerPresent: true,
       }),
       bootstrapBusiness: async (_pool, input) => {
         assert.equal(input.businessName, "Acme Comércio Ltda");
@@ -274,6 +421,7 @@ test("demo bootstrap reports counts and never enables the demo flag", async () =
       verifyMigrations: async () => ({
         recorded: ["001_foundation"],
         pending: [],
+        ledgerPresent: true,
       }),
       bootstrapDemo: async () => ({
         created: true,
@@ -381,4 +529,269 @@ test("migration SQL files contain no destructive or seeding statements", () => {
       );
     }
   }
+});
+
+/* -------------------------------------------------------------------------- *
+ * demo-verify
+ *
+ * The read-only operation added in Phase 1.3.9.1. Every case below is about
+ * what it does *not* do: it never writes, never asserts anything global, and
+ * never reports a demo membership count for a tenant it was not given.
+ * -------------------------------------------------------------------------- */
+
+const demoBusiness = {
+  businessId: "5b0c7d84-9e21-4f3a-8c6d-1a2b3c4d5e6f",
+  businessName: "PONTE Public Demo",
+};
+
+const demoResult = {
+  created: false,
+  verified: true as const,
+  invoices: 6,
+  quotes: 2,
+  payments: 3,
+  settlements: 2,
+};
+
+/** Pool that answers the scoped invariant query with the given counts. */
+function demoVerifyPool(overrides: Record<string, string> = {}) {
+  const row = {
+    demo_memberships: "0",
+    business_rows: "1",
+    chain_hashes: "0",
+    evidence_records: "0",
+    outbox_records: "0",
+    transaction_hashes: "0",
+    ...overrides,
+  };
+  return fakePool((sql) =>
+    sql.includes("demo_memberships") ? { rows: [row] } : { rows: [] },
+  );
+}
+
+test("demo-verify reads the tenant, writes nothing, and reports its counts", async () => {
+  const { pool, statements } = demoVerifyPool({ demo_memberships: "2" });
+  const calls: Array<{ verifyOnly: boolean; businessId: string }> = [];
+  const result = await runDatabaseOperation(
+    pool,
+    { operation: "demo-verify", ...demoBusiness },
+    {
+      verifyMigrations: async () => ({
+        recorded: ["001_foundation"],
+        pending: [],
+        ledgerPresent: true,
+      }),
+      bootstrapDemo: async (_pool, input, options) => {
+        calls.push({
+          verifyOnly: options.verifyOnly,
+          businessId: input.businessId,
+        });
+        return demoResult;
+      },
+    },
+  );
+
+  assert.equal(result.ok, true, result.lines.join("\n"));
+  // The content check is delegated to the provisioning module in verify mode:
+  // that is what keeps one definition of "the expected demo content".
+  assert.deepEqual(calls, [
+    { verifyOnly: true, businessId: demoBusiness.businessId },
+  ]);
+  const text = result.lines.join("\n");
+  assert.match(text, /6 invoices, 2 quotes, 3 payments, 2 settlements/);
+  // A real viewer's membership is reported, not judged, and only for the
+  // tenant the operator named.
+  assert.match(text, /Demo memberships for this tenant: 2/);
+  assert.match(text, /Read-only: this operation wrote nothing/);
+  assert.match(text, /did not change PONTE_PUBLIC_DEMO_READ_ONLY/);
+
+  // Every statement is a SELECT. No DDL, no DML, no lock, no transaction
+  // control that could imply a write.
+  for (const sql of statements) {
+    assert.equal(
+      /^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|SET|BEGIN|COMMIT|ROLLBACK)/i.test(
+        sql,
+      ),
+      false,
+      sql,
+    );
+  }
+});
+
+test("demo-verify refuses when a simulated settlement claims a transaction", async () => {
+  const { pool } = demoVerifyPool({ chain_hashes: "1" });
+  const result = await runDatabaseOperation(
+    pool,
+    { operation: "demo-verify", ...demoBusiness },
+    {
+      verifyMigrations: async () => ({
+        recorded: ["001_foundation"],
+        pending: [],
+        ledgerPresent: true,
+      }),
+      bootstrapDemo: async () => demoResult,
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.lines[0], /transaction hash/);
+  assert.match(result.lines[0], /Nothing was written/);
+});
+
+test("demo-verify refuses when evidence or outbox rows reference the demo", async () => {
+  const scenarios: Array<Record<string, string>> = [
+    { evidence_records: "1" },
+    { outbox_records: "1" },
+  ];
+  for (const overrides of scenarios) {
+    const { pool } = demoVerifyPool(overrides);
+    const result = await runDatabaseOperation(
+      pool,
+      { operation: "demo-verify", ...demoBusiness },
+      {
+        verifyMigrations: async () => ({
+          recorded: ["001_foundation"],
+          pending: [],
+          ledgerPresent: true,
+        }),
+        bootstrapDemo: async () => demoResult,
+      },
+    );
+    assert.equal(result.ok, false, JSON.stringify(overrides));
+    assert.match(result.lines[0], /evidence/);
+  }
+});
+
+test("demo-verify refuses a drifted payload and a mismatched tenant", async () => {
+  // Wrong number of invoices for the fixture: the module's exact check and the
+  // runner's own comparison both matter, so simulate a module that returned a
+  // plausible-but-wrong shape.
+  const { pool } = demoVerifyPool();
+  const drifted = await runDatabaseOperation(
+    pool,
+    { operation: "demo-verify", ...demoBusiness },
+    {
+      verifyMigrations: async () => ({
+        recorded: ["001_foundation"],
+        pending: [],
+        ledgerPresent: true,
+      }),
+      bootstrapDemo: async () => ({ ...demoResult, invoices: 5 }),
+    },
+  );
+  assert.equal(drifted.ok, false);
+  assert.match(drifted.lines[0], /expected 6 invoices/);
+
+  // A tenant that does not match the configured demo UUID is refused before
+  // any query, even though the dispatch guard normally catches it first.
+  const mismatched = await runDatabaseOperation(
+    pool,
+    {
+      operation: "demo-verify",
+      ...demoBusiness,
+      configuredDemoBusinessId: "9f4e2d10-6b8c-4a7e-b3d1-0c2e5f7a9b13",
+    },
+    {
+      verifyMigrations: async () => ({
+        recorded: ["001_foundation"],
+        pending: [],
+        ledgerPresent: true,
+      }),
+      bootstrapDemo: async () => demoResult,
+    },
+  );
+  assert.equal(mismatched.ok, false);
+  assert.match(mismatched.lines[0], /PONTE_PUBLIC_DEMO_BUSINESS_ID/);
+});
+
+test("demo-verify refuses on an un-migrated database and never writes", async () => {
+  const { pool, statements } = demoVerifyPool();
+  let called = false;
+  const result = await runDatabaseOperation(
+    pool,
+    { operation: "demo-verify", ...demoBusiness },
+    {
+      verifyMigrations: async () => ({
+        recorded: [],
+        pending: ["001_foundation"],
+        ledgerPresent: false,
+      }),
+      bootstrapDemo: async () => {
+        called = true;
+        return demoResult;
+      },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.lines[0], /schema is not current/);
+  assert.equal(called, false);
+  assert.deepEqual(statements, []);
+});
+
+test("demo-verify works after the public demo is enabled", async () => {
+  // The guard does not take the flag as input at all; the demo preflight does,
+  // and relaxes only for verifyOnly. Assert both halves so enabling the demo
+  // can never break the verification step that follows it.
+  const { pool } = demoVerifyPool();
+  const result = await runDatabaseOperation(
+    pool,
+    { operation: "demo-verify", ...demoBusiness },
+    {
+      verifyMigrations: async () => ({
+        recorded: ["001_foundation"],
+        pending: [],
+        ledgerPresent: true,
+      }),
+      bootstrapDemo: async () => demoResult,
+    },
+  );
+  assert.equal(result.ok, true, result.lines.join("\n"));
+  const { guardOperation } =
+    await import("../scripts/deployment-workflow-guards");
+  const guarded = guardOperation({
+    eventName: "workflow_dispatch",
+    ref: "refs/heads/main",
+    actor: "octocat",
+    operatorAllowlist: "octocat",
+    operation: "demo-verify",
+    businessId: demoBusiness.businessId,
+    businessName: demoBusiness.businessName,
+    confirmation: "",
+    administratorBusinessId: "1d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+    demoBusinessId: demoBusiness.businessId,
+  });
+  assert.equal(guarded.ok, true);
+  if (guarded.ok) assert.equal(guarded.operation.readOnly, true);
+});
+
+test("verify never queries a table it has not proved exists", async () => {
+  // Regression: tolerating a missing schema_migrations table is not enough if
+  // the next statement reads settlements. On a fresh Neon project both are
+  // missing, so the invariant query must be gated on table existence too.
+  const { pool, statements } = fakePool((sql) =>
+    sql.includes("to_regclass('public.settlements')")
+      ? { rows: [{ present: false }] }
+      : { rows: [] },
+  );
+  const result = await runDatabaseOperation(
+    pool,
+    { operation: "verify" },
+    {
+      verifyMigrations: async () => ({
+        recorded: [],
+        pending: ["001_foundation"],
+        ledgerPresent: false,
+      }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(
+    statements.some((sql) => /FROM\s+settlements/i.test(sql)),
+    false,
+    "the invariant query must not run before the tables exist",
+  );
+  assert.equal(
+    statements.some((sql) => /FROM\s+evidence_outbox/i.test(sql)),
+    false,
+  );
+  assert.match(result.lines.join(" "), /not applicable yet/);
 });

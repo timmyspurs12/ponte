@@ -86,18 +86,48 @@ export async function applyMigrations(
   }
 }
 
+export type MigrationVerification = {
+  recorded: string[];
+  pending: string[];
+  /**
+   * False on a database that has never been migrated. The distinction matters
+   * to an operator scanning a first-run log: "no ledger yet" is a normal state
+   * on a fresh Neon project, not a failure and not a truncated report.
+   */
+  ledgerPresent: boolean;
+};
+
 /**
  * Read-only reporting for operators: which migrations are recorded, and
  * whether any file on disk is missing from the database. Takes no lock and
  * writes nothing, so it is safe to run at any time.
+ *
+ * A brand-new database has no `schema_migrations` table at all. Touching it
+ * directly raises `42P01` (`undefined_table`), which would turn the first
+ * `verify` of the documented sequence — the run that is *supposed* to report
+ * "nothing applied yet" — into a failure. The existence check therefore comes
+ * first, and a missing ledger is reported as zero recorded migrations with
+ * every file pending.
+ *
+ * Only that specific condition is tolerated. A missing table is detected with
+ * `to_regclass`, which requires a working connection; a refused connection,
+ * bad credentials, or a missing database still propagates to the caller as an
+ * error, because suppressing those would hide the very failures an operator
+ * needs to see.
  */
 export async function verifyMigrations(
   pool: Pool,
   directory = "migrations",
-): Promise<{ recorded: string[]; pending: string[] }> {
+): Promise<MigrationVerification> {
   const migrations = (await listMigrationFiles(directory)).map((file) =>
     file.slice(0, -4),
   );
+  const ledger = await pool.query<{ present: boolean }>(
+    "SELECT (to_regclass('schema_migrations') IS NOT NULL OR to_regclass('public.schema_migrations') IS NOT NULL) AS present",
+  );
+  if (ledger.rows[0]?.present !== true) {
+    return { recorded: [], pending: [...migrations], ledgerPresent: false };
+  }
   const result = await pool.query<{ name: string }>(
     "SELECT name FROM schema_migrations ORDER BY name",
   );
@@ -105,5 +135,6 @@ export async function verifyMigrations(
   return {
     recorded,
     pending: migrations.filter((name) => !recorded.includes(name)),
+    ledgerPresent: true,
   };
 }

@@ -5,7 +5,11 @@ import {
 } from "../src/server/admin-database";
 import { verifyMigrations } from "./migrate";
 import { runDatabaseOperation } from "./database-operation-runner";
-import { guardFailureText, guardOperation } from "./deployment-workflow-guards";
+import {
+  guardFailureText,
+  guardOperation,
+  type GuardedOperation,
+} from "./deployment-workflow-guards";
 
 /**
  * Manual database operations entry point for the zero-cost deployment.
@@ -18,6 +22,11 @@ import { guardFailureText, guardOperation } from "./deployment-workflow-guards";
  *
  * - All dispatch policy is re-applied here (`guardOperation`), not only in the
  *   workflow, so the rules hold even if the YAML is edited carelessly.
+ * - The provisioning modules' own production preflights
+ *   (`assertProductionBusinessBootstrapEnvironment`,
+ *   `assertPublicDemoBootstrapEnvironment`) are applied **before** a pool is
+ *   created, so the GitHub Actions path enforces the same rules as the
+ *   one-off CLIs. Running a bootstrap from the workflow used to skip them.
  * - The administrative URL is read from the environment by the caller and
  *   validated by `adminDatabaseTransport` before a pool exists.
  * - Output contains operation results and reason codes only. No URL, host,
@@ -25,7 +34,9 @@ import { guardFailureText, guardOperation } from "./deployment-workflow-guards";
  *
  * Locally this command refuses to run unless `PONTE_DB_OPS_FORCE_LOCAL=1` is
  * set, which the tests do. That flag exists so the guard logic can be exercised
- * on a disposable database; it does not relax any hosted rule.
+ * on a disposable database. It bypasses only the loopback/TLS *host* checks,
+ * which a disposable local database can never satisfy; every other preflight
+ * still runs, so a test cannot silently skip the rules the hosted path needs.
  */
 
 function readInputs(environment: Record<string, string | undefined>) {
@@ -39,7 +50,114 @@ function readInputs(environment: Record<string, string | undefined>) {
     businessName: environment.PONTE_DB_OPS_BUSINESS_NAME ?? "",
     confirmation: environment.PONTE_DB_OPS_CONFIRMATION ?? "",
     administratorBusinessId: environment.PONTE_AUTH_BUSINESS_ID,
+    demoBusinessId: environment.PONTE_PUBLIC_DEMO_BUSINESS_ID,
   };
+}
+
+const demoFailureText: Record<string, string> = {
+  INVALID_INPUT: "Invalid business inputs.",
+  NOT_PRODUCTION: "The operation requires NODE_ENV=production.",
+  LOCAL_PROVIDER:
+    "Refused: local development or local evidence settings are present.",
+  LOCAL_DATABASE: "Refused: a non-loopback PostgreSQL URL is required.",
+  ADMIN_BUSINESS_UNCONFIGURED:
+    "Refused: PONTE_AUTH_BUSINESS_ID is missing or is not a UUID.",
+  ADMIN_BUSINESS_MISMATCH:
+    "Refused: the demo business UUID must differ from PONTE_AUTH_BUSINESS_ID.",
+  DEMO_CONFIG_MISMATCH:
+    "Refused: PONTE_PUBLIC_DEMO_BUSINESS_ID / PONTE_PUBLIC_DEMO_READ_ONLY is inconsistent.",
+  DEMO_ALREADY_ENABLED:
+    "Refused: PONTE_PUBLIC_DEMO_READ_ONLY=1. Provision content before enabling the demo.",
+  CONFLICT:
+    "Refused: an existing record does not match the expected synthetic content.",
+  CONTENT_MISSING:
+    "Verification failed: expected synthetic demo content is not present.",
+  FAILED: "The synthetic demo provisioning or verification failed.",
+};
+
+const businessFailureText: Record<string, string> = {
+  INVALID_INPUT: "Invalid business inputs.",
+  NOT_PRODUCTION: "This operation requires NODE_ENV=production.",
+  LOCAL_PROVIDER: "Local development or local evidence settings are present.",
+  LOCAL_DATABASE: "A non-loopback PostgreSQL URL is required.",
+  REFUSED: "The production bootstrap preflight did not pass.",
+  CONFLICT: "That business UUID already exists with a different name.",
+  FAILED: "The production business bootstrap failed.",
+};
+
+/**
+ * Applies the provisioning module's own preflight before a pool exists.
+ *
+ * The loopback host and verified-TLS requirements cannot be satisfied by the
+ * disposable local database the tests use, so `PONTE_DB_OPS_FORCE_LOCAL=1`
+ * substitutes a placeholder hosted URL *for the preflight only*. The real
+ * connection string is still handed to `adminDatabaseTransport` afterwards, so
+ * nothing about the hosted path is relaxed.
+ */
+async function preflight(
+  operation: GuardedOperation,
+  environment: Record<string, string | undefined>,
+  forcedLocal: boolean,
+): Promise<string | null> {
+  if (
+    operation.operation !== "business-bootstrap" &&
+    operation.operation !== "demo-bootstrap" &&
+    operation.operation !== "demo-verify"
+  )
+    return null;
+
+  const preflightEnvironment: Record<string, string | undefined> = forcedLocal
+    ? {
+        ...environment,
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://operator@preflight.invalid/ponte",
+      }
+    : environment;
+
+  // `demo-verify` must work *after* the demo is enabled, so it runs the demo
+  // preflight with `verifyOnly: true`, the same relaxation the module itself
+  // applies to a read-only pass.
+  const verifyOnly = operation.operation === "demo-verify";
+
+  try {
+    if (operation.operation === "business-bootstrap") {
+      const business = await import("./production-business-bootstrap");
+      business.assertProductionBusinessBootstrapEnvironment(
+        preflightEnvironment,
+      );
+    } else {
+      const demo = await import("./production-demo-bootstrap");
+      demo.assertPublicDemoBootstrapEnvironment(preflightEnvironment, {
+        verifyOnly,
+      });
+    }
+  } catch (error) {
+    const text =
+      operation.operation === "business-bootstrap"
+        ? businessFailureText
+        : demoFailureText;
+    // The demo module reports `{ reason }`; the business module reports
+    // `{ code, reason? }`. Both keys are read so one branch can serve both.
+    const detail = error as { reason?: unknown; code?: unknown };
+    const key =
+      typeof detail.reason === "string"
+        ? detail.reason
+        : typeof detail.code === "string"
+          ? detail.code
+          : "FAILED";
+    const explanation =
+      text[key] ??
+      (operation.operation === "business-bootstrap"
+        ? businessFailureText.REFUSED
+        : demoFailureText.FAILED);
+    console.error(
+      explanation.startsWith("Refused:")
+        ? explanation
+        : `Refused: ${explanation.charAt(0).toLowerCase()}${explanation.slice(1)}`,
+    );
+    return "preflight";
+  }
+  return null;
 }
 
 async function main(): Promise<void> {
@@ -61,10 +179,24 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const { operation, businessId, businessName, readOnly } = guarded.operation;
+  const operation = guarded.operation;
   console.log(
-    `Operation accepted: ${operation} (${readOnly ? "read-only" : "mutating"}).`,
+    `Operation accepted: ${operation.operation} (${operation.readOnly ? "read-only" : "mutating"}).`,
   );
+  if (operation.administratorUnconfigured)
+    console.log(
+      "Note: PONTE_AUTH_BUSINESS_ID is not set, so this run creates the row that the variable must name. Set the variable to this UUID before deploying.",
+    );
+  if (operation.demoBusinessIdUnconfigured)
+    console.log(
+      "Note: PONTE_PUBLIC_DEMO_BUSINESS_ID is not set; the tenant named on the dispatch is the only source of the demo UUID.",
+    );
+
+  const preflightFailure = await preflight(operation, process.env, forcedLocal);
+  if (preflightFailure) {
+    process.exitCode = 1;
+    return;
+  }
 
   const transport = adminDatabaseTransport(process.env.DATABASE_URL);
   if (!transport.ok) {
@@ -77,7 +209,12 @@ async function main(): Promise<void> {
   try {
     const result = await runDatabaseOperation(
       pool,
-      { operation, businessId, businessName },
+      {
+        operation: operation.operation,
+        businessId: operation.businessId,
+        businessName: operation.businessName,
+        configuredDemoBusinessId: process.env.PONTE_PUBLIC_DEMO_BUSINESS_ID,
+      },
       { verifyMigrations },
     );
     for (const line of result.lines) console.log(line);

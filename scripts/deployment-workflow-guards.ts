@@ -25,27 +25,43 @@ export const APPROVED_REF = "refs/heads/main";
 /**
  * Ordered operations; the workflow runs exactly one per dispatch. `verify` is
  * first because it is the read-only default an operator should reach for, and
- * the order here is asserted against the workflow's `choice` list.
+ * `demo-verify` is last because it is the read-only check an operator runs
+ * after the public demo is enabled. The order here is asserted against the
+ * workflow's `choice` list.
  */
 export const DATABASE_OPERATIONS = [
   "verify",
   "migrate",
   "business-bootstrap",
   "demo-bootstrap",
+  "demo-verify",
 ] as const;
 
 export type DatabaseOperation = (typeof DATABASE_OPERATIONS)[number];
 
 /**
- * Operations that mutate the database. `verify` is read-only and may run at
- * any time; the others additionally require the operator to type a
- * confirmation phrase naming the operation.
+ * Operations that never write. `verify` may run at any time; `demo-verify`
+ * inspects the synthetic tenant and runs `bootstrapPublicDemo` with
+ * `verifyOnly: true`, which opens a `READ ONLY` transaction.
  */
-const mutatingOperations: ReadonlySet<DatabaseOperation> = new Set([
-  "migrate",
-  "business-bootstrap",
-  "demo-bootstrap",
+export const READ_ONLY_OPERATIONS: ReadonlySet<DatabaseOperation> = new Set([
+  "verify",
+  "demo-verify",
 ]);
+
+/**
+ * Operations that mutate the database. They additionally require the operator
+ * to type a confirmation phrase naming the operation.
+ */
+export const MUTATING_OPERATIONS: readonly DatabaseOperation[] =
+  DATABASE_OPERATIONS.filter(
+    (operation) => !READ_ONLY_OPERATIONS.has(operation),
+  );
+
+/** True when the operation may be dispatched without a confirmation phrase. */
+export function isReadOnlyOperation(operation: DatabaseOperation): boolean {
+  return READ_ONLY_OPERATIONS.has(operation);
+}
 
 /** Confirmation phrase: `APPLY <operation>`; case-sensitive on purpose. */
 export function expectedConfirmation(operation: DatabaseOperation): string {
@@ -60,7 +76,10 @@ export type GuardFailure =
   | "UNKNOWN_OPERATION"
   | "INVALID_BUSINESS_ID"
   | "INVALID_BUSINESS_NAME"
+  | "ADMIN_BUSINESS_INVALID"
   | "BUSINESS_ID_MATCHES_ADMIN"
+  | "BUSINESS_ID_DOES_NOT_MATCH_ADMIN"
+  | "DEMO_BUSINESS_ID_MISMATCH"
   | "BUSINESS_ID_IN_RESERVED_RANGE"
   | "CONFIRMATION_MISSING"
   | "CONFIRMATION_MISMATCH"
@@ -68,12 +87,24 @@ export type GuardFailure =
 
 export type GuardedOperation = {
   operation: DatabaseOperation;
-  /** Present only for `business-bootstrap` and `demo-bootstrap`. */
+  /** Present only for the operations that target a tenant. */
   businessId?: string;
-  /** Present only for `business-bootstrap` and `demo-bootstrap`. */
+  /** Present only for the operations that target a tenant. */
   businessName?: string;
-  /** True for `verify`; every other operation mutates. */
+  /** True for `verify` and `demo-verify`; the others mutate. */
   readOnly: boolean;
+  /**
+   * `business-bootstrap` with no `PONTE_AUTH_BUSINESS_ID` configured. The row
+   * is created first and the variable is set afterwards, so this is a warning
+   * the caller prints — not a refusal.
+   */
+  administratorUnconfigured?: boolean;
+  /**
+   * A demo operation with no `PONTE_PUBLIC_DEMO_BUSINESS_ID` configured. The
+   * checked tenant is then exactly the one the operator supplied, and callers
+   * must not describe it as "the configured demo tenant".
+   */
+  demoBusinessIdUnconfigured?: boolean;
 };
 
 export type GuardResult =
@@ -130,6 +161,12 @@ export type GuardInput = {
   confirmation: string;
   /** `PONTE_AUTH_BUSINESS_ID` from repository configuration. */
   administratorBusinessId: string | undefined;
+  /**
+   * `PONTE_PUBLIC_DEMO_BUSINESS_ID` from repository configuration. Optional:
+   * before the demo is enabled there is nothing to read, and the operator's
+   * input is then the only source of the demo UUID.
+   */
+  demoBusinessId?: string | undefined;
 };
 
 function parseAllowlist(
@@ -181,10 +218,10 @@ export function guardOperation(input: GuardInput): GuardResult {
     return { ok: false, failure: "UNKNOWN_OPERATION" };
   }
   const operation = input.operation as DatabaseOperation;
-  const readOnly = operation === "verify";
+  const readOnly = isReadOnlyOperation(operation);
 
-  // `verify` is the only operation that ignores the business inputs.
-  if (readOnly) {
+  // `verify` is the only operation that ignores the business inputs entirely.
+  if (operation === "verify") {
     if (
       input.businessId.length > 0 ||
       input.businessName.length > 0 ||
@@ -195,11 +232,18 @@ export function guardOperation(input: GuardInput): GuardResult {
     return { ok: true, operation: { operation, readOnly } };
   }
 
-  if (input.confirmation.length === 0) {
-    return { ok: false, failure: "CONFIRMATION_MISSING" };
-  }
-  if (input.confirmation !== expectedConfirmation(operation)) {
-    return { ok: false, failure: "CONFIRMATION_MISMATCH" };
+  // `demo-verify` is read-only but still names the tenant it inspects.
+  if (!readOnly) {
+    if (input.confirmation.length === 0) {
+      return { ok: false, failure: "CONFIRMATION_MISSING" };
+    }
+    if (input.confirmation !== expectedConfirmation(operation)) {
+      return { ok: false, failure: "CONFIRMATION_MISMATCH" };
+    }
+  } else if (input.confirmation.length > 0) {
+    // A read-only operation must never carry a mutation confirmation: it would
+    // mean the operator expected a write.
+    return { ok: false, failure: "UNEXPECTED_INPUT" };
   }
 
   // `migrate` mutates schema only: it must not carry tenant identifiers.
@@ -225,14 +269,91 @@ export function guardOperation(input: GuardInput): GuardResult {
   ) {
     return { ok: false, failure: "INVALID_BUSINESS_ID" };
   }
-  if (
-    input.administratorBusinessId &&
-    businessId === input.administratorBusinessId.trim()
-  ) {
-    return { ok: false, failure: "BUSINESS_ID_MATCHES_ADMIN" };
-  }
   if (!businessNameSchema.safeParse(input.businessName).success) {
     return { ok: false, failure: "INVALID_BUSINESS_NAME" };
+  }
+
+  if (operation === "business-bootstrap") {
+    return guardPrivateBootstrap(input, businessId, readOnly);
+  }
+  return guardDemoOperation(input, operation, businessId, readOnly);
+}
+
+/**
+ * The private bootstrap creates the administrator tenant. Its UUID **must**
+ * equal `PONTE_AUTH_BUSINESS_ID` whenever that variable is configured: the
+ * documented sequence is "set the variable, then create the row it names", and
+ * a mismatch would leave the deployed service pointing at a tenant that does
+ * not exist. Creating a *different* private tenant is exactly the mistake the
+ * demo path exists to avoid, so it is refused here.
+ *
+ * When the variable is not configured the operation is allowed with a warning,
+ * because the first run necessarily precedes the variable being set.
+ */
+function guardPrivateBootstrap(
+  input: GuardInput,
+  businessId: string,
+  readOnly: boolean,
+): GuardResult {
+  const administratorBusinessId = normalizeUuid(input.administratorBusinessId);
+  if (input.administratorBusinessId !== undefined && !administratorBusinessId) {
+    return { ok: false, failure: "ADMIN_BUSINESS_INVALID" };
+  }
+  if (administratorBusinessId) {
+    if (businessId !== administratorBusinessId) {
+      return { ok: false, failure: "BUSINESS_ID_DOES_NOT_MATCH_ADMIN" };
+    }
+    return {
+      ok: true,
+      operation: {
+        operation: "business-bootstrap",
+        businessId,
+        businessName: input.businessName,
+        readOnly,
+      },
+    };
+  }
+  return {
+    ok: true,
+    operation: {
+      operation: "business-bootstrap",
+      businessId,
+      businessName: input.businessName,
+      readOnly,
+      administratorUnconfigured: true,
+    },
+  };
+}
+
+/**
+ * The demo tenant is a synthetic showcase, never the administrator tenant:
+ *
+ * - its UUID must differ from `PONTE_AUTH_BUSINESS_ID`;
+ * - when `PONTE_PUBLIC_DEMO_BUSINESS_ID` is configured, its UUID must equal it,
+ *   so an operator cannot populate one tenant while the service is told to
+ *   show another. `demo-bootstrap` and `demo-verify` apply the same rule, so
+ *   the check is identical before and after the flag is enabled.
+ */
+function guardDemoOperation(
+  input: GuardInput,
+  operation: "demo-bootstrap" | "demo-verify",
+  businessId: string,
+  readOnly: boolean,
+): GuardResult {
+  const administratorBusinessId = normalizeUuid(input.administratorBusinessId);
+  if (input.administratorBusinessId !== undefined && !administratorBusinessId) {
+    return { ok: false, failure: "ADMIN_BUSINESS_INVALID" };
+  }
+  if (administratorBusinessId && businessId === administratorBusinessId) {
+    return { ok: false, failure: "BUSINESS_ID_MATCHES_ADMIN" };
+  }
+
+  const configuredDemoBusinessId = normalizeUuid(input.demoBusinessId);
+  if (input.demoBusinessId !== undefined && !configuredDemoBusinessId) {
+    return { ok: false, failure: "DEMO_BUSINESS_ID_MISMATCH" };
+  }
+  if (configuredDemoBusinessId && businessId !== configuredDemoBusinessId) {
+    return { ok: false, failure: "DEMO_BUSINESS_ID_MISMATCH" };
   }
 
   return {
@@ -242,8 +363,16 @@ export function guardOperation(input: GuardInput): GuardResult {
       businessId,
       businessName: input.businessName,
       readOnly,
+      ...(configuredDemoBusinessId ? {} : { demoBusinessIdUnconfigured: true }),
     },
   };
+}
+
+/** Lower-cased UUID text, or `undefined` when the value is absent or invalid. */
+function normalizeUuid(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return z.uuid().safeParse(normalized).success ? normalized : undefined;
 }
 
 /** One sentence per failure, safe to print in a workflow log. */
@@ -257,12 +386,18 @@ export const guardFailureText: Record<GuardFailure, string> = {
   OPERATOR_ALLOWLIST_INVALID:
     "PONTE_DB_OPERATORS is missing, empty, or not a comma-separated list of GitHub logins.",
   UNKNOWN_OPERATION:
-    "Unknown operation. Choose migrate, business-bootstrap, demo-bootstrap, or verify.",
+    "Unknown operation. Choose migrate, business-bootstrap, demo-bootstrap, demo-verify, or verify.",
   INVALID_BUSINESS_ID: "business_id must be a UUID.",
   INVALID_BUSINESS_NAME:
     "business_name must be 2-80 characters of letters, digits, spaces, and . , & ' ( ) - / with no surrounding whitespace.",
+  ADMIN_BUSINESS_INVALID:
+    "PONTE_AUTH_BUSINESS_ID is set but is not a UUID; fix the repository variable before dispatching.",
   BUSINESS_ID_MATCHES_ADMIN:
-    "business_id must differ from PONTE_AUTH_BUSINESS_ID.",
+    "business_id must differ from PONTE_AUTH_BUSINESS_ID; the demo tenant and the administrator tenant are always distinct.",
+  BUSINESS_ID_DOES_NOT_MATCH_ADMIN:
+    "business-bootstrap must use exactly PONTE_AUTH_BUSINESS_ID; otherwise the deployed service would point at a tenant that was never created. Use demo-bootstrap for the synthetic demo tenant.",
+  DEMO_BUSINESS_ID_MISMATCH:
+    "business_id must equal the configured PONTE_PUBLIC_DEMO_BUSINESS_ID when that variable is set; the demo tenant in the database and the one the service is told to show must agree.",
   BUSINESS_ID_IN_RESERVED_RANGE:
     "business_id falls in a reserved or placeholder range. Local seed and demonstration identifiers cannot be used here.",
   CONFIRMATION_MISSING:

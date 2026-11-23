@@ -36,6 +36,10 @@ name: Manual database operations
 on:
   workflow_dispatch:
     inputs:
+      # The order below is the documented seed sequence: verify (a fresh
+      # database reports "not yet applied" and writes nothing), migrate, verify
+      # again, business-bootstrap, demo-bootstrap, demo-verify, and only then a
+      # manual environment change on the host to enable the public demo.
       operation:
         description: Ordered operation to run
         required: true
@@ -45,18 +49,19 @@ on:
           - migrate
           - business-bootstrap
           - demo-bootstrap
+          - demo-verify
       business_id:
-        description: Tenant UUID (business-bootstrap / demo-bootstrap only)
+        description: Tenant UUID (business-bootstrap / demo-bootstrap / demo-verify only)
         required: false
         type: string
         default: ""
       business_name:
-        description: Tenant display name (business-bootstrap / demo-bootstrap only)
+        description: Tenant display name (business-bootstrap / demo-bootstrap / demo-verify only)
         required: false
         type: string
         default: ""
       confirmation:
-        description: "Type APPLY <operation> for mutating operations; leave empty for verify"
+        description: "Type APPLY <operation> for migrate, business-bootstrap and demo-bootstrap; leave empty for verify and demo-verify"
         required: false
         type: string
         default: ""
@@ -133,14 +138,31 @@ jobs:
           PONTE_DB_OPS_BUSINESS_NAME: ${{ inputs.business_name }}
           PONTE_DB_OPS_CONFIRMATION: ${{ inputs.confirmation }}
           PONTE_AUTH_BUSINESS_ID: ${{ vars.PONTE_AUTH_BUSINESS_ID }}
+          # Only used to reject a demo UUID that disagrees with the value the
+          # service is configured to show. It is never read on a mutating path
+          # before validation has passed.
+          PONTE_PUBLIC_DEMO_BUSINESS_ID: ${{ vars.PONTE_PUBLIC_DEMO_BUSINESS_ID }}
         run: npm run db:ops:validate
 
       - name: Run database operation
         env:
           # The direct (non-pooler) Neon endpoint. This secret is never given to
           # the Render service; the runtime uses the pooled endpoint instead.
+          # It reaches this step's environment only, and only after the guard
+          # above has accepted the actor, ref, operation and inputs.
           DATABASE_URL: ${{ secrets.PONTE_DATABASE_URL_DIRECT }}
+          # Set explicitly so the provisioning modules' own production
+          # preflights (NODE_ENV, non-loopback URL, no local-only settings)
+          # run under the same conditions as the deployed service.
+          NODE_ENV: production
           PONTE_AUTH_BUSINESS_ID: ${{ vars.PONTE_AUTH_BUSINESS_ID }}
+          PONTE_PUBLIC_DEMO_BUSINESS_ID: ${{ vars.PONTE_PUBLIC_DEMO_BUSINESS_ID }}
+          # Deliberately pinned to the disabled state. Provisioning happens
+          # before the demo is enabled; `demo-verify` accepts either value.
+          # Enabling the demo is a manual change on the host, never a workflow
+          # side effect. GitHub cannot read Render's environment, so this
+          # variable is an operator mirror that must be kept consistent with it.
+          PONTE_PUBLIC_DEMO_READ_ONLY: ${{ vars.PONTE_PUBLIC_DEMO_READ_ONLY }}
           PONTE_DB_OPS_EVENT_NAME: ${{ github.event_name }}
           PONTE_DB_OPS_REF: ${{ github.ref }}
           PONTE_DB_OPS_ACTOR: ${{ github.actor }}

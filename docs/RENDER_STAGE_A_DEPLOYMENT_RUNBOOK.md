@@ -203,18 +203,26 @@ never the private administrator business and never contains real activity.
 Complete this section only after §7 succeeds. The exact order matters:
 
 1. **Migrations complete** (`npm run db:migrate` finished successfully).
-2. **Private administrator business bootstrapped** (§7).
+2. **Private administrator business bootstrapped** (§7) with exactly the UUID in
+   `PONTE_AUTH_BUSINESS_ID`.
 3. **Synthetic demo content provisioned** with the command below, while
    `PONTE_PUBLIC_DEMO_READ_ONLY` is still unset or `0`.
-4. **Demo records verified** (read-only `--verify`, plus the SQL checks below).
+4. **Demo records verified.** Either the read-only `--verify` form below, or the
+   `demo-verify` operation of the manual workflow when the paid shell is not
+   available (Part 2, §20 step 6). Both check the same rows through the same
+   function.
 5. **`PONTE_PUBLIC_DEMO_READ_ONLY=1`** set in Render.
 6. **`PONTE_PUBLIC_DEMO_BUSINESS_ID`** set to the same demo UUID.
 7. **Confirm the demo UUID differs from `PONTE_AUTH_BUSINESS_ID`.** The
    application refuses a configuration where they are equal.
 8. **Deploy/restart** the web service so the new environment is loaded.
-9. **Test with an unprivileged GitHub account** that has never signed in.
-10. **Confirm the viewer can read demo content but cannot mutate it or reach the
-    private business.**
+9. **Re-run the read-only verification** (`demo-verify`, or the `--verify` form
+   below) against the enabled service configuration. It is designed to work after
+   the flag is on.
+10. **Test with an unprivileged GitHub account** that has never signed in.
+11. **Confirm the viewer can read demo content but cannot mutate it or reach the
+    private business.** That first sign-in legitimately creates one membership in
+    the demo tenant; a membership count of one per viewer is expected.
 
 ### Provision
 
@@ -255,6 +263,14 @@ npm run db:bootstrap-public-demo -- \
   --business-id "<DEMO_BUSINESS_UUID>" \
   --business-name "<DEMO_BUSINESS_NAME>"
 ```
+
+On the free path there is no shell, so the equivalent is the `demo-verify`
+operation of the manual workflow. It is read-only, needs no confirmation phrase,
+refuses a demo UUID equal to `PONTE_AUTH_BUSINESS_ID`, refuses a UUID that
+disagrees with a configured `PONTE_PUBLIC_DEMO_BUSINESS_ID`, and also asserts
+that no simulated settlement has a transaction hash and that no demo tenant owns
+an evidence or outbox record. It reports a membership count only for the demo
+UUID it was given.
 
 ### What the demo contains
 
@@ -595,7 +611,9 @@ In **Settings → Secrets and variables → Actions**:
 | Name | Example placeholder | Purpose |
 | --- | --- | --- |
 | `PONTE_DB_OPERATORS` | `octocat,release-manager` | Comma-separated GitHub logins allowed to dispatch |
-| `PONTE_AUTH_BUSINESS_ID` | `<private-business-uuid>` | The private administrator tenant |
+| `PONTE_AUTH_BUSINESS_ID` | `<private-business-uuid>` | The private administrator tenant. `business-bootstrap` must name exactly this UUID. |
+| `PONTE_PUBLIC_DEMO_BUSINESS_ID` | `<demo-business-uuid>` | The synthetic demo tenant. Both demo operations must name exactly this UUID when it is set. Optional before the demo exists. |
+| `PONTE_PUBLIC_DEMO_READ_ONLY` | `0` (leave unset until §21) | **A mirror, not a source of truth.** GitHub cannot read Render's environment. Set it to the same value the service runs with, and change it at the same time you change the service; a drift is refused with `DEMO_CONFIG_MISMATCH`/`DEMO_ALREADY_ENABLED` rather than silently ignored. |
 
 **Secrets:**
 
@@ -606,6 +624,16 @@ In **Settings → Secrets and variables → Actions**:
 `PONTE_DB_OPERATORS` is the authorization boundary. A login not on the list
 fails the first workflow step, and the same check runs again inside the CLI.
 Keep it to the smallest set of people who may change production data.
+
+`PONTE_AUTH_BUSINESS_ID` is a *requirement*, not a hint: `business-bootstrap`
+refuses any UUID that differs from it, so the tenant the service authenticates
+against is always the tenant that exists. The first bootstrap may run before the
+variable is set — the operation then prints a note telling you to set it to the
+UUID you just created.
+
+The two demo variables describe a flag that lives on the host. Nothing in this
+repository reads Render's environment, and nothing here writes it. Keep the
+mirror equal to the service configuration; §21 changes both together, by hand.
 
 ## 18. Step 4 — Create the Render Free web service
 
@@ -651,8 +679,8 @@ Set these in **Render → Environment**. Mark every secret as a secret.
 | `AUTH_GITHUB_SECRET` | GitHub OAuth App client secret |
 | `PONTE_AUTH_BUSINESS_ID` | `<private-business-uuid>` (same as the repo variable) |
 | `PONTE_AUTH_ADMIN_GITHUB_IDS` | Comma-separated numeric GitHub **user ids** |
-| `PONTE_PUBLIC_DEMO_READ_ONLY` | **omit** until §23 |
-| `PONTE_PUBLIC_DEMO_BUSINESS_ID` | **omit** until §23 |
+| `PONTE_PUBLIC_DEMO_READ_ONLY` | **omit** until §21 |
+| `PONTE_PUBLIC_DEMO_BUSINESS_ID` | **omit** until §21 |
 
 Notes:
 
@@ -665,7 +693,7 @@ Notes:
   `/api/health/ready` returns `503` with no diagnostic detail. The reason code
   appears once in the service log at pool creation.
 
-## 20. Step 6 — Seed order: migrate, private business, demo, verify
+## 20. Step 6 — Seed order: verify, migrate, verify, private business, demo, demo-verify
 
 Run these in order from **Actions → Manual database operations → Run workflow**
 after §16 is complete. Concurrency is locked per repository, so a second run
@@ -675,34 +703,70 @@ waits for the first instead of interleaving.
 | --- | --- | --- | --- | --- |
 | 1 | `verify` | *(empty)* | *(empty)* | *(empty)* |
 | 2 | `migrate` | *(empty)* | *(empty)* | `APPLY migrate` |
-| 3 | `business-bootstrap` | `<private-business-uuid>` | `<private-business-name>` | `APPLY business-bootstrap` |
-| 4 | `demo-bootstrap` | `<demo-business-uuid>` | `<demo-business-name>` | `APPLY demo-bootstrap` |
-| 5 | `verify` | *(empty)* | *(empty)* | *(empty)* |
+| 3 | `verify` | *(empty)* | *(empty)* | *(empty)* |
+| 4 | `business-bootstrap` | `<private-business-uuid>` | `<private-business-name>` | `APPLY business-bootstrap` |
+| 5 | `demo-bootstrap` | `<demo-business-uuid>` | `<demo-business-name>` | `APPLY demo-bootstrap` |
+| 6 | `demo-verify` | `<demo-business-uuid>` | `<demo-business-name>` | *(empty)* |
+| 7 | *(manual, not a workflow run)* enable the public demo — see §21 |
 
 What each run does:
 
-1. **`verify`** — read-only. Confirms connectivity, shows recorded migrations
-   and which, if any, are pending. Expect "pending" on a new database.
+1. **`verify` (before `migrate`)** — read-only. On a brand-new Neon project the
+   `schema_migrations` table does not exist yet. That is a normal state, not a
+   failure: the operation reports "this database has never been migrated", says
+   that **all** migrations on disk are pending (naming each one), and writes
+   nothing. It does not raise `42P01`. A genuine connection failure still fails.
 2. **`migrate`** — applies `migrations/001…006` forward, inside one transaction,
    under a transaction-scoped advisory lock. Re-running is a no-op. It never
    seeds, resets, truncates, or drops.
-3. **`business-bootstrap`** — creates exactly one business row. It creates **no
+3. **`verify` (after `migrate`)** — read-only. Confirms the schema is current and
+   reports that no settlement carries a transaction hash and that no evidence or
+   outbox record exists. It deliberately makes **no** membership claim: a real
+   viewer's first sign-in legitimately creates one, and `verify` has not been
+   told which tenant to look at. Membership is checked by `demo-verify`, against
+   the tenant named on that dispatch.
+4. **`business-bootstrap`** — creates exactly one business row. It creates **no
    user and no membership**. Administrator access is granted later by the first
    GitHub sign-in from an allow-listed account.
-4. **`demo-bootstrap`** — inserts the deterministic synthetic demo tenant
+   **`business_id` must equal `PONTE_AUTH_BUSINESS_ID`** when that variable is
+   set; a different UUID is refused with `BUSINESS_ID_DOES_NOT_MATCH_ADMIN`,
+   because the deployed service would otherwise point at a tenant that was never
+   created. If the variable is not set yet, the run is allowed and prints a note
+   telling you to set it to the UUID you just created.
+5. **`demo-bootstrap`** — inserts the deterministic synthetic demo tenant
    (`6` invoices, `2` quotes, `3` payments, `2` settlements). Re-running verifies
    instead of inserting. A drift in any row raises `CONFLICT` and rolls back.
-   It refuses to run while `PONTE_PUBLIC_DEMO_READ_ONLY=1`.
-5. **`verify`** — read-only. Confirms the schema is current and reports tenant
-   and synthetic-user counts.
+   Its UUID must differ from `PONTE_AUTH_BUSINESS_ID` (refused:
+   `BUSINESS_ID_MATCHES_ADMIN`) and, when `PONTE_PUBLIC_DEMO_BUSINESS_ID` is
+   set, it must equal it (refused: `DEMO_BUSINESS_ID_MISMATCH`). It refuses to
+   run while `PONTE_PUBLIC_DEMO_READ_ONLY=1`.
+6. **`demo-verify`** — read-only, and the step that runs *after* the demo is
+   enabled as well as before. It re-reads the same six invoices and their quotes,
+   payments and settlements exactly, confirms that no simulated settlement has a
+   transaction hash, and confirms that no evidence or outbox record is attached
+   to that tenant. It writes nothing, never flips the demo flag, and reports a
+   membership count **only** for the tenant named on the dispatch. It takes no
+   confirmation phrase; supplying one is refused as unexpected input.
 
 Inputs are validated before the database secret is placed in the job
 environment: a wrong actor, a non-`main` ref, a malformed UUID, a name with
-shell metacharacters, or a missing confirmation phrase fails in seconds.
+shell metacharacters, or a missing confirmation phrase fails in seconds. The
+operating step then re-applies the provisioning modules' own production
+preflights — `NODE_ENV=production`, a non-loopback URL, verified TLS, no
+local-only development or evidence settings, private/demo UUID consistency —
+before any database connection is opened.
+
+**The demo flag is mirrored, not read.** The workflow reads
+`PONTE_PUBLIC_DEMO_READ_ONLY` and `PONTE_PUBLIC_DEMO_BUSINESS_ID` from
+repository **variables**. GitHub cannot read the host's environment, so those
+variables are an operator-maintained copy: keep them equal to what the service
+is actually running with. A drift shows up as a `DEMO_CONFIG_MISMATCH` or
+`DEMO_ALREADY_ENABLED` refusal rather than a silent difference. Leave
+`PONTE_PUBLIC_DEMO_READ_ONLY` unset (or `0`) while provisioning.
 
 ## 21. Step 7 — Enable the public demo, then deploy
 
-Only after §20 step 4 succeeds **and** §20 step 5 passes:
+Only after §20 step 5 succeeds **and** §20 step 6 (`demo-verify`) passes:
 
 1. In Render → Environment, set:
    - `PONTE_PUBLIC_DEMO_READ_ONLY=1`
@@ -864,3 +928,138 @@ require running the services, which this phase does not do.
 6. **OAuth App creation.** The callback URL depends on the final
    `onrender.com` hostname, which does not exist until the service is created.
    Create the OAuth App after step §18.
+
+## 27. Hosting reassessment: Render Free vs Vercel Hobby (research only)
+
+This section records a comparison performed in Phase 1.3.9.1. **Nothing here is
+implemented.** No Vercel-specific code exists, no project was created, and no
+deployment was attempted. Treat the choice as open until the operator records a
+decision.
+
+### 27.1 The question that decides it: is PONTE's hosting commercial?
+
+Vercel's Terms of Service §4 says: *"You shall only use the Services under a
+Hobby plan for your personal or non-commercial use."* The Fair Use Guidelines
+state that *"Hobby teams are restricted to non-commercial personal use only"*
+and define commercial as *"any Deployment that is used for the purpose of
+financial gain of anyone involved in any part of the production of the
+project"*, including a paid developer writing the code. Vercel may *"disable or
+remove any Project or website deployment on the Hobby plan with or without
+notice at our sole discretion."*
+
+Render's Terms of Service contain no equivalent restriction.
+
+PONTE as it stands is a personal hackathon/demonstration project with a
+**fabricated** demo tenant: no payments are taken, no product is sold, no ads or
+affiliate links exist, and no one is paid to build it. On that reading it is
+plausibly personal and non-commercial. Two caveats must be stated rather than
+resolved here:
+
+- If PONTE is presented as a company, a commercial product, or a startup seeking
+  customers, it is commercial and Hobby is not available at $0.
+- Vercel, not the operator, decides borderline cases. This document does not
+  assert that Hobby use is permitted; it records the text and the risk.
+
+**This restriction is the decisive difference.** Render is $0 with no
+commercial-use condition; Vercel Hobby is $0 only while the project stays
+personal and non-commercial.
+
+### 27.2 Render Free + Neon Free: reviewed limits
+
+Already recorded in §13. The two facts that matter for this decision:
+
+- **Service-initiated traffic.** Render may suspend a free service that starts
+  an uncommonly high volume of outbound traffic, and its own examples include
+  *accessing an external database*. Restoration requires a paid plan. PONTE fits
+  the shape that could trigger it (an external Neon database on every request),
+  so this is **neither guaranteed nor impossible**: it is an unspecified
+  threshold, not a quota. No configuration removes it while the database is
+  external, and it cannot be metered in advance. Keeping request volume and
+  query count low reduces exposure but does not eliminate it.
+- **750 instance-hours.** One always-awake service is ~744 hours. The service
+  sleeps after 15 idle minutes, which is what keeps it under the ceiling, and
+  that sleep also costs a ~1-minute wake on the first visit.
+
+### 27.3 Vercel Hobby + Neon Free: reviewed limits
+
+| Dimension | What the provider documents | Consequence for PONTE |
+| --- | --- | --- |
+| Commercial use | Personal, non-commercial only (ToS §4, Fair Use) | Blocks any commercial use at $0 |
+| Function invocations | 1,000,000 / month | Far above a demo |
+| Active CPU | 4 CPU-hours / month | Idle-in-I/O pages cost little; a demo fits |
+| Provisioned memory | 360 GB-hours / month | Generous for a small app |
+| Function duration | 300 s max (Hobby), memory 2 GB | PONTE's slowest route is a DB query, not a 300 s job |
+| Function regions | **Single region** on Hobby | Must equal the Neon region to avoid cross-Atlantic latency |
+| Builds | Basic machine, 2 vCPU / 8 GB, **1 concurrent** deployment | Adequate; serialised builds |
+| Framework | Next.js App Router is first-class; PONTE is App Router | No framework work |
+| Node.js | 24.x and 26.x available; 26.x is default | PONTE pins 24.22.1 locally; set `engines` or project setting to 24.x |
+| Overages | Hobby is **paused**; no pay-as-you-go | A cap stops the site instead of billing |
+
+**Region.** Neon Frankfurt is `aws-eu-central-1`. Vercel's matching compute
+region is `fra1`. Left at the default `iad1` (Washington D.C.), every database
+round trip crosses the Atlantic twice. A Vercel deployment would therefore pin
+`regions: ["fra1"]`. This is a configuration change, not code.
+
+**Node 24.22.1.** Vercel exposes only major versions and rolls minor/patch
+updates itself. 24.x is available, so `24.x` (via `engines`) or the project
+Node setting reproduces the local runtime's major version; the exact patch
+`24.22.1` cannot be pinned on Vercel, unlike Render's `NODE_VERSION`.
+
+**Connections and pooling.** Vercel Functions use Fluid compute by default,
+which reuses a warm instance for concurrent invocations. Vercel's own guidance
+is to create the `pg` pool at module scope and register it with
+`attachDatabasePool` from `@vercel/functions`, which keeps the instance alive
+just long enough to close idle connections before suspension — without it,
+suspended instances hold sockets open ("phantom pool usage"). Vercel advises
+*against* a pool maximum of 1 on Fluid compute because one instance serves
+several invocations. Neon's guidance for elastic platforms is a local pool of
+1–2 per instance behind its PgBouncer `-pooler` endpoint, which accepts up to
+10,000 client connections and multiplexes them. The **smallest safe pool** for
+PONTE is therefore `max: 2` with a short `idleTimeoutMillis` (≈5 s) plus
+`attachDatabasePool`, on the pooled endpoint — not `max: 1`.
+
+A Vercel-specific database runtime mode is **not required**: PONTE's runtime
+policy already demands the `-pooler` hostname and `sslmode=verify-full`, which is
+exactly Neon's recommended shape. What would be Vercel-specific is the single
+`attachDatabasePool(pool)` call and the extra dependency; that is the code this
+phase deliberately does not write.
+
+**Migrations.** Unchanged and host-independent. GitHub Actions would keep using
+the direct Neon endpoint from the `PONTE_DATABASE_URL_DIRECT` secret; Vercel
+never receives that secret, and the deployed service never runs DDL. The whole
+§20 sequence works as-is.
+
+### 27.4 A third option, considered and not recommended
+
+Cloudflare Workers/Pages (free tier, no non-commercial clause) would require
+adopting a Workers-compatible Next.js adapter and Hyperdrive, i.e. materially
+more change than either option above for no benefit a demo needs. Not adopted.
+
+### 27.5 Recommendation
+
+**Recommended: Render Free web service + Neon Free PostgreSQL (Option A),** on
+these grounds:
+
+1. It is $0 with **no commercial-use restriction**, so the hosting choice does
+   not constrain what PONTE may become.
+2. It needs **no new runtime code**: the pooled-endpoint policy, the direct
+   administrative endpoint, and the single shared pool already exist and are
+   tested. Vercel would need `attachDatabasePool`, an extra dependency, and a
+   region pin.
+3. The migration path (§20) already assumes it and is fully tested.
+4. Its structural risk — the unspecified service-initiated-traffic threshold —
+   is a **risk of suspension at an unknown threshold**, not a licence problem,
+   and a small demo plausibly stays under it while remaining explicitly
+   unguaranteed.
+
+**Fallback: Vercel Hobby + Neon Free (Option B),** only if the operator is
+satisfied that PONTE is and will remain personal and non-commercial. It removes
+the Render traffic-threshold risk and the 15-minute idle sleep, at the cost of
+the commercial-use restriction and a small amount of Vercel-specific code
+(`attachDatabasePool`, `regions: ["fra1"]`, Node 24 pinning). Should the project
+ever become commercial, this option's $0 availability ends and the host must
+change or move to a paid plan — which the zero-cost constraint forbids.
+
+**No provider was contacted, no account was created, and no deployment was
+attempted for this comparison.** Every figure above is quoted from provider
+documentation dated 2026-11; none is a measurement of PONTE on either host.

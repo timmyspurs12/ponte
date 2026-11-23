@@ -26,6 +26,13 @@ export type ProductionBusinessBootstrapInput = z.infer<
 export class ProductionBusinessBootstrapError extends Error {
   constructor(
     public readonly code: "INVALID_INPUT" | "REFUSED" | "CONFLICT" | "FAILED",
+    /**
+     * Optional non-secret rule name (e.g. `NOT_PRODUCTION`). The CLI maps it to
+     * a sentence; the value is never an environment value, URL, or driver
+     * message. Existing callers keep passing only the code.
+     */
+    public readonly reason?:
+      "NOT_PRODUCTION" | "LOCAL_PROVIDER" | "LOCAL_DATABASE",
   ) {
     super(code);
     this.name = "ProductionBusinessBootstrapError";
@@ -36,8 +43,10 @@ function invalidInput(): never {
   throw new ProductionBusinessBootstrapError("INVALID_INPUT");
 }
 
-function refused(): never {
-  throw new ProductionBusinessBootstrapError("REFUSED");
+function refused(
+  reason?: "NOT_PRODUCTION" | "LOCAL_PROVIDER" | "LOCAL_DATABASE",
+): never {
+  throw new ProductionBusinessBootstrapError("REFUSED", reason);
 }
 
 function failed(): never {
@@ -98,12 +107,12 @@ export function parseProductionBusinessBootstrapArguments(
 export function assertProductionBusinessBootstrapEnvironment(
   environment: Record<string, string | undefined>,
 ): string {
-  if (environment.NODE_ENV !== "production") return refused();
+  if (environment.NODE_ENV !== "production") return refused("NOT_PRODUCTION");
   if (localOnlyEnvironmentNames.some((name) => environment[name] !== undefined))
-    return refused();
+    return refused("LOCAL_PROVIDER");
 
   const connectionString = environment.DATABASE_URL;
-  if (!connectionString) return refused();
+  if (!connectionString) return refused("LOCAL_DATABASE");
   try {
     const databaseUrl = new URL(connectionString);
     if (
@@ -111,10 +120,10 @@ export function assertProductionBusinessBootstrapEnvironment(
       !databaseUrl.hostname ||
       localDatabaseHosts.has(databaseUrl.hostname)
     ) {
-      return refused();
+      return refused("LOCAL_DATABASE");
     }
   } catch {
-    return refused();
+    return refused("LOCAL_DATABASE");
   }
   return connectionString;
 }

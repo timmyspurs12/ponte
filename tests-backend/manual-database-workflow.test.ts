@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import {
   APPROVED_REF,
   DATABASE_OPERATIONS,
+  isReadOnlyOperation,
+  MUTATING_OPERATIONS,
   expectedConfirmation,
   guardFailureText,
   guardOperation,
@@ -54,6 +56,8 @@ const workflow = yaml.load(workflowSource) as {
 const tenantId = "8a1f3d62-6c4b-4c1e-9f3d-2b7c5a0e4d18";
 const otherTenantId = "c73f9a10-2b64-4f8e-8a51-6d0c9e2b7f34";
 const administratorId = "1d2e3f40-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+const demoId = "5b0c7d84-9e21-4f3a-8c6d-1a2b3c4d5e6f";
+const otherDemoId = "9f4e2d10-6b8c-4a7e-b3d1-0c2e5f7a9b13";
 
 const base = (overrides: Partial<GuardInput> = {}): GuardInput => ({
   eventName: "workflow_dispatch",
@@ -65,6 +69,7 @@ const base = (overrides: Partial<GuardInput> = {}): GuardInput => ({
   businessName: "",
   confirmation: "",
   administratorBusinessId: administratorId,
+  demoBusinessId: undefined,
   ...overrides,
 });
 
@@ -74,28 +79,234 @@ const reason = (overrides: Partial<GuardInput>) => {
   return (result as { ok: false; failure: string }).failure;
 };
 
-test("every operation is accepted with its own confirmation phrase", () => {
+/**
+ * Per-operation tenant inputs. The two bootstraps and `demo-verify` name a
+ * tenant; `verify` and `migrate` do not.
+ */
+const tenantInput = (operation: string) =>
+  operation === "business-bootstrap"
+    ? { businessId: administratorId, businessName: "Acme Comércio Ltda" }
+    : operation === "demo-bootstrap" || operation === "demo-verify"
+      ? { businessId: demoId, businessName: "PONTE Public Demo" }
+      : { businessId: "", businessName: "" };
+
+test("every operation is accepted under the documented rules", () => {
+  assert.deepEqual(
+    [...DATABASE_OPERATIONS],
+    [
+      "verify",
+      "migrate",
+      "business-bootstrap",
+      "demo-bootstrap",
+      "demo-verify",
+    ],
+  );
+  assert.deepEqual(
+    [...MUTATING_OPERATIONS],
+    ["migrate", "business-bootstrap", "demo-bootstrap"],
+  );
   for (const operation of DATABASE_OPERATIONS) {
-    const mutation = operation !== "verify";
+    const readOnly = isReadOnlyOperation(operation);
     const result = guardOperation(
       base({
         operation,
-        businessId:
-          operation === "business-bootstrap" || operation === "demo-bootstrap"
-            ? tenantId
-            : "",
-        businessName:
-          operation === "business-bootstrap" || operation === "demo-bootstrap"
-            ? "Acme Comércio Ltda"
-            : "",
-        confirmation: mutation ? expectedConfirmation(operation) : "",
+        ...tenantInput(operation),
+        confirmation: readOnly ? "" : expectedConfirmation(operation),
       }),
     );
     assert.equal(result.ok, true, `${operation} should be accepted`);
     if (!result.ok) continue;
     assert.equal(result.operation.operation, operation);
-    assert.equal(result.operation.readOnly, operation === "verify");
+    assert.equal(result.operation.readOnly, readOnly);
   }
+});
+
+test("the documented private bootstrap succeeds with the matching UUID", () => {
+  // This is the sequence the runbook prescribes: set PONTE_AUTH_BUSINESS_ID to
+  // the private UUID, then bootstrap exactly that UUID.
+  const result = guardOperation(
+    base({
+      operation: "business-bootstrap",
+      businessId: administratorId,
+      businessName: "Acme Comércio Ltda",
+      confirmation: "APPLY business-bootstrap",
+    }),
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.operation.businessId, administratorId);
+  // The result is echoed back upper/lower-normalized, so an operator who pasted
+  // an upper-case UUID still targets the same row.
+  const upper = guardOperation(
+    base({
+      operation: "business-bootstrap",
+      businessId: administratorId.toUpperCase(),
+      businessName: "Acme Comércio Ltda",
+      confirmation: "APPLY business-bootstrap",
+    }),
+  );
+  assert.equal(upper.ok, true);
+  if (upper.ok) assert.equal(upper.operation.businessId, administratorId);
+});
+
+test("a private bootstrap that does not match PONTE_AUTH_BUSINESS_ID is refused", () => {
+  assert.equal(
+    reason({
+      operation: "business-bootstrap",
+      businessId: tenantId,
+      businessName: "Acme Comércio Ltda",
+      confirmation: "APPLY business-bootstrap",
+    }),
+    "BUSINESS_ID_DOES_NOT_MATCH_ADMIN",
+  );
+  // A malformed configured value is a configuration error, not a permission to
+  // create an arbitrary tenant.
+  assert.equal(
+    reason({
+      operation: "business-bootstrap",
+      businessId: tenantId,
+      businessName: "Acme Comércio Ltda",
+      confirmation: "APPLY business-bootstrap",
+      administratorBusinessId: "not-a-uuid",
+    }),
+    "ADMIN_BUSINESS_INVALID",
+  );
+  // With nothing configured the row is created first and the variable set
+  // afterwards; that is allowed, and flagged so the caller can print a warning.
+  const unconfigured = guardOperation(
+    base({
+      operation: "business-bootstrap",
+      businessId: tenantId,
+      businessName: "Acme Comércio Ltda",
+      confirmation: "APPLY business-bootstrap",
+      administratorBusinessId: undefined,
+    }),
+  );
+  assert.equal(unconfigured.ok, true);
+  if (unconfigured.ok)
+    assert.equal(unconfigured.operation.administratorUnconfigured, true);
+});
+
+test("a demo bootstrap targeting the private business is rejected", () => {
+  assert.equal(
+    reason({
+      operation: "demo-bootstrap",
+      businessId: administratorId,
+      businessName: "PONTE Public Demo",
+      confirmation: "APPLY demo-bootstrap",
+    }),
+    "BUSINESS_ID_MATCHES_ADMIN",
+  );
+  // `demo-verify` is read-only, but the same refusal applies: verifying the
+  // private tenant as if it were the demo would be misleading, not harmless.
+  assert.equal(
+    reason({
+      operation: "demo-verify",
+      businessId: administratorId,
+      businessName: "PONTE Public Demo",
+    }),
+    "BUSINESS_ID_MATCHES_ADMIN",
+  );
+  assert.equal(
+    guardOperation(
+      base({
+        operation: "demo-bootstrap",
+        businessId: demoId,
+        businessName: "PONTE Public Demo",
+        confirmation: "APPLY demo-bootstrap",
+      }),
+    ).ok,
+    true,
+  );
+});
+
+test("a configured demo UUID must match the dispatched one", () => {
+  for (const operation of ["demo-bootstrap", "demo-verify"] as const) {
+    const confirmation =
+      operation === "demo-bootstrap" ? "APPLY demo-bootstrap" : "";
+    assert.equal(
+      reason({
+        operation,
+        businessId: demoId,
+        businessName: "PONTE Public Demo",
+        confirmation,
+        demoBusinessId: otherDemoId,
+      }),
+      "DEMO_BUSINESS_ID_MISMATCH",
+      operation,
+    );
+    assert.equal(
+      reason({
+        operation,
+        businessId: demoId,
+        businessName: "PONTE Public Demo",
+        confirmation,
+        demoBusinessId: "not-a-uuid",
+      }),
+      "DEMO_BUSINESS_ID_MISMATCH",
+      operation,
+    );
+    // Matching values are accepted, and the "unconfigured" note disappears.
+    const matched = guardOperation(
+      base({
+        operation,
+        businessId: demoId,
+        businessName: "PONTE Public Demo",
+        confirmation,
+        demoBusinessId: demoId,
+      }),
+    );
+    assert.equal(matched.ok, true, operation);
+    if (matched.ok)
+      assert.equal(matched.operation.demoBusinessIdUnconfigured, undefined);
+    // No repository variable yet: the dispatch input is the only source.
+    const unset = guardOperation(
+      base({
+        operation,
+        businessId: demoId,
+        businessName: "PONTE Public Demo",
+        confirmation,
+      }),
+    );
+    assert.equal(unset.ok, true, operation);
+    if (unset.ok)
+      assert.equal(unset.operation.demoBusinessIdUnconfigured, true);
+  }
+});
+
+test("demo-verify is read-only and takes no mutation confirmation", () => {
+  assert.equal(
+    reason({
+      operation: "demo-verify",
+      businessId: demoId,
+      businessName: "PONTE Public Demo",
+      confirmation: "APPLY demo-verify",
+    }),
+    "UNEXPECTED_INPUT",
+  );
+  assert.equal(
+    reason({ operation: "demo-verify", businessId: "", businessName: "" }),
+    "INVALID_BUSINESS_ID",
+  );
+  assert.equal(
+    reason({
+      operation: "demo-verify",
+      businessId: demoId,
+      businessName: "",
+    }),
+    "INVALID_BUSINESS_NAME",
+  );
+  // It works whether or not the demo flag is on: the flag is not a guard input.
+  const enabled = guardOperation(
+    base({
+      operation: "demo-verify",
+      businessId: demoId,
+      businessName: "PONTE Public Demo",
+      demoBusinessId: demoId,
+    }),
+  );
+  assert.equal(enabled.ok, true);
+  if (enabled.ok) assert.equal(enabled.operation.readOnly, true);
 });
 
 test("only a main-branch manual dispatch is accepted", () => {
@@ -190,10 +401,26 @@ test("tenant identifiers are validated before any database work", () => {
     });
   assert.equal(confirmed({ businessId: "not-a-uuid" }), "INVALID_BUSINESS_ID");
   assert.equal(confirmed({ businessId: "" }), "INVALID_BUSINESS_ID");
+  // The private tenant is now the *expected* value, so a different UUID is the
+  // refused case.
   assert.equal(
-    confirmed({ businessId: administratorId }),
-    "BUSINESS_ID_MATCHES_ADMIN",
+    confirmed({ businessId: tenantId }),
+    "BUSINESS_ID_DOES_NOT_MATCH_ADMIN",
   );
+  // With nothing configured, the same UUID is accepted (the variable is set
+  // after the first run) and the caller is told to do so.
+  const unconfigured = guardOperation(
+    base({
+      operation: "business-bootstrap",
+      confirmation: "APPLY business-bootstrap",
+      businessId: administratorId,
+      businessName: "Acme Comércio Ltda",
+      administratorBusinessId: undefined,
+    }),
+  );
+  assert.equal(unconfigured.ok, true);
+  if (unconfigured.ok)
+    assert.equal(unconfigured.operation.administratorUnconfigured, true);
   // The local seed / documentation placeholders are refused outright.
   assert.equal(
     confirmed({ businessId: "00000000-0000-4000-8000-000000000001" }),
@@ -222,17 +449,6 @@ test("tenant identifiers are validated before any database work", () => {
     }),
   );
   assert.equal(demo.ok, true);
-  assert.equal(
-    guardOperation(
-      base({
-        operation: "business-bootstrap",
-        confirmation: "APPLY business-bootstrap",
-        businessId: otherTenantId,
-        businessName: "Acme Comércio Ltda",
-      }),
-    ).ok,
-    true,
-  );
 });
 
 test("business names are restricted to a safe, human-readable charset", () => {
@@ -240,7 +456,7 @@ test("business names are restricted to a safe, human-readable charset", () => {
     reason({
       operation: "business-bootstrap",
       confirmation: "APPLY business-bootstrap",
-      businessId: tenantId,
+      businessId: administratorId,
       businessName,
     });
   assert.equal(name("A"), "INVALID_BUSINESS_NAME");
@@ -271,15 +487,18 @@ test("business names are restricted to a safe, human-readable charset", () => {
     "Rede A/B",
     "Empresa 42",
   ]) {
-    const result = guardOperation(
-      base({
-        operation: "business-bootstrap",
-        confirmation: "APPLY business-bootstrap",
-        businessId: tenantId,
-        businessName: accepted,
-      }),
-    );
-    assert.equal(result.ok, true, accepted);
+    for (const operation of ["business-bootstrap", "demo-bootstrap"] as const) {
+      const result = guardOperation(
+        base({
+          operation,
+          confirmation: expectedConfirmation(operation),
+          businessId:
+            operation === "business-bootstrap" ? administratorId : demoId,
+          businessName: accepted,
+        }),
+      );
+      assert.equal(result.ok, true, `${operation}: ${accepted}`);
+    }
   }
 });
 
@@ -399,6 +618,64 @@ test("forbidden database commands never appear in the workflow", () => {
     .map((step) => step.run)
     .filter((value): value is string => typeof value === "string");
   assert.equal(runs.length, 5);
+});
+
+test("the operating step runs as production with the demo mirror variables", () => {
+  const job = workflow.jobs.operate;
+  const operateStep = job.steps.find((step) =>
+    step.run?.includes("db:ops:run"),
+  );
+  assert.ok(operateStep);
+  const env = operateStep.env ?? {};
+  // NODE_ENV is set explicitly: the provisioning modules refuse a non-production
+  // runtime, and the GitHub path must exercise those same preflights.
+  assert.equal(env.NODE_ENV, "production");
+  // The demo state is an operator mirror of the host's environment. GitHub
+  // cannot read Render's variables, so this is configuration, not a probe.
+  assert.equal(
+    env.PONTE_PUBLIC_DEMO_READ_ONLY,
+    "${{ vars.PONTE_PUBLIC_DEMO_READ_ONLY }}",
+  );
+  assert.equal(
+    env.PONTE_PUBLIC_DEMO_BUSINESS_ID,
+    "${{ vars.PONTE_PUBLIC_DEMO_BUSINESS_ID }}",
+  );
+  // The workflow never writes the flag; it only reads it.
+  assert.equal(/PONTE_PUBLIC_DEMO_READ_ONLY\s*=/.test(workflowSource), false);
+  // Both tenant operations are in the closed choice list, in the documented
+  // order, and the read-only one is last.
+  const options = (
+    workflow.on.workflow_dispatch as {
+      inputs: Record<string, { options?: string[] }>;
+    }
+  ).inputs.operation.options;
+  assert.deepEqual(options, [
+    "verify",
+    "migrate",
+    "business-bootstrap",
+    "demo-bootstrap",
+    "demo-verify",
+  ]);
+});
+
+test("the operating step applies the provisioning preflights before a pool", () => {
+  const source = readFileSync("scripts/manual-database-operations.ts", "utf8");
+  const preflightCall = source.indexOf("await preflight(");
+  const poolCall = source.indexOf("new Pool(");
+  assert.ok(preflightCall > 0, "a preflight call must exist");
+  assert.ok(
+    preflightCall < poolCall,
+    "the preflight must run before the pool is created",
+  );
+  // Both provisioning modules' own environment guards are used, not re-invented.
+  assert.match(source, /assertProductionBusinessBootstrapEnvironment/);
+  assert.match(source, /assertPublicDemoBootstrapEnvironment/);
+  // `demo-verify` must be able to run after the demo is enabled, so the demo
+  // preflight receives verifyOnly for it.
+  assert.match(source, /verifyOnly/);
+  // The guard still runs first, and the secret is read only after both.
+  assert.ok(source.indexOf("guardOperation(readInputs") < preflightCall);
+  assert.ok(source.indexOf("process.env.DATABASE_URL") > preflightCall);
 });
 
 test("the workflow never enables the public demo and never edits env on Render", () => {
