@@ -111,16 +111,68 @@ test("authorized invoice reader receives the deliberate pending evidence status 
     /synthetic|real cloud kms/i,
   );
 
+  /*
+   * The response must expose no envelope, KMS, or chain field.
+   *
+   * Two checks, because a substring search alone is both too weak and too
+   * noisy:
+   *
+   * 1. JSON *keys* are compared exactly. This is the real property: no field
+   *    named `aad`, `nonce`, or `wrapped_dek` may be serialized, whatever its
+   *    value.
+   * 2. A plain substring scan is kept for the multi-word names, which cannot
+   *    appear by accident inside a hex digest.
+   *
+   * `"aad"` is deliberately in the key set and *out* of the substring set. It
+   * is three hex characters, so a random 64-char `publicEvidenceId` or
+   * `payloadHash` contains it in roughly 1.5% of runs (measured: 1.54% over
+   * 200,000 samples). That made this assertion fail intermittently for a
+   * correct response.
+   */
+  const forbiddenFieldNames = [
+    "aad",
+    "ciphertext",
+    "wrapped_dek",
+    "wrappedDek",
+    "plaintext",
+    "nonce",
+    "authentication_tag",
+    "authenticationTag",
+    "canonicalContext",
+    "canonicalcontext",
+    "kms_key_reference",
+    "kmsKeyReference",
+    "kms_key_version",
+    "kmsKeyVersion",
+    "transaction_hash",
+    "transactionHash",
+  ];
+  const fieldNames = new Set<string>();
+  const collectKeys = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) collectKeys(item);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const [key, nested] of Object.entries(value)) {
+        fieldNames.add(key);
+        collectKeys(nested);
+      }
+    }
+  };
+  collectKeys(status);
+  for (const forbidden of forbiddenFieldNames)
+    assert.equal(fieldNames.has(forbidden), false, forbidden);
+
   const serialized = JSON.stringify(status).toLowerCase();
+  // Only tokens long enough that a hex digest cannot contain them.
   for (const forbidden of [
     "ciphertext",
     "wrapped_dek",
     "wrappeddek",
     "plaintext",
-    "nonce",
     "authentication_tag",
     "authenticationtag",
-    "aad",
     "canonicalcontext",
     "kms_key_reference",
     "kmskeyreference",

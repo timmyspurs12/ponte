@@ -1,5 +1,9 @@
 import { Pool } from "pg";
 import {
+  adminDatabaseFailureText,
+  adminDatabaseTransport,
+} from "../src/server/admin-database";
+import {
   PublicDemoBootstrapError,
   bootstrapPublicDemo,
   readPublicDemoBootstrapCommand,
@@ -36,7 +40,18 @@ async function main(): Promise<void> {
   try {
     const { input, verifyOnly, connectionString } =
       readPublicDemoBootstrapCommand(process.argv.slice(2), process.env);
-    pool = new Pool({ connectionString, max: 1 });
+    // Phase 1.3.9: synthetic-demo provisioning is administrative, so it uses
+    // the direct endpoint with verified TLS. `max: 1` keeps the operator's
+    // footprint to a single slot on the smallest Neon compute.
+    const transport = adminDatabaseTransport(connectionString);
+    if (!transport.ok) {
+      console.error(
+        `Synthetic public demo provisioning refused: ${adminDatabaseFailureText[transport.failure]}`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    pool = new Pool(transport.transport);
     const result = await bootstrapPublicDemo(pool, input, { verifyOnly });
     const counts = `${result.invoices} invoices, ${result.quotes} quotes, ${result.payments} payments, ${result.settlements} settlements`;
     if (verifyOnly) console.log(`Synthetic public demo verified: ${counts}.`);

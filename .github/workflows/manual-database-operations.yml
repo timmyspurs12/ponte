@@ -1,0 +1,168 @@
+# Manual database operations for the zero-cost deployment.
+#
+# Why this file exists
+# --------------------
+# Render's Free plan provides no shell, no SSH, and no one-off jobs, so the
+# deployment has exactly one place where a migration or one-time bootstrap can
+# run: a manually dispatched GitHub Actions workflow. Everything below is
+# shaped by that constraint.
+#
+# Invocation rules (verified against GitHub Docs, 2026-11)
+# -------------------------------------------------------
+# * `workflow_dispatch` only. There is no `push`, `schedule`, `pull_request`,
+#   or `workflow_run` trigger, so an ordinary deploy never touches the
+#   database. Render's pre-deploy command is deliberately left empty for the
+#   same reason.
+# * GitHub only shows the "Run workflow" button once this file exists on the
+#   repository's **default branch** (`main`). Until an operator merges this
+#   file into `main`, it cannot be dispatched at all — including against this
+#   branch. That is a hard GitHub rule, not a choice made here.
+# * After the first run, the CLI can dispatch against another ref, so the
+#   job-level `if` re-checks `github.ref == 'refs/heads/main'`.
+#
+# Security shape
+# --------------
+# * `permissions: contents: read` and nothing else; no token is used for
+#   anything except checkout.
+# * Every database secret is scoped to the single step that needs it. The
+#   validation steps run *before* any secret exists in the job environment.
+# * Inputs reach the shell only as environment variables, never interpolated
+#   into `run:` text, so a crafted input cannot execute a command.
+# * Output is limited to module-produced lines and reason codes; the modules
+#   never print URLs, hosts, roles, or driver errors.
+
+name: Manual database operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Ordered operation to run
+        required: true
+        type: choice
+        options:
+          - verify
+          - migrate
+          - business-bootstrap
+          - demo-bootstrap
+      business_id:
+        description: Tenant UUID (business-bootstrap / demo-bootstrap only)
+        required: false
+        type: string
+        default: ""
+      business_name:
+        description: Tenant display name (business-bootstrap / demo-bootstrap only)
+        required: false
+        type: string
+        default: ""
+      confirmation:
+        description: "Type APPLY <operation> for mutating operations; leave empty for verify"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Serialize every database operation across the repository. A second dispatch
+# waits instead of interleaving DDL with a bootstrap. `cancel-in-progress` is
+# false on purpose: cancelling mid-migration is worse than waiting.
+concurrency:
+  group: ponte-manual-database-operations
+  cancel-in-progress: false
+
+jobs:
+  operate:
+    name: ${{ inputs.operation }}
+    runs-on: ubuntu-24.04
+    # Leak guard first: a non-dispatch event has no `inputs.operation`, so this
+    # evaluates to false and the job never starts. The in-job guard below
+    # repeats the check for the same reason the CLI does.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 20
+    steps:
+      - name: Refuse anything except a main-branch manual dispatch
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.actor }}
+          OPERATORS: ${{ vars.PONTE_DB_OPERATORS }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "Refused: this workflow only runs from workflow_dispatch."
+            exit 1
+          fi
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "Refused: database operations may only be dispatched from main (got $REF)."
+            exit 1
+          fi
+          if [ -z "${OPERATORS:-}" ]; then
+            echo "Refused: repository variable PONTE_DB_OPERATORS is not set."
+            exit 1
+          fi
+          # Compare case-insensitively the same way the TypeScript guard does.
+          if ! printf '%s' "$OPERATORS" | tr '[:upper:]' '[:lower:]' | tr ',' '\n' \
+              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+              | grep -Fxq -- "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')"; then
+            echo "Refused: $ACTOR is not listed in PONTE_DB_OPERATORS."
+            exit 1
+          fi
+          echo "Dispatch accepted for $ACTOR on main."
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      # Runs before the database URL is placed in the environment for the first
+      # time. Node is pinned by `.node-version` (24.22.1), which Render also
+      # honours, so operators and the runtime agree.
+      - name: Validate operation inputs
+        env:
+          PONTE_DB_OPS_EVENT_NAME: ${{ github.event_name }}
+          PONTE_DB_OPS_REF: ${{ github.ref }}
+          PONTE_DB_OPS_ACTOR: ${{ github.actor }}
+          PONTE_DB_OPERATORS: ${{ vars.PONTE_DB_OPERATORS }}
+          PONTE_DB_OPS_OPERATION: ${{ inputs.operation }}
+          PONTE_DB_OPS_BUSINESS_ID: ${{ inputs.business_id }}
+          PONTE_DB_OPS_BUSINESS_NAME: ${{ inputs.business_name }}
+          PONTE_DB_OPS_CONFIRMATION: ${{ inputs.confirmation }}
+          PONTE_AUTH_BUSINESS_ID: ${{ vars.PONTE_AUTH_BUSINESS_ID }}
+        run: npm run db:ops:validate
+
+      - name: Run database operation
+        env:
+          # The direct (non-pooler) Neon endpoint. This secret is never given to
+          # the Render service; the runtime uses the pooled endpoint instead.
+          DATABASE_URL: ${{ secrets.PONTE_DATABASE_URL_DIRECT }}
+          PONTE_AUTH_BUSINESS_ID: ${{ vars.PONTE_AUTH_BUSINESS_ID }}
+          PONTE_DB_OPS_EVENT_NAME: ${{ github.event_name }}
+          PONTE_DB_OPS_REF: ${{ github.ref }}
+          PONTE_DB_OPS_ACTOR: ${{ github.actor }}
+          PONTE_DB_OPERATORS: ${{ vars.PONTE_DB_OPERATORS }}
+          PONTE_DB_OPS_OPERATION: ${{ inputs.operation }}
+          PONTE_DB_OPS_BUSINESS_ID: ${{ inputs.business_id }}
+          PONTE_DB_OPS_BUSINESS_NAME: ${{ inputs.business_name }}
+          PONTE_DB_OPS_CONFIRMATION: ${{ inputs.confirmation }}
+        run: npm run db:ops:run
+
+      - name: Report outcome
+        if: ${{ always() }}
+        env:
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          # `inputs.operation` is a closed choice list, so printing it is safe.
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "Operation '$OPERATION' completed. Check the application's"
+            echo "/api/health/ready endpoint against the deployed service."
+          else
+            echo "Operation '$OPERATION' did not complete. Read the step above;"
+            echo "the failure text names the rule that stopped it and never"
+            echo "contains a connection string."
+          fi

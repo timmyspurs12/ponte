@@ -1,11 +1,19 @@
-import { Pool, type PoolClient, type QueryResult } from "pg";
+import type { PoolClient, QueryResult } from "pg";
 import type { Invoice, PaymentQuote, Status } from "../lib/models";
+import { pool } from "./database";
+import { EvidenceReadError } from "./evidence/errors";
 import type {
   KmsProviderIdentifier,
   WrappedDekAlgorithmIdentifier,
   WrappedDekFormatIdentifier,
 } from "./evidence/kms";
-import { EvidenceReadError } from "./evidence/errors";
+
+/**
+ * Re-exported so every existing call site (`import { pool } from
+ * "./repository"`) keeps working. The pool itself now lives in
+ * `src/server/database.ts`, where the hosted transport policy is applied.
+ */
+export { pool };
 
 /**
  * Narrow persisted invoice view for evidence preparation. `funding_minor` is
@@ -137,14 +145,6 @@ export interface InvoiceEvidenceStatusRow {
   submission_state: string | null;
 }
 
-const globalDb = globalThis as unknown as { pontePool?: Pool };
-export const pool = (globalDb.pontePool ??= new Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 5,
-  connectionTimeoutMillis: 5000,
-  statement_timeout: 10000,
-  idle_in_transaction_session_timeout: 10000,
-}));
 export async function transaction<T>(
   work: (db: PoolClient) => Promise<T>,
 ): Promise<T> {

@@ -23,7 +23,9 @@
     "db:reset": "node --env-file-if-exists=.env.local --import tsx scripts/reset-database.ts",
     "test:migrations": "node --env-file-if-exists=.env.local --import tsx scripts/test-migrations.ts",
     "db:bootstrap-business": "node --env-file-if-exists=.env.local --import tsx scripts/bootstrap-production-business.ts",
-    "db:bootstrap-public-demo": "node --env-file-if-exists=.env.local --import tsx scripts/bootstrap-public-demo.ts"
+    "db:bootstrap-public-demo": "node --env-file-if-exists=.env.local --import tsx scripts/bootstrap-public-demo.ts",
+    "db:ops:validate": "node --import tsx scripts/validate-database-operation.ts",
+    "db:ops:run": "node --import tsx scripts/manual-database-operations.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.0",
