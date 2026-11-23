@@ -18,7 +18,7 @@ Routing evidence persistence is **disabled by default**. To exercise the local-o
 
 `npm run db:migrate` is safe to repeat. To **delete all local simulation data**, run `npm run db:reset -- --confirm-local-reset`; this requires a loopback database, refuses production, and reseeds. Never point test/reset commands at valuable data. Back up a persistent database with PostgreSQL's standard tools before changing it.
 
-A distinct `npm run db:bootstrap-business -- --confirm-production --business-id "<PRIVATE_BUSINESS_UUID>" --business-name "<PRIVATE_BUSINESS_NAME>"` command is the narrowly guarded production-only initializer for one private business; it is not a seed command and refuses non-production or loopback execution. Follow the full manual order, secret handling, and first-admin procedure in [the Stage A Render runbook](docs/RENDER_STAGE_A_DEPLOYMENT_RUNBOOK.md). Do not run it against this local database.
+A distinct `npm run db:bootstrap-business -- --confirm-production --business-id "<PRIVATE_BUSINESS_UUID>" --business-name "<PRIVATE_BUSINESS_NAME>"` command is the narrowly guarded production-only initializer for one private business; it is not a seed command and refuses non-production or loopback execution. A second command, `npm run db:bootstrap-public-demo -- --confirm-production --business-id "<DEMO_BUSINESS_UUID>" --business-name "<DEMO_BUSINESS_NAME>"`, provisions the separate read-only synthetic demo tenant (six fabricated `DEMO-SYN-*` invoices, no users or memberships). Follow the full manual order, secret handling, demo enablement sequence, and first-admin procedure in [the Stage A Render runbook](docs/RENDER_STAGE_A_DEPLOYMENT_RUNBOOK.md). Do not run either command against this local database.
 
 ### Production GitHub OAuth and safety
 

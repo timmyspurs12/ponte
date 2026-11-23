@@ -200,13 +200,23 @@ export default function Ponte() {
           </header>
           <div className="demo-banner">
             <span className="live-dot" />
-            <strong>{t(readOnly ? "Read-only demo" : "Demo mode")}</strong>
+            <strong>
+              {t(
+                access?.publicDemo
+                  ? "Synthetic public demo"
+                  : readOnly
+                    ? "Read-only demo"
+                    : "Demo mode",
+              )}
+            </strong>
             <span>
               {" "}
               {t(
-                readOnly
-                  ? "You can view this synthetic demo workspace but cannot change invoices or Routing."
-                  : "Explore freely. No real funds, wallets or payment services are connected.",
+                access?.publicDemo
+                  ? "Sample invoices only. No Pix payment, wallet, KMS or blockchain transaction is connected, and viewers cannot change anything."
+                  : readOnly
+                    ? "You can view this synthetic demo workspace but cannot change invoices or Routing."
+                    : "Explore freely. No real funds, wallets or payment services are connected.",
               )}{" "}
             </span>
           </div>
@@ -259,6 +269,7 @@ export default function Ponte() {
                   notify={setToast}
                   publicPage={publicPage}
                   readOnly={readOnly}
+                  publicDemo={access?.publicDemo ?? false}
                 />
               ) : (
                 <div className="empty">
@@ -325,7 +336,13 @@ export default function Ponte() {
                     </b>{" "}
                     {t("Settled")}{" "}
                   </span>
-                  <span>{t("All figures are demo data")}</span>
+                  <span>
+                    {t(
+                      access?.publicDemo
+                        ? "All figures are synthetic sample data"
+                        : "All figures are demo data",
+                    )}
+                  </span>
                 </div>
                 <InvoiceTable invoices={invoices} />
               </>
@@ -334,6 +351,7 @@ export default function Ponte() {
                 invoices={invoices}
                 activity={activity}
                 readOnly={readOnly}
+                publicDemo={access?.publicDemo ?? false}
               />
             )}
           </main>

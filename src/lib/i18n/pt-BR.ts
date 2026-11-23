@@ -12,6 +12,28 @@ export const ptBR: Record<string, string> = {
   "GitHub authentication does not grant workspace access by itself.":
     "A autenticação do GitHub, por si só, não concede acesso ao ambiente.",
   "Read-only demo access": "Acesso de demonstração somente para leitura",
+  "Synthetic public demo": "Demonstração pública sintética",
+  "Sample invoices only. No Pix payment, wallet, KMS or blockchain transaction is connected, and viewers cannot change anything.":
+    "Apenas faturas de exemplo. Nenhum Pix, carteira, KMS ou transação em blockchain está conectado, e visitantes não podem alterar nada.",
+  "Synthetic demonstration": "Demonstração sintética",
+  "This workspace contains example records created for demonstration only. Every supplier, invoice reference, amount and route is fabricated sample data.":
+    "Este ambiente contém registros de exemplo criados apenas para demonstração. Cada fornecedor, referência de fatura, valor e rota é dado fictício.",
+  "No Pix payment was made. No wallet, token transfer, custody or settlement occurred.":
+    "Nenhum pagamento Pix foi realizado. Não houve carteira, transferência de tokens, custódia ou liquidação.",
+  "No cloud KMS operation occurred and no blockchain transaction was submitted or verified.":
+    "Nenhuma operação de KMS em nuvem ocorreu e nenhuma transação em blockchain foi enviada ou verificada.",
+  "This demonstration is read-only. Visitors cannot create, change, fund, route or settle anything.":
+    "Esta demonstração é somente para leitura. Visitantes não podem criar, alterar, financiar, rotear ou liquidar nada.",
+  "Financial amounts are illustrative figures in the application's demo units, not real BRL or USDG balances.":
+    "Os valores financeiros são ilustrativos, nas unidades de demonstração da aplicação, e não saldos reais de BRL ou USDG.",
+  "Synthetic sample invoice": "Fatura de exemplo sintética",
+  "Synthetic sample workspace — no real business or payment is represented.":
+    "Ambiente de exemplo sintético — nenhuma empresa ou pagamento real é representado.",
+  "All figures are synthetic sample data":
+    "Todos os valores são dados sintéticos de exemplo",
+  "Synthetic demonstration: every supplier, reference and amount below is fabricated sample data.":
+    "Demonstração sintética: cada fornecedor, referência e valor abaixo é dado fictício.",
+
   "Authenticated workspace": "Ambiente autenticado",
   "Access denied": "Acesso negado",
   "Sign out": "Sair",

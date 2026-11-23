@@ -159,8 +159,8 @@ only in Render; all examples below are placeholders.
 | `PONTE_AUTH_ADMIN_GITHUB_IDS`   |                           yes | Comma-separated, canonical decimal GitHub numeric account IDs for intended first administrators. GitHub usernames and email addresses are not valid substitutes. |
 | `AUTH_URL`                      |                      optional | Auth.js alias; if set, it must be exactly equal to `NEXTAUTH_URL`.                                                                                               |
 | `NEXTAUTH_SECRET`               |                      optional | Compatibility alias; if set, it must be exactly equal to `AUTH_SECRET`.                                                                                          |
-| `PONTE_PUBLIC_DEMO_READ_ONLY`   |                            no | Keep disabled in Stage A. Enable only in a separately reviewed synthetic-demo phase.                                                                             |
-| `PONTE_PUBLIC_DEMO_BUSINESS_ID` |                   conditional | Required only after public demo onboarding has been explicitly approved; it must reference a distinct, existing synthetic business.                              |
+| `PONTE_PUBLIC_DEMO_READ_ONLY`   |                   conditional | Must stay unset or `0` while demo content is provisioned. Set exactly `1` only after §7a completes and the operator approves public viewer access.               |
+| `PONTE_PUBLIC_DEMO_BUSINESS_ID` |                   conditional | Required together with the flag above; must be the UUID provisioned in §7a and must differ from `PONTE_AUTH_BUSINESS_ID`.                                        |
 
 Never set any `PONTE_DEV_*`, `PONTE_LOCAL_EVIDENCE_TEST_*`, local token, or
 local registry setting in Render production. Never expose any secret through a
@@ -193,6 +193,105 @@ The command is deliberately narrow:
 If the command reports that it was refused or failed, do not paste command
 output or database URLs into a ticket. Verify the listed prerequisites and use
 an approved operator channel. Never replace it with the local seed command.
+
+## 7a. Provision the synthetic public demo tenant
+
+Stage A can optionally expose a **read-only synthetic demo** to any authenticated
+GitHub account. It is a separate tenant with fabricated sample invoices; it is
+never the private administrator business and never contains real activity.
+
+Complete this section only after §7 succeeds. The exact order matters:
+
+1. **Migrations complete** (`npm run db:migrate` finished successfully).
+2. **Private administrator business bootstrapped** (§7).
+3. **Synthetic demo content provisioned** with the command below, while
+   `PONTE_PUBLIC_DEMO_READ_ONLY` is still unset or `0`.
+4. **Demo records verified** (read-only `--verify`, plus the SQL checks below).
+5. **`PONTE_PUBLIC_DEMO_READ_ONLY=1`** set in Render.
+6. **`PONTE_PUBLIC_DEMO_BUSINESS_ID`** set to the same demo UUID.
+7. **Confirm the demo UUID differs from `PONTE_AUTH_BUSINESS_ID`.** The
+   application refuses a configuration where they are equal.
+8. **Deploy/restart** the web service so the new environment is loaded.
+9. **Test with an unprivileged GitHub account** that has never signed in.
+10. **Confirm the viewer can read demo content but cannot mutate it or reach the
+    private business.**
+
+### Provision
+
+In a Render Shell for the web service, with operator-supplied placeholders:
+
+```bash
+npm run db:bootstrap-public-demo -- \
+  --confirm-production \
+  --business-id "<DEMO_BUSINESS_UUID>" \
+  --business-name "<DEMO_BUSINESS_NAME>"
+```
+
+This is a different command from `db:bootstrap-business` and deliberately
+shares no code path with the local seed/fixture scripts. It:
+
+- requires `NODE_ENV=production`, `--confirm-production`, a non-loopback
+  PostgreSQL URL, and no `PONTE_DEV_*`/`PONTE_LOCAL_EVIDENCE_TEST_*` setting;
+- refuses a demo UUID equal to `PONTE_AUTH_BUSINESS_ID`;
+- refuses to run while `PONTE_PUBLIC_DEMO_READ_ONLY=1`, so population always
+  precedes enablement;
+- writes **only** `businesses`, `invoices`, `payments`, `quotes` and
+  `settlements` in a single transaction;
+- uses fixed UUIDv5 identifiers derived from a repository namespace, so a
+  repeat run addresses the same rows and verifies them instead of duplicating;
+- refuses (and rolls back) any existing row whose contents differ, and never
+  updates, deletes, or resets data;
+- creates **no** users, memberships, external identities, admin elevation, KMS
+  metadata, evidence records, outbox jobs, or registry data;
+- prints only short reason codes, never a connection string, row content, or
+  database exception.
+
+Optional read-only verification, safe to run at any time (including after the
+demo is enabled):
+
+```bash
+npm run db:bootstrap-public-demo -- \
+  --confirm-production --verify \
+  --business-id "<DEMO_BUSINESS_UUID>" \
+  --business-name "<DEMO_BUSINESS_NAME>"
+```
+
+### What the demo contains
+
+Six fabricated invoices covering the lifecycle the current UI renders
+truthfully: `Draft`, `Pending payment`, `Funded`, `Routing` (recorded simulated
+route decision), `Settled` (simulated receipt) and `Failed`. References start
+with `DEMO-SYN-`; suppliers and descriptions state that they are synthetic;
+wallet fields are repeating placeholder patterns. Every quote is the
+application's fixed simulation pricing model.
+
+Deliberately **not** created: settlement transaction hashes (the schema
+constrains the column to `NULL`), evidence rows, KMS envelopes, outbox jobs,
+registry events, and payment events. Those require a genuine external
+integration or a real acting user.
+
+### Demo safety properties
+
+- `PONTE_PUBLIC_DEMO_READ_ONLY=1` grants a first-time GitHub sign-in exactly one
+  `viewer` membership in the demo tenant — never `admin`/`operator`, and never a
+  membership in the private business.
+- A viewer can read demo invoices, quotes, payments, settlements and activity.
+  Every write (`POST`/`PATCH`) is refused with `403 FORBIDDEN` before any body
+  is parsed, and no cross-tenant read returns `200`.
+- No anonymous access exists: the demo still requires a valid GitHub session.
+- Configuring a GitHub subject in `PONTE_AUTH_ADMIN_GITHUB_IDS` always resolves
+  to the private business with `admin`, even when the demo is enabled.
+
+### Ordering hazard: sign-in before the demo exists
+
+An OAuth callback creates an **immutable** external-identity mapping exactly
+once. If a person signs in while `PONTE_PUBLIC_DEMO_READ_ONLY` is not `1`, they
+receive no membership; a later login does not retroactively grant one, and the
+application does not upgrade existing mappings. Such an account will keep
+seeing "Workspace access denied" until a separate, reviewed membership
+operation is built. This is why the demo flag must be enabled **before**
+inviting any unprivileged tester to sign in, and why a controlled test account
+that has never signed in should be used for step 9.
 
 ## 8. Domain and GitHub OAuth
 
@@ -256,12 +355,17 @@ The following remain unavailable or intentionally blocked:
 - evidence-preparing route transitions in production, because the only current
   application composition selects a guarded local synthetic provider that
   refuses production execution;
-- public viewer onboarding and a populated public demo. Keep it disabled until
-  a separate reviewed synthetic demo-content provisioning phase creates a
-  distinct tenant using only synthetic records.
+- a populated public demo remains **optional**: §7a provisions a distinct
+  synthetic tenant with fabricated invoices, and
+  `PONTE_PUBLIC_DEMO_READ_ONLY=1` enables read-only viewer access once the
+  operator has run §7a and verified the result.
 
 No simulated journey should be represented to a judge as a real payment, KMS
-operation, or blockchain anchor.
+operation, or blockchain anchor. The demo UI states on every workspace view that
+the records are synthetic, that no Pix payment or wallet exists, and that no
+KMS or blockchain operation occurred. The evidence panel for a demo invoice
+shows the explicit "No evidence record" empty state — it never shows a persisted
+or anchored claim for synthetic data.
 
 ## 11. Recovery and operating basics
 

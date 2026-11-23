@@ -81,9 +81,12 @@ test("public-demo viewer UI is visibly read-only and does not offer invoice crea
 
   await page.goto("/app/invoices");
   await expect(page.getByText("Read-only demo access").first()).toBeVisible();
+  // The public demo states its synthetic scope in the banner: sample invoices,
+  // no Pix/wallet/KMS/blockchain connection, and no viewer mutations.
+  await expect(page.getByText("Synthetic public demo").first()).toBeVisible();
   await expect(
     page.getByText(
-      "You can view this synthetic demo workspace but cannot change invoices or Routing.",
+      "Sample invoices only. No Pix payment, wallet, KMS or blockchain transaction is connected, and viewers cannot change anything.",
     ),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Create invoice" })).toHaveCount(

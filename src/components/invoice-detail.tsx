@@ -21,18 +21,21 @@ import { minorToDisplayNumber } from "@/lib/quotes";
 import { invoiceService as service } from "@/lib/services";
 import { Badge } from "./ui";
 import { InvoiceEvidencePanel } from "./invoice-evidence-panel";
+import { SyntheticDemoNotice } from "./synthetic-demo-notice";
 export function InvoiceDetail({
   invoice,
   refresh,
   notify,
   publicPage = false,
   readOnly = false,
+  publicDemo = false,
 }: {
   invoice: Invoice;
   refresh: () => void;
   notify: (s: string) => void;
   publicPage?: boolean;
   readOnly?: boolean;
+  publicDemo?: boolean;
 }) {
   const { t, money, number, date } = useLocale();
 
@@ -136,9 +139,11 @@ export function InvoiceDetail({
           </span>
           <h1>{invoice.supplier}</h1>
           <p>
-            {publicPage
-              ? t("Requested by Aurora Comércio Ltda.")
-              : t("International supplier payment")}{" "}
+            {publicDemo
+              ? t("Synthetic sample invoice")
+              : publicPage
+                ? t("Requested by Aurora Comércio Ltda.")
+                : t("International supplier payment")}{" "}
             {t("· Created")} {date(invoice.created)}
           </p>
         </div>
@@ -165,6 +170,7 @@ export function InvoiceDetail({
       </div>
       <div className="detail-grid">
         <div>
+          {publicDemo && <SyntheticDemoNotice />}
           <section className="payment-summary panel">
             <div className="row">
               <h2>{t("Payment details")}</h2>
