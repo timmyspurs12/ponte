@@ -223,7 +223,6 @@ function exactKeys(
 function validate(
   input: unknown,
   testOnly: boolean,
-  allowLoopbackHttp = false,
 ): TrustedReaderConfigResult {
   if (input === undefined || input === null) return fail("CONFIG_MISSING");
   if (!isPlainObject(input)) return fail("CONFIG_NOT_OBJECT");
@@ -240,15 +239,31 @@ function validate(
   } catch {
     return fail("CONFIG_RPC_URL");
   }
-  const loopback =
-    parsedUrl.hostname === "127.0.0.1" || parsedUrl.hostname === "localhost";
-  // Production requires HTTPS unconditionally. Only a test-scoped configuration may
-  // use plain HTTP, and only against loopback.
-  if (parsedUrl.protocol !== "https:") {
-    if (!(allowLoopbackHttp && parsedUrl.protocol === "http:" && loopback))
-      return fail("CONFIG_RPC_URL");
-  }
   if (parsedUrl.username || parsedUrl.password) return fail("CONFIG_RPC_URL");
+
+  if (testOnly) {
+    // ---- test scope: numeric loopback HTTP only ----
+    //
+    // Review pass 4 found that this branch admitted *any* HTTPS endpoint, because the
+    // loopback condition was only consulted when the protocol was not HTTPS. A
+    // server-side module could therefore obtain a test-scoped brand for a remote host,
+    // construct a reader, and make it issue outbound requests through the public
+    // `readAnchorObservation` method. The pipeline still refused to authorize from it,
+    // but the outbound capability should never have existed.
+    //
+    // The restriction is enforced here, at issuance, using the single loopback
+    // predicate in this module, before any brand is created. Test configuration exists
+    // to reach an in-process mock; it has no legitimate use against a real host, and
+    // TLS to loopback is refused too so there is exactly one accepted shape.
+    if (!isNumericLoopbackHttpUrl(rpcUrl)) return fail("CONFIG_RPC_URL");
+  } else {
+    // ---- operator scope: HTTPS unconditionally ----
+    //
+    // Unreachable today: `resolveTrustedReaderConfig()` takes no input and always
+    // reports `CONFIG_MISSING`, so no operator brand is ever produced. The branch is
+    // kept because it is the shape a reviewed deployment will use.
+    if (parsedUrl.protocol !== "https:") return fail("CONFIG_RPC_URL");
+  }
   if (!Number.isInteger(timeoutMs)) return fail("CONFIG_TIMEOUT");
   const timeout = timeoutMs as number;
   if (timeout < 100 || timeout > 30_000) return fail("CONFIG_TIMEOUT");
@@ -466,7 +481,10 @@ function validate(
 export function __issueTestConfigForHarness(
   input: unknown,
 ): TrustedReaderConfigResult {
-  return validate(input, true, true);
+  // `validate` enforces numeric-loopback HTTP for test scope itself, so the endpoint
+  // restriction sits at the issuance boundary rather than in a caller that might not
+  // be reached. There is no argument that relaxes it.
+  return validate(input, true);
 }
 
 /**

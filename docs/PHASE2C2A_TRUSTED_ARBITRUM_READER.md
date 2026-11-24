@@ -225,10 +225,41 @@ machinery from production entirely**:
   and always yields `testOnly: true`. There is therefore no caller-supplied input,
   option, flag or environment value anywhere in production that produces an
   operator-scoped configuration.
+- **The test issuer itself enforces numeric-loopback HTTP.** Review pass 4 found that
+  `__issueTestConfigForHarness` called the validator in a mode that admitted **any** HTTPS
+  endpoint, because the loopback condition was consulted only when the protocol was not
+  HTTPS. A server-side module could therefore obtain a test-scoped brand for a remote
+  host, construct a reader, and drive outbound requests through its public
+  `readAnchorObservation()` method. The pipeline refused to *authorize* from such a
+  reader, but the outbound capability should not have existed.
+
+  The restriction is now enforced **at issuance, inside the validator**, before any
+  brand is created. Test scope accepts exactly one shape: an `http:` URL whose *parsed*
+  hostname is a numeric loopback literal (`127.0.0.0/8` or `::1`). Names (including
+  `localhost`), HTTPS of any kind (including TLS to loopback), link-local, private
+  ranges, remote hosts, the wildcard address, IPv4-mapped IPv6 and credentialed URLs are
+  all refused with `CONFIG_RPC_URL`. No DNS lookup is performed: the predicate reads
+  `URL.hostname`, which the WHATWG parser resolves numerically, so a hostname that
+  merely *contains* `127.0.0.1` — in a path, query, fragment, userinfo or as a suffix —
+  cannot pass.
+
+  This is the only authoritative loopback implementation; the issuer has no argument
+  that relaxes it. There is no environment variable or request flag that enables test
+  authorization.
 
 No API handler, request body, header, query parameter or ordinary service can reach any
-of this: `resolveTrustedReaderConfig()` returns a `CONFIG_MISSING` failure regardless of
-input, and nothing outside `chain-reader-runtime.ts` calls it.
+of this. The runtime boundary is the function's **signature and body**, not merely its
+current callers:
+
+- `resolveTrustedReaderConfig()` takes **no arguments at all** — its parameter list is
+  empty — and its body returns `{ ok: false, failure: "CONFIG_MISSING" }`
+  unconditionally. It does not wait for a pinned configuration to be passed in, and
+  there is no argument, environment variable, file path or request field that changes
+  its result.
+- `resolveEvidenceChainReader()` returns `null`.
+
+Both statements are asserted by execution in the suite, not inferred from a lack of
+callers.
 
 ### Reader provenance is a runtime capability, not a type
 
@@ -276,9 +307,16 @@ pass closes. In particular:
 
 Everything that does not need a sealed result still runs: transport, decoding, finality
 ordering, ABI validation, hash binding, every forgery and look-alike rejection, and the
-confirmation boundary's `TRUSTED_PROVENANCE_REQUIRED` path. The end-to-end positive
-confirmation path requires a genuinely operator-pinned reader and a real reviewed
-deployment manifest, and is **unexercised**.
+confirmation boundary's `TRUSTED_PROVENANCE_REQUIRED` path.
+
+**Production reader status.** No operator-scoped configuration can currently be created
+in this repository, by any route: `resolveTrustedReaderConfig()` takes no arguments and
+returns `CONFIG_MISSING` unconditionally, and the only other issuer always produces a
+test-scoped brand that the pipeline refuses. Consequently the **positive trusted
+confirmation path is unavailable and unexercised end to end**. This is a runtime
+property of the issuance boundary, not an observation about which functions happen to
+have callers. Enabling it requires a reviewed deployment manifest loaded inside
+`resolveTrustedReaderConfig()` — a deliberate, code-level change reviewed on its own.
 
 ### Manifest handling: a deliberate, documented duplication
 
@@ -317,7 +355,7 @@ rejected it. Both blocks are now validated in full:
 | `abi.hashAlgorithm`         | must equal `ABI_HASH_ALGORITHM`              |
 | `abi.hash`                  | `0x` + 64 hex, and not all zeroes            |
 | `sourceVerification.status` | one of `not_submitted`, `verified`, `failed` |
-| `sourceVerification.url`    | `null` iff `not_submitted`; HTTPS otherwise  |
+| `sourceVerification.url`    | `null` for **every** status except `verified`; a `verified` status requires a credential-free HTTPS URL |
 
 The build-identity cross-check was likewise narrowened to compare the ABI block, the
 compiler, optimizer, EVM version, viaIR and both runtime hashes against the manifest,

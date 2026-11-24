@@ -30,7 +30,9 @@ const RUNTIME_CODE = "0x6080604052348015600f57600080fd5b50";
 const RUNTIME_HASH = keccakOf(RUNTIME_CODE);
 
 const OPTIONS = {
-  rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
+  // Loopback, because test-scoped issuance accepts numeric-loopback HTTP only. These
+  // cases are about manifest acceptance/rejection, never about reaching a real host.
+  rpcUrl: "http://127.0.0.1:8545",
   registryAddress: REGISTRY,
   runtimeBytecodeHash: RUNTIME_HASH,
   administrator: ADMIN,

@@ -701,3 +701,115 @@ test("attempting to smuggle operator scope through config keys is rejected", asy
     assert.equal(result.failure, "CONFIG_UNEXPECTED_KEY");
   }
 });
+
+// ===========================================================================
+// Review pass 4: the test issuer enforces numeric loopback, at the issuer
+// ===========================================================================
+//
+// Previously `__issueTestConfigForHarness` accepted *any* HTTPS endpoint, because the
+// validator only consulted its loopback condition when the protocol was not HTTPS. A
+// server-side module could therefore obtain a test-scoped brand for a remote host,
+// build a reader, and drive outbound requests through `readAnchorObservation`. The
+// pipeline still refused to authorize, but the outbound capability should not exist.
+//
+// These tests go through the **real bridge**, not the helper, and change only the URL.
+
+/** Valid manifest and build identity; only the endpoint varies. */
+function configWithRpcUrl(rpcUrl: string) {
+  return harnessConfigInput({ ...options, rpcUrl });
+}
+
+test("the test issuer rejects every non-loopback endpoint", async () => {
+  const { issueTestConfig } = await import("./helpers/test-config-bridge");
+  const rejected = [
+    "https://sepolia-rollup.arbitrum.io/rpc", // the public Arbitrum endpoint
+    "https://example.com",
+    "https://127.0.0.1:8545", // TLS to loopback is not the accepted shape
+    "http://localhost:8545", // a name, not a literal
+    "http://localhost.localdomain:8545",
+    "http://169.254.169.254/latest/meta-data", // link-local / metadata service
+    "http://10.0.0.1:8545", // private range
+    "http://192.168.1.1:8545", // private range
+    "http://172.16.0.1:8545", // private range
+    "http://[::ffff:127.0.0.1]:8545", // IPv4-mapped, not normalized
+    "http://[::ffff:7f00:1]:8545",
+    "http://[fe80::1]:8545", // link-local IPv6
+    "http://0.0.0.0:8545", // wildcard
+    "http://8.8.8.8:8545", // remote
+    "http://user:pass@127.0.0.1:8545", // credentials
+    "http://user@127.0.0.1:8545",
+    "ftp://127.0.0.1:8545", // wrong scheme
+    "not a url",
+  ];
+  for (const rpcUrl of rejected) {
+    const result = issueTestConfig(configWithRpcUrl(rpcUrl));
+    assert.equal(result.ok, false, `issuer accepted ${rpcUrl}`);
+    if (!result.ok)
+      assert.equal(result.failure, "CONFIG_RPC_URL", `wrong failure for ${rpcUrl}`);
+  }
+});
+
+test("the test issuer accepts only numeric loopback HTTP", async () => {
+  const { issueTestConfig } = await import("./helpers/test-config-bridge");
+  for (const rpcUrl of [
+    "http://127.0.0.1:8545",
+    "http://127.0.0.2:1",
+    "http://127.255.255.254:65535",
+    "http://[::1]:8545",
+    "http://127.0.0.1:8545/rpc", // a path is fine; the host is what is checked
+  ]) {
+    const result = issueTestConfig(configWithRpcUrl(rpcUrl));
+    assert.equal(result.ok, true, `issuer rejected ${rpcUrl}`);
+  }
+});
+
+test("a URL whose text merely contains 127.0.0.1 is not accepted", async () => {
+  const { issueTestConfig } = await import("./helpers/test-config-bridge");
+  for (const rpcUrl of [
+    "http://127.0.0.1.evil.example:8545", // suffix trick
+    "http://evil.example/127.0.0.1", // in the path
+    "http://evil.example?host=127.0.0.1", // in the query
+    "http://evil.example#127.0.0.1", // in the fragment
+    "http://127.0.0.1@evil.example:8545", // userinfo "host", real host is evil.example
+  ]) {
+    const result = issueTestConfig(configWithRpcUrl(rpcUrl));
+    assert.equal(result.ok, false, `accepted a look-alike host: ${rpcUrl}`);
+    if (!result.ok) assert.equal(result.failure, "CONFIG_RPC_URL");
+  }
+});
+
+test("a remote endpoint cannot produce a branded configuration", async () => {
+  // The decisive test. Without a brand there is no reader: the constructor rejects
+  // anything that is not branded, so a caller cannot obtain the object whose public
+  // `readAnchorObservation` would perform the outbound request.
+  const { issueTestConfig } = await import("./helpers/test-config-bridge");
+  const remote = configWithRpcUrl("https://sepolia-rollup.arbitrum.io/rpc");
+  const result = issueTestConfig(remote);
+  assert.equal(result.ok, false, "a remote endpoint must not be branded");
+  assert.equal("config" in result, false, "no brand may be returned");
+
+  // And the unbranded input itself cannot construct a reader.
+  assert.throws(
+    () => new TrustedEvidenceChainReader(remote as never),
+    /TRUSTED_READER_REQUIRES_BRANDED_CONFIG/,
+  );
+});
+
+test("a reader cannot be pointed at a remote host by mutating config afterwards", async () => {
+  // A branded config is frozen and its values are captured at construction, so even
+  // holding a genuine loopback brand does not yield a remote reader.
+  const reader = createTestReader(options);
+  const target = reader as unknown as Record<string, unknown>;
+  for (const key of ["rpcUrl", "#rpc", "url"]) {
+    try {
+      target[key] = "https://sepolia-rollup.arbitrum.io/rpc";
+    } catch {
+      /* frozen properties throw in strict mode; either way the value must not change */
+    }
+  }
+  // The observable proof: the pipeline still refuses it, and no remote call is possible
+  // because the reader holds no route to one.
+  const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+});

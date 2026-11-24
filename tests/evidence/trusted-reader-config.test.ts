@@ -78,7 +78,10 @@ function buildIdentity() {
 function input(overrides: Record<string, unknown> = {}) {
   return {
     manifest: validManifest(),
-    rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
+    // Test-scoped issuance accepts numeric-loopback HTTP only (review pass 4), so the
+    // fixture uses a loopback literal. These tests are about manifest validation, not
+    // about reaching a real endpoint.
+    rpcUrl: "http://127.0.0.1:8545",
     timeoutMs: 5_000,
     buildIdentity: buildIdentity(),
     ...overrides,
@@ -126,7 +129,7 @@ test("no environment variable can enable the reader", () => {
 test("a reader cannot be constructed from an unbranded configuration", () => {
   // A structurally perfect object — the exact shape a request handler could build.
   const structural = {
-    rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
+    rpcUrl: "http://127.0.0.1:8545",
     timeoutMs: 5_000,
     chainId: "421614",
     registryAddress: REGISTRY,
@@ -184,10 +187,11 @@ test("missing, non-object and unexpected-key inputs are rejected", () => {
   assert.equal(unexpected.failure, "CONFIG_UNEXPECTED_KEY");
 });
 
-test("an insecure or credentialed production-style endpoint is rejected", () => {
+test("an insecure or credentialed endpoint is rejected", () => {
   for (const rpcUrl of [
     "http://sepolia-rollup.arbitrum.io/rpc",
     "https://user:pass@example.com",
+    "http://user:pass@127.0.0.1:8545",
     "not a url",
     "ftp://example.com",
   ]) {
