@@ -54,7 +54,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
     .getByRole("button", { name: "Simulate Pix payment received" })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Compare liquidity routes" }),
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
   ).toBeVisible();
   await page.getByRole("radio", { name: /Split liquidity/ }).click();
   await page.getByRole("button", { name: "Select route & continue" }).click();

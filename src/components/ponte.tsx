@@ -278,7 +278,7 @@ export default function Ponte() {
                   <p>
                     {" "}
                     {t(
-                      "This demo link may belong to another browser. Demo records are stored locally.",
+                      "This invoice is unavailable in this workspace. Check that you are signed in to the correct demo workspace.",
                     )}{" "}
                   </p>
                   <Cta href="/app/invoices">{t("Back to invoices")}</Cta>

@@ -116,7 +116,7 @@ export function Overview({
             </span>
             <span className="center">
               {" "}
-              {t("Intelligent routing")} <small>{t("3 sample routes")}</small>
+              {t("Illustrative routes")} <small>{t("3 sample routes")}</small>
             </span>
             <span className="align-right">
               {" "}

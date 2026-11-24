@@ -1,5 +1,7 @@
 # Phase 2A backend architecture
 
+> The backend described here remains the current application foundation. Current product scope and evidence are summarised in [HACKATHON_DEMO_EVIDENCE.md](HACKATHON_DEMO_EVIDENCE.md).
+
 Status: implemented local/CI simulation foundation, 16 November 2026. No public deployment, hosted resources, charges, production auth or money movement.
 
 ## Decision and official research
