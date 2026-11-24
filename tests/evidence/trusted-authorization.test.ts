@@ -154,10 +154,25 @@ async function genuine(): Promise<Awaited<ReturnType<typeof runTrustedVerificati
 /**
  * Why a seal-dependent test cannot run yet.
  *
- * This string is only a `skip` reason. It is **not** separately asserted anywhere, so
- * nothing fails if these tests rot: the callbacks below never execute, and their bodies
- * are not even typechecked against a working success path. An earlier revision of this
- * comment claimed it was "asserted, so it cannot rot silently", which was untrue.
+ * This string is only a `skip` reason. It is **not** separately asserted anywhere.
+ *
+ * Skipped callback bodies are still ordinary TypeScript: `tsconfig.json` includes all
+ * TypeScript sources including this file, so `tsc --noEmit` typechecks the bodies of
+ * these skipped tests exactly as it typechecks everything else. A compile-time error — a
+ * changed signature, a removed export, a type mismatch — is still caught here even
+ * though the test never runs. (Verified by injecting a type error into a skipped
+ * callback: `tsc` reported it while the runtime suite still reported 8 skipped, 0
+ * failed.)
+ *
+ * Their **runtime assertions never execute**. So unlike a passing test, a skipped test
+ * cannot detect a behavioural regression: if seal issuance, trusted-result issuance or
+ * the rebind path started returning the wrong values, every test in this file would
+ * still pass. Compile-time breakage is caught; behavioural breakage in the successful
+ * authorization path is not.
+ *
+ * An earlier revision of this comment claimed the constant was "asserted, so it cannot
+ * rot silently", which was untrue; a later revision said the bodies were "not even
+ * typechecked", which understated the static checking that does still happen.
  */
 const SEAL_BLOCKED =
   "requires a genuinely operator-pinned reader (no deployment manifest exists)";
