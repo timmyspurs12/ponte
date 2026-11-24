@@ -3,6 +3,7 @@
 import "server-only";
 
 import type {
+  EvidenceAnchoringStatus,
   EvidenceOutboxSubmissionState,
   EvidenceProvenance,
   EvidenceProvider,
@@ -10,6 +11,12 @@ import type {
 } from "../../lib/models";
 import { fail } from "../errors";
 import type { InvoiceEvidenceStatusRow } from "../repository";
+
+/** Shared immutable default so no caller can render a mutable claim. */
+const NOT_VERIFIED: EvidenceAnchoringStatus = Object.freeze({
+  verified: false,
+  status: "not_verified",
+} as const);
 
 const OUTBOX_STATES = new Set<EvidenceOutboxSubmissionState>([
   "pending",
@@ -99,13 +106,17 @@ function outboxState(value: unknown): EvidenceOutboxSubmissionState | null {
 
 /**
  * Converts one deliberately narrow SQL projection into the documented response.
- * There is no independently verified registry receipt/event persisted today, so
- * this projection never returns a transaction hash or an anchored/confirmed
- * claim, regardless of an operational outbox state.
+ *
+ * The anchoring claim is supplied by the caller and defaults to "not verified".
+ * An operational outbox state, including `confirmed`, is never consulted here:
+ * a row can only render as anchored when a caller passes the result of
+ * `verifyAnchorObservation`, which requires a real receipt and a matching
+ * Registry event. This keeps local preparation and on-chain anchoring distinct.
  */
 export function invoiceEvidenceStatus(
   invoiceId: string,
   row: InvoiceEvidenceStatusRow | undefined,
+  anchoring: EvidenceAnchoringStatus = NOT_VERIFIED,
 ): InvoiceEvidenceStatus {
   if (!row)
     return {
@@ -130,9 +141,6 @@ export function invoiceEvidenceStatus(
       createdAt: createdAt(row.created_at),
       outboxSubmissionState: outboxState(row.submission_state),
     },
-    anchoring: {
-      verified: false,
-      status: "not_verified",
-    },
+    anchoring,
   };
 }
