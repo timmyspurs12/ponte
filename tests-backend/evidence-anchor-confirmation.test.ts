@@ -285,10 +285,17 @@ after(async () => {
  * the sealed object, its binding, and the SQL write that a confirmed result performs —
  * therefore cannot run until a real reviewed deployment manifest exists.
  *
- * They are skipped with this reason rather than deleted (the intent is preserved and
- * still compiles) or faked (minting a fake production authorizing result is precisely
- * the vulnerability this pass closes). The rejection paths that do not need a genuine
- * result continue to run, including every forged-look-alike test.
+ * They are skipped with this reason rather than deleted or faked (minting a fake
+ * production authorizing result is precisely the vulnerability this pass closes).
+ *
+ * Keeping the callbacks in source is **not** coverage and is not equivalent to it. A
+ * skipped callback never executes: its body is not run against the database, and the
+ * SQL write in `confirmVerifiedAnchor` is never performed by this file. These tests are
+ * therefore not evidence that successful confirmation persistence works. No executed
+ * test in this repository exercises the success path of `confirmVerifiedAnchor`.
+ *
+ * What does still run: the rejection paths that do not need a genuine result, including
+ * every forged-look-alike test.
  */
 const NEEDS_OPERATOR_READER =
   "requires a genuinely operator-pinned reader; no deployment manifest exists";

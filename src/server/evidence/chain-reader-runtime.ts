@@ -25,8 +25,18 @@ import {
  * and no request field can reach this function. That is what makes "no production
  * reader" a property of the code rather than of configuration hygiene.
  *
- * When a reviewed manifest exists, it is supplied to `resolveTrustedReaderConfig`
- * in exactly one place — here — and the rest of the system needs no change.
+ * ## Where configuration would come from, and where it never comes from
+ *
+ * `resolveTrustedReaderConfig()` takes no arguments, and this module passes it
+ * none. Nothing here — and nothing anywhere else — hands it a pinned
+ * configuration. If a reviewed manifest is introduced in a future change, it must
+ * be loaded **internally** by `resolveTrustedReaderConfig()` from an approved,
+ * server-controlled artifact. No argument, request field or environment variable
+ * supplies configuration to this module.
+ *
+ * An earlier revision of this comment said a manifest "is supplied to
+ * `resolveTrustedReaderConfig` in exactly one place — here", which implied a
+ * supply point that does not exist.
  */
 export function resolveEvidenceChainReader(): TrustedEvidenceChainReader | null {
   return resolveTrustedEvidenceReader();

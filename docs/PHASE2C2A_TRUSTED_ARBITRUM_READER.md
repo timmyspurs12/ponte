@@ -346,6 +346,68 @@ property of the issuance boundary, not an observation about which functions happ
 have callers. Enabling it requires a reviewed deployment manifest loaded inside
 `resolveTrustedReaderConfig()` — a deliberate, code-level change reviewed on its own.
 
+### Authorization success-path coverage boundary
+
+The tests above are skipped, so an explicit statement of what is and is not covered is
+required. **No executed test in this repository reaches any of the following success
+paths:**
+
+| Function / path                          | Executed coverage of the success path |
+| ---------------------------------------- | ------------------------------------- |
+| `issueSeal()`                            | **None**                              |
+| `issueTrustedVerification()`             | **None**                              |
+| successful `runTrustedVerification()`    | **None** (every executed call asserts `ok: false`) |
+| `rebindTrustedResult()`                  | **None** (every call site is inside a skipped test) |
+| successful `confirmVerifiedAnchor()`     | **None** (no executed test performs the SQL write) |
+
+In plain terms:
+
+- No executed test currently reaches successful seal issuance.
+- No executed test currently reaches successful trusted-result issuance.
+- No executed test calls `rebindTrustedResult()` at all, so neither its success path
+  nor its `null` return is exercised.
+- No executed test exercises successful confirmation persistence.
+
+These tests are skipped **because no operator-scoped configuration can currently be
+created** — that is a deliberate property of the issuance boundary described above, not
+an accident of scheduling or an unfinished test.
+
+**The skipped tests are not evidence that these success paths work.** A skipped callback
+never runs, so it cannot fail, cannot detect a regression, and does not exercise a single
+statement of the code under test. Retaining the source preserves the *intent* of each
+test; it does not preserve, and must not be read as, coverage. Neither a green local run
+nor a green CI run demonstrates that seal issuance, trusted-result issuance, the
+successful rebind or confirmation persistence behave correctly.
+
+**Skip inventory, with the reasons kept distinct:**
+
+- **8 skipped in the evidence suite**, all in `tests/evidence/trusted-authorization.test.ts`,
+  all with `SEAL_BLOCKED` — seal- and binding-dependent assertions. These account for
+  every skip in the evidence suite (`336 passed, 8 skipped`).
+- **8 skipped in the backend suite** with `NEEDS_OPERATOR_READER`, all in
+  `tests-backend/evidence-anchor-confirmation.test.ts` — positive confirmation and
+  SQL write-metadata assertions.
+- **2 further backend skips are unrelated** to authorization. They live in
+  `tests-backend/pool-reconnect.test.ts` and are opt-in guards that require
+  `PONTE_RECONNECT_TEST=1` with a disposable database. They are not part of this
+  coverage gap and must not be counted as such. Backend totals are therefore
+  `198 passed, 10 skipped`.
+
+**What remains actively tested.** The negative and forgery-rejection paths are executed
+on every run: the capability gate (including `Object.defineProperty`, property deletion,
+proxy wrapping, a substituted `read`, and a test reader over a perfect mock chain), every
+look-alike `isTrustedAnchorVerification` rejection, `TRUSTED_PROVENANCE_REQUIRED`,
+commitment and transaction mismatches, transport allowlisting/timeouts/size limits,
+finality ordering, `admin()` ABI padding, and the whole manifest parity matrix. Those
+tests are what make the refusal side of the boundary trustworthy.
+
+**What re-enabling requires.** The positive tests can only run against a genuinely
+operator-pinned reader produced through the reviewed production configuration path — a
+real deployment manifest loaded internally by `resolveTrustedReaderConfig()`. Creating an
+operator brand from test code, a test-only operator issuer, or a fabricated trusted
+acquisition would defeat the boundary these tests exist to verify, so none of those was
+introduced.
+
 ### Manifest handling: a deliberate, documented duplication
 
 `contracts/tools/registry-deployment-manifest.mjs` is the authoritative manifest
@@ -653,3 +715,8 @@ from the trusted pipeline.
    trustworthy as its endpoint and its pinned manifest.
 8. **No key rotation story** for a future manifest update: rotating the pinned bytecode
    hash requires a reviewed artefact and a code change.
+9. **The authorization success path is untested** (§3). `issueSeal()`,
+   `issueTrustedVerification()`, the successful `rebindTrustedResult()` and successful
+   `confirmVerifiedAnchor()` have no executed coverage — 8 evidence skips
+   (`SEAL_BLOCKED`) and 8 backend skips (`NEEDS_OPERATOR_READER`). Passing tests do not
+   demonstrate that these paths work.

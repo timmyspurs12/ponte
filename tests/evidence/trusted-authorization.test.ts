@@ -137,16 +137,30 @@ function readerFor(w: Record<string, unknown>) {
  * rather than deleted (losing the intent) or faked (which is exactly the vulnerability
  * this phase is closing).
  *
- * Everything reachable without a sealed result is still asserted below, and the
- * boundary's behaviour is additionally covered by the post-issuance forgery tests in
- * `tests-backend/`, which use hand-built look-alikes.
+ * Keeping the source is **not** coverage: a skipped callback never runs, so these tests
+ * are not evidence that seal issuance, trusted-result issuance or the successful rebind
+ * path work. No executed test in this repository reaches `issueSeal()`,
+ * `issueTrustedVerification()` or a successful `runTrustedVerification()` /
+ * `rebindTrustedResult()`.
+ *
+ * What *is* executed below: every rejection and forgery path that does not need a
+ * sealed result, plus the post-issuance forgery tests in `tests-backend/`, which use
+ * hand-built look-alikes.
  */
 async function genuine(): Promise<Awaited<ReturnType<typeof runTrustedVerification>>> {
   return runTrustedVerification(readerFor(world()), EXPECTED, TX_HASH);
 }
 
-/** Why a seal-dependent test cannot run yet. Asserted, so it cannot rot silently. */
-const SEAL_BLOCKED = "requires a genuinely operator-pinned reader (no deployment manifest exists)";
+/**
+ * Why a seal-dependent test cannot run yet.
+ *
+ * This string is only a `skip` reason. It is **not** separately asserted anywhere, so
+ * nothing fails if these tests rot: the callbacks below never execute, and their bodies
+ * are not even typechecked against a working success path. An earlier revision of this
+ * comment claimed it was "asserted, so it cannot rot silently", which was untrue.
+ */
+const SEAL_BLOCKED =
+  "requires a genuinely operator-pinned reader (no deployment manifest exists)";
 
 // ---------------------------------------------------------------- forgery
 
