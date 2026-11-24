@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [arena/c2b1a150-ponte]
+    branches: [main, arena/40fa34c0-ponte]
 permissions:
   contents: read
 concurrency:
@@ -32,10 +32,18 @@ jobs:
       PONTE_DEV_BUSINESS_ID: 00000000-0000-4000-8000-000000000001
       PONTE_DEV_USER_ID: 00000000-0000-4000-8000-000000000002
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      # Actions are pinned to immutable commit SHAs, not mutable tags: a tag can
+      # be moved to different code after review. Each SHA below was verified
+      # against the official action repository (see the runbook, §19a).
+      # actions/checkout v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      # actions/setup-node v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
-          node-version: '22'
+          # Exact project runtime. `.node-version` and package.json#engines both
+          # require 24.22.1; pinning the patch here keeps CI, operators and the
+          # Render service on the same Node.
+          node-version: '24.22.1'
           cache: npm
       - run: npm ci
       - run: npm run db:seed
@@ -47,7 +55,8 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm test
-      - uses: actions/upload-artifact@v6
+      # actions/upload-artifact v6.0.0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
           name: application-test-results
