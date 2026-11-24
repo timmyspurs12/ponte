@@ -3,20 +3,14 @@
 import "server-only";
 
 import type {
-  EvidenceAnchoringStatus,
   EvidenceOutboxSubmissionState,
   EvidenceProvenance,
   EvidenceProvider,
   InvoiceEvidenceStatus,
 } from "../../lib/models";
+import { anchoringStatusFor } from "./anchor-verification";
 import { fail } from "../errors";
 import type { InvoiceEvidenceStatusRow } from "../repository";
-
-/** Shared immutable default so no caller can render a mutable claim. */
-const NOT_VERIFIED: EvidenceAnchoringStatus = Object.freeze({
-  verified: false,
-  status: "not_verified",
-} as const);
 
 const OUTBOX_STATES = new Set<EvidenceOutboxSubmissionState>([
   "pending",
@@ -107,16 +101,23 @@ function outboxState(value: unknown): EvidenceOutboxSubmissionState | null {
 /**
  * Converts one deliberately narrow SQL projection into the documented response.
  *
- * The anchoring claim is supplied by the caller and defaults to "not verified".
- * An operational outbox state, including `confirmed`, is never consulted here:
- * a row can only render as anchored when a caller passes the result of
- * `verifyAnchorObservation`, which requires a real receipt and a matching
- * Registry event. This keeps local preparation and on-chain anchoring distinct.
+ * The anchoring claim is **derived here**, not accepted from the caller. The
+ * third parameter is an untrusted candidate — a value that may or may not be a
+ * proof issued by `verifyAnchorObservation` — and it is passed straight to
+ * `anchoringStatusFor()`, which returns the frozen not-verified claim for
+ * anything it did not issue.
+ *
+ * A caller therefore cannot render an anchoring claim by supplying a pre-built
+ * `EvidenceAnchoringStatus`, a `{ verified: true }` object, a spread copy, a
+ * JSON round-trip or a `structuredClone`. There is no parameter whose type
+ * accepts an already-constructed verified status.
+ *
+ * An operational outbox state, including `confirmed`, is never consulted here.
  */
 export function invoiceEvidenceStatus(
   invoiceId: string,
   row: InvoiceEvidenceStatusRow | undefined,
-  anchoring: EvidenceAnchoringStatus = NOT_VERIFIED,
+  proofCandidate: unknown = null,
 ): InvoiceEvidenceStatus {
   if (!row)
     return {
@@ -141,6 +142,7 @@ export function invoiceEvidenceStatus(
       createdAt: createdAt(row.created_at),
       outboxSubmissionState: outboxState(row.submission_state),
     },
-    anchoring,
+    // Derived from the untrusted candidate inside this boundary.
+    anchoring: anchoringStatusFor(proofCandidate),
   };
 }

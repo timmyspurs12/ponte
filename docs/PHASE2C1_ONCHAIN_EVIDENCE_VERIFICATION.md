@@ -115,6 +115,51 @@ status projection takes `unknown` and returns the frozen `NOT_VERIFIED_ANCHORING
 for anything that is not an issued proof, so the API cannot be made to render an
 anchoring claim by request data or by a forged object.
 
+### What the opaque proof guarantees — and what it does not
+
+The proof establishes exactly one thing: **this module ran `verifyAnchorObservation` over the
+commitment it carries, and every check in §2 passed.** It is a guarantee about the
+_verification logic having executed_, not about where the input came from.
+
+It does **not** establish:
+
+- that the `ChainObservation` was retrieved from a trusted RPC endpoint, or from
+  any endpoint at all;
+- that the reader was not authored by the caller;
+- that the `registryIdentity: "verified"` declaration is true;
+- that a receipt exists on Arbitrum Sepolia, or that the transaction was ever
+  mined.
+
+In this phase the observation is a **caller-supplied value**, and
+`registryIdentity` is a **caller declaration**, not an independently authenticated
+fact. A caller who supplies a fabricated observation and declares
+`registryIdentity: "verified"` can obtain a proof. That is a deliberate,
+documented property of an offline phase: the proof authenticates the _check_, not
+the _chain_.
+
+Consequently the confirmed-state invariant is a guard against fabrication of the
+_verification result_ and against stale or cross-record binding — it is **not** a
+claim that a real on-chain anchoring occurred. Nothing in this build can produce
+that claim, because `resolveEvidenceChainReader()` returns `null` and no
+implementation that performs network access exists.
+
+**Phase 2C.2 must establish the trusted-reader boundary** before live
+confirmation is enabled:
+
+1. A single reviewed reader implementation that is the only source of
+   `ChainObservation`; no request data, API body, header, or client-controlled
+   input may be passed through as an observation.
+2. Independently pinned Registry bytecode identity — `keccak256` of the deployed
+   runtime bytecode compared against a hash recorded from a reviewed deployment
+   artifact, not against a hash returned by the same RPC (see §2's identity
+   requirements).
+3. Chain id, address binding and a positive control call, performed by that
+   reader rather than declared by its caller.
+4. `registryIdentity` derived from those checks inside the reader, so a caller
+   can no longer assert it.
+
+Until then, the flag is trustworthy only as far as the caller is.
+
 ### Commitment binding
 
 A proof is minted against a specific commitment and **carries it** as
@@ -125,8 +170,17 @@ by passing a different `expected` into a digest.
 
 `commitmentDigest(facts)` is a SHA-256 over the domain separator, transaction
 hash, both the expected and attested chain and registry, and the full commitment
-plus block metadata. It is recorded on a successful confirmation so the binding
-is auditable.
+plus block metadata.
+
+**The digest is returned, not stored.** `confirmVerifiedAnchor` computes it and
+includes it in the successful `AnchorConfirmationOutcome`, where a caller or an
+operator log can use it to check what was confirmed. It is not written to
+`evidence_outbox`: the table has no `commitment_digest` column, and this phase adds
+no migration. Persisting it would require a separately justified schema change, so
+until then the digest is an audit value that exists only in the process that
+performed the confirmation. The durable record of the binding is the confirmed
+row's own `transaction_hash`, block number, block hash and attestor, together with
+the immutable `route_decision_evidence` commitment the write was joined against.
 
 ## 3. Confirmed-state invariant
 

@@ -125,7 +125,12 @@ export function commitmentFromRow(
 }
 
 /**
- * Reads the chain through a trusted reader and verifies the observation.
+ * Reads the chain through the supplied reader and verifies the observation.
+ *
+ * The reader is not authenticated here: a caller can pass any implementation, and
+ * in this offline phase a fabricated observation yields a proof of the check, not
+ * of the chain. Phase 2C.2 replaces this with a single reviewed reader that derives
+ * `registryIdentity` from independently pinned bytecode.
  *
  * A reader failure is mapped to a non-confirming outcome rather than an
  * exception, so a transient RPC error can never be mistaken for success.

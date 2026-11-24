@@ -8,7 +8,15 @@
  *
  * Nothing here is a submission mechanism. Preparing or submitting evidence is a
  * different concern, and a caller-supplied transaction hash is never accepted as
- * proof: the receipt must come from a chain reader the caller did not author.
+ * proof: a proof is only minted from a full observation that satisfied every check.
+ *
+ * What a proof guarantees is narrow and deliberate: that THIS MODULE ran the
+ * verification over the commitment it carries. It does not authenticate where the
+ * observation came from. In this offline phase the observation is caller-supplied
+ * and the `registryIdentity` flag is a caller declaration, so a caller who
+ * fabricates both can obtain a proof — of the check, not of the chain. Phase 2C.2
+ * must supply a trusted reader that derives both before live confirmation means
+ * anything.
  */
 import { createHash } from "node:crypto";
 import { getAddress, id as keccakId } from "ethers";
@@ -82,7 +90,8 @@ export interface ObservedAnchorEvent {
 }
 
 /**
- * The chain state a trusted reader observed. A receipt alone is insufficient:
+ * The chain state a reader reported. In this phase it is caller-supplied and is
+ * NOT authenticated; see the module comment. A receipt alone is insufficient:
  * the transaction sender is read from the transaction, because `tx.origin` is
  * not in a receipt and the attestor must be proven to have sent the call.
  */
@@ -110,9 +119,12 @@ export interface ChainObservation {
 }
 
 /**
- * A trusted chain reader. The eventual production implementation resolves a
- * transaction and its receipt from a real JSON-RPC endpoint. No implementation
- * with network access exists in this phase.
+ * A chain reader. The interface does not by itself make an implementation
+ * trustworthy: a caller can construct any object satisfying it, and this phase
+ * authenticates nothing about the source. The eventual production implementation
+ * resolves a transaction and its receipt from a real JSON-RPC endpoint and derives
+ * `registryIdentity` from independently pinned bytecode. No implementation with
+ * network access exists in this phase.
  */
 export interface EvidenceChainReader {
   readAnchorObservation(input: {
@@ -482,7 +494,9 @@ export const NOT_VERIFIED_ANCHORING: EvidenceAnchoringStatus = Object.freeze({
 export function anchoringStatusFor(proof: unknown): EvidenceAnchoringStatus {
   if (!isAnchorVerificationProof(proof)) return NOT_VERIFIED_ANCHORING;
   const { facts } = proof;
-  const claim: EvidenceAnchoringStatus = {
+  // Frozen as well: a downstream consumer must not be able to mutate an issued
+  // claim into a different one after the boundary has approved it.
+  const claim: EvidenceAnchoringStatus = Object.freeze({
     verified: true,
     status: "verified",
     chainId: facts.chainId,
@@ -491,6 +505,6 @@ export function anchoringStatusFor(proof: unknown): EvidenceAnchoringStatus {
     blockNumber: facts.blockNumber,
     blockHash: facts.blockHash,
     attestor: facts.attestor,
-  };
+  } as const);
   return claim;
 }
