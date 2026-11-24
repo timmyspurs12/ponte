@@ -5,12 +5,12 @@ import {
   ARBITRUM_SEPOLIA_CHAIN_ID,
   EVIDENCE_ANCHORED_TOPIC,
   NOT_VERIFIED_ANCHORING,
-  AnchorVerificationProof,
+  AnchorEvaluationProof,
   anchoringStatusFor,
   commitmentDigest,
   decodeEvidenceAnchored,
-  isAnchorVerificationProof,
-  verifyAnchorObservation,
+  isAnchorEvaluationProof,
+  evaluateAnchorObservation,
   type ChainObservation,
   type ExpectedAnchorCommitment,
   type ObservedAnchorEvent,
@@ -100,14 +100,14 @@ function observation(
   };
 }
 
-function failure(result: ReturnType<typeof verifyAnchorObservation>): string {
+function failure(result: ReturnType<typeof evaluateAnchorObservation>): string {
   assert.equal(result.verified, false, "expected an unverified result");
   return (result as { failure: string }).failure;
 }
 
 test("accepts a fully matching observation", () => {
-  const result = verifyAnchorObservation(EXPECTED, observation());
-  assert.ok(isAnchorVerificationProof(result));
+  const result = evaluateAnchorObservation(EXPECTED, observation());
+  assert.ok(isAnchorEvaluationProof(result));
   assert.equal(result.facts.transactionHash, TX_HASH);
   assert.equal(result.facts.blockNumber, "12345678");
   assert.equal(result.facts.attestor, ATTESTOR.toLowerCase());
@@ -116,14 +116,16 @@ test("accepts a fully matching observation", () => {
 
 test("rejects a missing observation", () => {
   assert.equal(
-    failure(verifyAnchorObservation(EXPECTED, null)),
+    failure(evaluateAnchorObservation(EXPECTED, null)),
     "NO_OBSERVATION",
   );
 });
 
 test("rejects a missing receipt", () => {
   assert.equal(
-    failure(verifyAnchorObservation(EXPECTED, observation({ receipt: null }))),
+    failure(
+      evaluateAnchorObservation(EXPECTED, observation({ receipt: null })),
+    ),
     "RECEIPT_MISSING",
   );
 });
@@ -131,7 +133,7 @@ test("rejects a missing receipt", () => {
 test("rejects a reverted transaction", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({}, {}, { status: "reverted" }),
       ),
@@ -143,7 +145,7 @@ test("rejects a reverted transaction", () => {
 test("rejects the wrong chain, including mainnet", () => {
   for (const chainId of ["42161", "1", "11155111", "421613"]) {
     assert.equal(
-      failure(verifyAnchorObservation(EXPECTED, observation({ chainId }))),
+      failure(evaluateAnchorObservation(EXPECTED, observation({ chainId }))),
       "WRONG_CHAIN",
       `chain ${chainId} must be rejected`,
     );
@@ -153,7 +155,7 @@ test("rejects the wrong chain, including mainnet", () => {
 test("rejects a receipt for a different transaction", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({}, {}, { transactionHash: `0x${"ee".repeat(32)}` }),
       ),
@@ -165,7 +167,7 @@ test("rejects a receipt for a different transaction", () => {
 test("rejects the wrong Registry destination in receipt and transaction", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({ transactionTo: OTHER_REGISTRY }),
       ),
@@ -174,7 +176,7 @@ test("rejects the wrong Registry destination in receipt and transaction", () => 
   );
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({}, {}, { to: OTHER_REGISTRY }),
       ),
@@ -186,7 +188,7 @@ test("rejects the wrong Registry destination in receipt and transaction", () => 
 test("rejects an unprobed or failed Registry identity check", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({ registryIdentity: null }),
       ),
@@ -195,7 +197,7 @@ test("rejects an unprobed or failed Registry identity check", () => {
   );
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({ registryIdentity: "unverified" }),
       ),
@@ -207,7 +209,7 @@ test("rejects an unprobed or failed Registry identity check", () => {
 test("rejects a missing event", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(EXPECTED, observation({}, {}, { logs: [] })),
+      evaluateAnchorObservation(EXPECTED, observation({}, {}, { logs: [] })),
     ),
     "EVENT_MISSING",
   );
@@ -216,7 +218,7 @@ test("rejects a missing event", () => {
 test("rejects an event emitted by a different contract", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({}, { registry: OTHER_REGISTRY }),
       ),
@@ -229,7 +231,7 @@ test("rejects two matching events in one receipt", () => {
   const log = anchorLog({});
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({}, {}, { logs: [log, log] }),
       ),
@@ -249,7 +251,9 @@ test("rejects every mismatched commitment field", () => {
   ];
   for (const [logOverrides, expected] of cases) {
     assert.equal(
-      failure(verifyAnchorObservation(EXPECTED, observation({}, logOverrides))),
+      failure(
+        evaluateAnchorObservation(EXPECTED, observation({}, logOverrides)),
+      ),
       expected,
     );
   }
@@ -258,7 +262,7 @@ test("rejects every mismatched commitment field", () => {
 test("rejects an attestor that did not send the transaction", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({ transactionFrom: STRANGER }, {}, { from: STRANGER }),
       ),
@@ -270,7 +274,7 @@ test("rejects an attestor that did not send the transaction", () => {
 test("rejects a receipt sender that disagrees with the transaction sender", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({}, {}, { from: STRANGER }),
       ),
@@ -282,7 +286,7 @@ test("rejects a receipt sender that disagrees with the transaction sender", () =
 test("rejects malformed block metadata", () => {
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         EXPECTED,
         observation({}, {}, { blockHash: "0x00" }),
       ),
@@ -294,13 +298,13 @@ test("rejects malformed block metadata", () => {
 test("accepts an attestor revoked after the fact, because authorship is historical", () => {
   // `registryIdentity: "verified"` means the Registry implementation was proven;
   // it says nothing about current attestor authority, which must not matter here.
-  const result = verifyAnchorObservation(EXPECTED, observation());
+  const result = evaluateAnchorObservation(EXPECTED, observation());
   assert.equal(result.verified, true);
 });
 
 test("normalises address case in both the commitment and the observation", () => {
   const checksummed = getAddress(REGISTRY.toUpperCase().replace("0X", "0x"));
-  const result = verifyAnchorObservation(
+  const result = evaluateAnchorObservation(
     { ...EXPECTED, registryAddress: checksummed },
     observation(),
   );
@@ -311,7 +315,7 @@ test("rejects a non-canonical expected sequence instead of coercing it", () => {
   for (const sequence of ["01", "1.0", "1e0", "-1", "", " 1", "0x1"]) {
     assert.equal(
       failure(
-        verifyAnchorObservation({ ...EXPECTED, sequence }, observation()),
+        evaluateAnchorObservation({ ...EXPECTED, sequence }, observation()),
       ),
       "EVENT_MALFORMED",
       `sequence ${JSON.stringify(sequence)} must be rejected`,
@@ -321,18 +325,18 @@ test("rejects a non-canonical expected sequence instead of coercing it", () => {
 
 test("handles the uint64 sequence boundary without precision loss", () => {
   const max = 18446744073709551615n;
-  const atMax = verifyAnchorObservation(
+  const atMax = evaluateAnchorObservation(
     { ...EXPECTED, sequence: max.toString() },
     observation({}, { sequence: max }),
   );
   assert.equal(atMax.verified, true);
-  if (isAnchorVerificationProof(atMax))
+  if (isAnchorEvaluationProof(atMax))
     assert.equal(atMax.facts.blockNumber, "12345678");
 
   // Beyond uint64 the commitment is invalid rather than silently truncated.
   assert.equal(
     failure(
-      verifyAnchorObservation(
+      evaluateAnchorObservation(
         { ...EXPECTED, sequence: (max + 1n).toString() },
         observation({}, { sequence: max }),
       ),
@@ -342,12 +346,12 @@ test("handles the uint64 sequence boundary without precision loss", () => {
 
   // A sequence that would lose precision as a float still compares exactly.
   const large = 9007199254740993n; // 2^53 + 1
-  const exact = verifyAnchorObservation(
+  const exact = evaluateAnchorObservation(
     { ...EXPECTED, sequence: large.toString() },
     observation({}, { sequence: large }),
   );
   assert.equal(exact.verified, true);
-  const offByOne = verifyAnchorObservation(
+  const offByOne = evaluateAnchorObservation(
     { ...EXPECTED, sequence: (large + 1n).toString() },
     observation({}, { sequence: large }),
   );
@@ -418,7 +422,7 @@ test("the presentation guard never upgrades anything but a real proof", () => {
     assert.deepEqual(anchoringStatusFor(forged), NOT_VERIFIED_ANCHORING);
 
   // A cloned real proof loses its private brand.
-  const real = verifyAnchorObservation(EXPECTED, observation());
+  const real = evaluateAnchorObservation(EXPECTED, observation());
   assert.deepEqual(
     anchoringStatusFor(structuredClone(real)),
     NOT_VERIFIED_ANCHORING,
@@ -450,8 +454,8 @@ test("the production runtime exposes no chain reader and no test hook", async ()
 });
 
 test("a forged verified result is rejected by the proof check", () => {
-  const real = verifyAnchorObservation(EXPECTED, observation());
-  assert.ok(isAnchorVerificationProof(real));
+  const real = evaluateAnchorObservation(EXPECTED, observation());
+  assert.ok(isAnchorEvaluationProof(real));
 
   // Every one of these is what a caller could hand-build to try to look verified.
   const forgeries: unknown[] = [
@@ -473,12 +477,12 @@ test("a forged verified result is rejected by the proof check", () => {
     { ...real },
     structuredClone(real),
     // Prototype imitation: has the class in its chain but no private field.
-    Object.create(AnchorVerificationProof.prototype),
+    Object.create(AnchorEvaluationProof.prototype),
   ];
 
   for (const forged of forgeries) {
     assert.equal(
-      isAnchorVerificationProof(forged),
+      isAnchorEvaluationProof(forged),
       false,
       `forgery must be rejected: ${Object.prototype.toString.call(forged)}`,
     );
@@ -487,14 +491,14 @@ test("a forged verified result is rejected by the proof check", () => {
   }
 
   // The genuine article is still accepted, so the guard is not simply "always no".
-  assert.equal(isAnchorVerificationProof(real), true);
+  assert.equal(isAnchorEvaluationProof(real), true);
   assert.equal(anchoringStatusFor(real).verified, true);
 });
 
 test("the commitment digest binds the full commitment and block metadata", () => {
-  const proofOf = (obs: Parameters<typeof verifyAnchorObservation>[1]) => {
-    const proof = verifyAnchorObservation(EXPECTED, obs);
-    assert.ok(isAnchorVerificationProof(proof), "expected a proof");
+  const proofOf = (obs: Parameters<typeof evaluateAnchorObservation>[1]) => {
+    const proof = evaluateAnchorObservation(EXPECTED, obs);
+    assert.ok(isAnchorEvaluationProof(proof), "expected a proof");
     return proof;
   };
 
@@ -535,8 +539,8 @@ test("the commitment digest binds the full commitment and block metadata", () =>
 });
 
 test("the proof carries its own commitment, so it cannot be re-pointed", () => {
-  const proof = verifyAnchorObservation(EXPECTED, observation());
-  assert.ok(isAnchorVerificationProof(proof));
+  const proof = evaluateAnchorObservation(EXPECTED, observation());
+  assert.ok(isAnchorEvaluationProof(proof));
 
   // The commitment captured at verification time is exactly what was expected.
   assert.deepEqual(proof.facts.commitment, {

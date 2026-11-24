@@ -4,16 +4,20 @@ import type { PoolClient } from "pg";
 import {
   ARBITRUM_SEPOLIA_CHAIN_ID,
   commitmentDigest,
-  isAnchorVerificationProof,
-  verifyAnchorObservation,
+  isAnchorEvaluationProof,
+  evaluateAnchorObservation,
 } from "./anchor-verification";
 import type {
   AnchorVerificationFailure,
-  AnchorVerificationProof,
-  AnchorVerificationResult,
+  AnchorEvaluationProof,
+  AnchorEvaluationResult,
   EvidenceChainReader,
   ExpectedAnchorCommitment,
 } from "./anchor-verification";
+import {
+  isTrustedAnchorVerification,
+  type TrustedAnchorVerification,
+} from "./trusted-seal";
 
 /**
  * The confirmed-state boundary for `evidence_outbox`.
@@ -33,6 +37,13 @@ import type {
  */
 
 export type AnchorConfirmationFailure =
+  /**
+   * Phase 2C.2A. The result was a genuine verification proof, but it was not
+   * produced by the trusted reader pipeline — so nothing vouches for where its
+   * observation came from. Phase 2C.1 accepted such a proof; this boundary no
+   * longer does.
+   */
+  | "TRUSTED_PROVENANCE_REQUIRED"
   | AnchorVerificationFailure
   | "CHAIN_READ_FAILED"
   | "OUTBOX_NOT_CONFIRMABLE"
@@ -125,21 +136,24 @@ export function commitmentFromRow(
 }
 
 /**
- * Reads the chain through the supplied reader and verifies the observation.
+ * Reads one observation through a supplied reader and evaluates it.
  *
- * The reader is not authenticated here: a caller can pass any implementation, and
- * in this offline phase a fabricated observation yields a proof of the check, not
- * of the chain. Phase 2C.2 replaces this with a single reviewed reader that derives
- * `registryIdentity` from independently pinned bytecode.
+ * **This is evaluation only.** Its result is an `AnchorEvaluationResult`, which
+ * `confirmVerifiedAnchor` rejects with `TRUSTED_PROVENANCE_REQUIRED` because nothing
+ * vouches for where the observation came from. The reader passed here is not
+ * authenticated in any way: a caller can supply any implementation, so a fabricated
+ * observation yields an evaluation of the check, not of the chain. It exists to
+ * exercise the evaluation path and is not a confirmation route; use
+ * `runTrustedVerification` for that.
  *
- * A reader failure is mapped to a non-confirming outcome rather than an
- * exception, so a transient RPC error can never be mistaken for success.
+ * A reader failure is mapped to a non-confirming outcome rather than an exception,
+ * so a transient RPC error can never be mistaken for success.
  */
 export async function verifyOutboxAgainstChain(
   reader: EvidenceChainReader,
   row: ConfirmableOutboxRow,
   transactionHash: string,
-): Promise<AnchorVerificationResult> {
+): Promise<AnchorEvaluationResult> {
   const expected = commitmentFromRow(row);
   let observation;
   try {
@@ -156,7 +170,7 @@ export async function verifyOutboxAgainstChain(
   }
   // A reader must not be able to answer with a different — even individually
   // valid — transaction and have it represented as verification of the one we
-  // asked about. `verifyAnchorObservation` also compares the receipt hash, but
+  // asked about. `evaluateAnchorObservation` also compares the receipt hash, but
   // the check is asserted here so the request itself is pinned.
   if (
     typeof observation?.transactionHash !== "string" ||
@@ -167,7 +181,7 @@ export async function verifyOutboxAgainstChain(
       status: "not_verified",
       failure: "RECEIPT_TRANSACTION_MISMATCH",
     };
-  return verifyAnchorObservation(expected, observation);
+  return evaluateAnchorObservation(expected, observation);
 }
 
 /**
@@ -175,7 +189,7 @@ export async function verifyOutboxAgainstChain(
  *
  * The parameter type is the proof class, and it is checked again at runtime, so a
  * caller cannot pass a hand-built `{ verified: true }` object, a spread copy, a
- * JSON round-trip, or a prototype imitation. Only `verifyAnchorObservation` can
+ * JSON round-trip, or a prototype imitation. Only `evaluateAnchorObservation` can
  * mint a proof.
  *
  * The commitment comparisons are also pushed into the authoritative `UPDATE`, so
@@ -187,10 +201,18 @@ export async function verifyOutboxAgainstChain(
 export async function confirmVerifiedAnchor(
   db: PoolClient,
   row: ConfirmableOutboxRow,
-  proof: AnchorVerificationProof,
+  trusted: TrustedAnchorVerification,
   now: Date,
 ): Promise<AnchorConfirmationOutcome> {
-  if (!isAnchorVerificationProof(proof))
+  // Two independent gates. The first asks "is this a result this codebase issued?";
+  // the second asks "did the trusted reader pipeline produce it?". A Phase 2C.1
+  // evaluation proof — however genuinely minted — fails the second gate, because
+  // nothing vouches for where its observation came from.
+  if (!isTrustedAnchorVerification(trusted))
+    return { confirmed: false, failure: "TRUSTED_PROVENANCE_REQUIRED" };
+
+  const proof = trusted.proof;
+  if (!isAnchorEvaluationProof(proof))
     return { confirmed: false, failure: "PROOF_REQUIRED" };
 
   const facts = proof.facts;
