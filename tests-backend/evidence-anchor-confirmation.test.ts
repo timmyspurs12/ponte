@@ -14,11 +14,29 @@ import {
   readConfirmableOutboxRow,
   verifyOutboxAgainstChain,
 } from "../src/server/evidence/anchor-confirmation";
-import { verifyAnchorObservation } from "../src/server/evidence/anchor-verification";
+import {
+  isAnchorVerificationProof,
+  verifyAnchorObservation,
+  type AnchorVerificationProof,
+  type AnchorVerificationResult,
+} from "../src/server/evidence/anchor-verification";
 import type {
   ChainObservation,
   EvidenceChainReader,
 } from "../src/server/evidence/anchor-verification";
+
+/**
+ * Narrows a pipeline result to a proof, failing loudly when it is not one.
+ * Mirrors what production code must do: a result is only usable once it is a
+ * proof the verification module actually issued.
+ */
+function asProof(result: AnchorVerificationResult): AnchorVerificationProof {
+  assert.ok(
+    isAnchorVerificationProof(result),
+    "expected a real verification proof",
+  );
+  return result;
+}
 
 /**
  * Confirmed-state invariant tests.
@@ -243,7 +261,7 @@ test("a pending outbox row cannot be confirmed even with a valid receipt", async
   const outcome = await confirmVerifiedAnchor(
     pool as never,
     row,
-    verification,
+    asProof(verification),
     new Date(),
   );
   assert.deepEqual(outcome, {
@@ -274,10 +292,15 @@ test("confirming a submitted row writes the full confirmation metadata exactly o
   const outcome = await confirmVerifiedAnchor(
     pool as never,
     row,
-    verification,
+    asProof(verification),
     now,
   );
-  assert.deepEqual(outcome, { confirmed: true, transactionHash: TX_HASH });
+  assert.equal(outcome.confirmed, true);
+  assert.equal(outcome.confirmed && outcome.transactionHash, TX_HASH);
+  assert.match(
+    String(outcome.confirmed && outcome.commitmentDigest),
+    /^[0-9a-f]{64}$/,
+  );
 
   const state = await stateOf(seeded.outboxId);
   assert.equal(state.submission_state, "confirmed");
@@ -289,7 +312,7 @@ test("confirming a submitted row writes the full confirmation metadata exactly o
   const again = await confirmVerifiedAnchor(
     pool as never,
     row,
-    verification,
+    asProof(verification),
     new Date(Date.now() + 60_000),
   );
   assert.deepEqual(again, {
@@ -339,7 +362,7 @@ test("an unverified result can never reach the confirmed state", async () => {
     const outcome = await confirmVerifiedAnchor(
       pool as never,
       row,
-      verification,
+      verification as never,
       new Date(),
     );
     assert.equal(outcome.confirmed, false, `${label} must not confirm`);
@@ -369,7 +392,7 @@ test("a chain-reader failure is treated as unverified, not as success", async ()
   const outcome = await confirmVerifiedAnchor(
     pool as never,
     row,
-    verification,
+    verification as never,
     new Date(),
   );
   assert.equal(outcome.confirmed, false);
@@ -400,7 +423,7 @@ test("a stale commitment cannot be confirmed against a receipt for another recor
   const outcome = await confirmVerifiedAnchor(
     pool as never,
     row,
-    verification,
+    verification as never,
     new Date(),
   );
   assert.equal(outcome.confirmed, false);
@@ -428,19 +451,30 @@ test("a verified result for a different registry is rejected at the persistence 
   assert.equal(verification.verified, true);
   if (!verification.verified) return;
 
+  // A proof's facts are frozen, so a caller cannot rewrite the registry on a real
+  // proof at all. Prove that directly...
+  const proof = asProof(verification);
+  assert.throws(() => {
+    (proof.facts as { registryAddress: string }).registryAddress =
+      "0x2222222222222222222222222222222222222222";
+  }, /read only|Cannot assign/i);
+  assert.equal(proof.facts.registryAddress, REGISTRY);
+
+  // ...and that a hand-built object claiming the same thing confirms nothing.
   const outcome = await confirmVerifiedAnchor(
     pool as never,
     row,
     {
-      ...verification,
-      registryAddress: "0x2222222222222222222222222222222222222222",
-    },
+      verified: true,
+      status: "verified",
+      facts: {
+        ...proof.facts,
+        registryAddress: "0x2222222222222222222222222222222222222222",
+      },
+    } as never,
     new Date(),
   );
-  assert.deepEqual(outcome, {
-    confirmed: false,
-    failure: "COMMITMENT_MISMATCH",
-  });
+  assert.deepEqual(outcome, { confirmed: false, failure: "PROOF_REQUIRED" });
   assert.equal((await stateOf(seeded.outboxId)).submission_state, "submitted");
 });
 
@@ -466,10 +500,255 @@ test("the outbox update is scoped to submitted rows inside a transaction", async
     const outcome = await confirmVerifiedAnchor(
       db,
       row,
-      verification,
+      asProof(verification),
       new Date(),
     );
     assert.equal(outcome.confirmed, true);
   });
   assert.equal((await stateOf(seeded.outboxId)).submission_state, "confirmed");
+});
+
+test("a forged verified object cannot confirm a submitted row", async () => {
+  const seeded = await seedOutbox();
+  await markSubmitted(seeded.outboxId);
+  const row = await readConfirmableOutboxRow(pool as never, seeded.outboxId);
+  assert.ok(row);
+
+  // Derive the genuine facts so the forgery is as convincing as possible: it
+  // carries a real transaction hash, a real block, and a real attestor.
+  const genuine = asProof(
+    verifyAnchorObservation(
+      {
+        chainId: row.chainId,
+        registryAddress: row.registryAddress,
+        evidenceId: row.evidenceId,
+        payloadHash: row.payloadHash,
+        evidenceKind: row.evidenceKind,
+        sequence: row.sequence,
+        previousPayloadHash: row.previousPayloadHash,
+      },
+      observation(seeded),
+    ),
+  );
+
+  const forgeries: unknown[] = [
+    { verified: true, status: "verified" },
+    { verified: true, status: "verified", facts: genuine.facts },
+    JSON.parse(
+      JSON.stringify({
+        verified: true,
+        status: "verified",
+        facts: genuine.facts,
+      }),
+    ),
+    { ...genuine },
+    structuredClone(genuine),
+    Object.create(Object.getPrototypeOf(genuine)),
+  ];
+
+  for (const forged of forgeries) {
+    const outcome = await confirmVerifiedAnchor(
+      pool as never,
+      row,
+      forged as never,
+      new Date(),
+    );
+    assert.deepEqual(
+      outcome,
+      { confirmed: false, failure: "PROOF_REQUIRED" },
+      "a forged object must never confirm",
+    );
+  }
+
+  const state = await stateOf(seeded.outboxId);
+  assert.equal(state.submission_state, "submitted");
+  assert.equal(state.confirmed_at, null);
+
+  // The genuine proof still works, proving the guard is not merely "always no".
+  const ok = await confirmVerifiedAnchor(
+    pool as never,
+    row,
+    genuine,
+    new Date(),
+  );
+  assert.equal(ok.confirmed, true);
+  assert.equal((await stateOf(seeded.outboxId)).submission_state, "confirmed");
+});
+
+test("a valid proof for a different evidence record cannot confirm this row", async () => {
+  const target = await seedOutbox();
+  const other = await seedOutbox();
+  await markSubmitted(target.outboxId);
+
+  const targetRow = await readConfirmableOutboxRow(
+    pool as never,
+    target.outboxId,
+  );
+  assert.ok(targetRow);
+
+  // A genuinely verified proof — but for the *other* record's commitment.
+  const otherProof = asProof(
+    verifyAnchorObservation(
+      {
+        chainId: targetRow.chainId,
+        registryAddress: targetRow.registryAddress,
+        evidenceId: `0x${other.publicEvidenceId.toString("hex")}`,
+        payloadHash: `0x${other.payloadHash.toString("hex")}`,
+        evidenceKind: 1,
+        sequence: "1",
+        previousPayloadHash: `0x${other.previousPayloadHash.toString("hex")}`,
+      },
+      observation(other),
+    ),
+  );
+
+  // The proof is real, but it does not describe the target row. The digest is
+  // computed from the row's commitment, so the two cannot agree.
+  const outcome = await confirmVerifiedAnchor(
+    pool as never,
+    targetRow,
+    otherProof,
+    new Date(),
+  );
+  assert.deepEqual(outcome, {
+    confirmed: false,
+    failure: "COMMITMENT_MISMATCH",
+  });
+  assert.equal((await stateOf(target.outboxId)).submission_state, "submitted");
+});
+
+test("each commitment field is enforced by the write itself, not only in memory", async () => {
+  const seeded = await seedOutbox();
+  await markSubmitted(seeded.outboxId);
+  const row = await readConfirmableOutboxRow(pool as never, seeded.outboxId);
+  assert.ok(row);
+
+  const genuine = asProof(
+    verifyAnchorObservation(
+      {
+        chainId: row.chainId,
+        registryAddress: row.registryAddress,
+        evidenceId: row.evidenceId,
+        payloadHash: row.payloadHash,
+        evidenceKind: row.evidenceKind,
+        sequence: row.sequence,
+        previousPayloadHash: row.previousPayloadHash,
+      },
+      observation(seeded),
+    ),
+  );
+
+  // Simulate a stale or wrong in-memory row: the persisted evidence no longer
+  // matches, so the `UPDATE ... FROM route_decision_evidence` WHERE clause must
+  // refuse the write even though the proof itself is genuine.
+  const stale: typeof row = {
+    ...row,
+    payloadHash: `0x${"ff".repeat(32)}`,
+  };
+  const outcome = await confirmVerifiedAnchor(
+    pool as never,
+    stale,
+    genuine,
+    new Date(),
+  );
+  // Rejected by the in-memory commitment comparison before any write.
+  assert.deepEqual(outcome, {
+    confirmed: false,
+    failure: "COMMITMENT_MISMATCH",
+  });
+
+  // Persisted evidence cannot drift: the table is protected by an append-only
+  // trigger, so this tamper attempt is itself refused by the database.
+  await assert.rejects(
+    pool.query(
+      "UPDATE route_decision_evidence SET payload_hash=$2 WHERE id=$1",
+      [seeded.evidenceId, Buffer.from("ff".repeat(32), "hex")],
+    ),
+    /immutable/i,
+  );
+
+  // The write-time `WHERE` remains load-bearing anyway. Mint a genuine proof for
+  // a commitment whose evidence id differs from what is stored, then hand the
+  // boundary a row object that claims the proof's id. The in-memory comparison
+  // passes; only the `FROM route_decision_evidence ... WHERE` clause can refuse.
+  const foreignEvidenceId = `0x${"ee".repeat(32)}`;
+  const foreignLog = {
+    ...anchorLog(seeded),
+    topics: [
+      TOPIC,
+      foreignEvidenceId,
+      anchorLog(seeded).topics[2],
+      anchorLog(seeded).topics[3],
+    ],
+  };
+  const elsewhere = asProof(
+    verifyAnchorObservation(
+      {
+        chainId: row.chainId,
+        registryAddress: row.registryAddress,
+        evidenceId: foreignEvidenceId,
+        payloadHash: row.payloadHash,
+        evidenceKind: row.evidenceKind,
+        sequence: row.sequence,
+        previousPayloadHash: row.previousPayloadHash,
+      },
+      {
+        ...observation(seeded),
+        receipt: { ...observation(seeded).receipt!, logs: [foreignLog] },
+      },
+    ),
+  );
+  const sqlOnly = await confirmVerifiedAnchor(
+    pool as never,
+    { ...row, evidenceId: foreignEvidenceId },
+    elsewhere,
+    new Date(),
+  );
+  assert.deepEqual(sqlOnly, {
+    confirmed: false,
+    failure: "OUTBOX_NOT_CONFIRMABLE",
+  });
+  assert.equal((await stateOf(seeded.outboxId)).submission_state, "submitted");
+});
+
+test("a reader returning a different valid transaction cannot verify the requested one", async () => {
+  const seeded = await seedOutbox();
+  await markSubmitted(seeded.outboxId);
+  const row = await readConfirmableOutboxRow(pool as never, seeded.outboxId);
+  assert.ok(row);
+
+  const otherTx = `0x${"ee".repeat(32)}`;
+  const real = observation(seeded);
+
+  // A reader that answers a request for TX_HASH with a different, internally
+  // consistent transaction must not be represented as verifying TX_HASH.
+  const swappedReader: EvidenceChainReader = {
+    async readAnchorObservation() {
+      return {
+        ...real,
+        transactionHash: otherTx,
+        receipt: { ...real.receipt!, transactionHash: otherTx },
+      };
+    },
+  };
+
+  const verification = await verifyOutboxAgainstChain(
+    swappedReader,
+    row,
+    TX_HASH,
+  );
+  assert.deepEqual(verification, {
+    verified: false,
+    status: "not_verified",
+    failure: "RECEIPT_TRANSACTION_MISMATCH",
+  });
+
+  const outcome = await confirmVerifiedAnchor(
+    pool as never,
+    row,
+    verification as never,
+    new Date(),
+  );
+  assert.equal(outcome.confirmed, false);
+  assert.equal((await stateOf(seeded.outboxId)).submission_state, "submitted");
 });

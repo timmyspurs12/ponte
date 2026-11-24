@@ -60,9 +60,73 @@ transaction, and a currently-authorized attestor must not be able to validate a
 transaction it did not send.
 
 Registry _identity_ is a separate concern, carried on the observation as
-`registryIdentity`. It records that the configured address really is the expected
-contract implementation. A `null` value means the probe did not run, and
-verification then refuses to confirm — it never assumes identity.
+`registryIdentity`. A `null` value means the probe did not run, and verification
+then refuses to confirm — it never assumes identity.
+
+### `registryIdentity: "verified"` is not itself proof of identity
+
+In this phase the flag is a **declaration by the caller**, not a cryptographic
+check. Phase 2C.1 does not implement the probe, so it cannot itself detect a
+wrong contract. Treat the flag as an assertion the future reader must earn.
+
+The production reader is required to establish all of the following before it may
+set the flag, in this order:
+
+1. **Chain first.** `eth_chainId` returns `0x66eee` (421614). Refuse otherwise.
+2. **Non-empty code.** `eth_getCode(registry)` is neither `0x` nor an EIP-7702
+   delegation designator, ruling out an EOA or a self-destructed address.
+3. **Bytecode identity.** `keccak256` of the deployed runtime bytecode equals a
+   hash pinned _independently of the RPC being queried_ — recorded from the
+   deployment artifact, committed to the repository, and cross-checked against
+   verified source on Arbiscan Sepolia or Sourcify. Comparing against a hash the
+   same RPC supplied proves nothing.
+4. **Address binding.** The address is the one configured for this environment
+   and equals the persisted `route_decision_evidence.registry_address`.
+5. **Positive control.** A known-good call such as `admin()` returns a non-zero
+   address, so an empty proxy or a permissive fallback cannot pass.
+
+If any step fails or cannot be performed, the reader must report
+`registryIdentity: "unverified"` or `null`, and the evidence stays unconfirmed. A
+bytecode hash identifies an _implementation_; it does not establish that the
+implementation is trustworthy, so the pinned hash must come from a reviewed
+artifact rather than from the chain under verification.
+
+## 2b. Why a result cannot be fabricated
+
+`AnchorVerificationResult` is `AnchorVerificationProof | AnchorNotVerified`. The
+verified branch is a **class instance**, not a structural object, and it carries a
+genuine ECMAScript private field (`#brands`) that only the constructor inside
+`anchor-verification.ts` can install.
+
+Consequences:
+
+- An object literal `{ verified: true }` is not assignable to the union in
+  TypeScript, and is rejected at runtime by `isAnchorVerificationProof`.
+- Spreading a real proof, `structuredClone`, or a JSON round-trip produces a new
+  object with **no** private field, so it is rejected.
+- `Object.create(AnchorVerificationProof.prototype)` carries the prototype but not
+  the field, so it is rejected.
+- A `WeakSet` (`ISSUED_PROOFS`) records every proof minted. Only
+  `verifyAnchorObservation` adds to it, and it is module-private, so a caller
+  cannot register a hand-built object even with the class reference in hand.
+
+`confirmVerifiedAnchor` takes the proof class and re-checks it at runtime. The
+status projection takes `unknown` and returns the frozen `NOT_VERIFIED_ANCHORING`
+for anything that is not an issued proof, so the API cannot be made to render an
+anchoring claim by request data or by a forged object.
+
+### Commitment binding
+
+A proof is minted against a specific commitment and **carries it** as
+`facts.commitment`. The confirmation boundary compares _that_ captured commitment
+to the persisted row — never a commitment supplied by its caller. This closes the
+case where a proof minted for one evidence record could be re-pointed at another
+by passing a different `expected` into a digest.
+
+`commitmentDigest(facts)` is a SHA-256 over the domain separator, transaction
+hash, both the expected and attested chain and registry, and the full commitment
+plus block metadata. It is recorded on a successful confirmation so the binding
+is auditable.
 
 ## 3. Confirmed-state invariant
 

@@ -4,8 +4,12 @@ import { getAddress, id as keccakId, zeroPadValue, toBeHex } from "ethers";
 import {
   ARBITRUM_SEPOLIA_CHAIN_ID,
   EVIDENCE_ANCHORED_TOPIC,
+  NOT_VERIFIED_ANCHORING,
+  AnchorVerificationProof,
   anchoringStatusFor,
+  commitmentDigest,
   decodeEvidenceAnchored,
+  isAnchorVerificationProof,
   verifyAnchorObservation,
   type ChainObservation,
   type ExpectedAnchorCommitment,
@@ -103,12 +107,11 @@ function failure(result: ReturnType<typeof verifyAnchorObservation>): string {
 
 test("accepts a fully matching observation", () => {
   const result = verifyAnchorObservation(EXPECTED, observation());
-  assert.equal(result.verified, true);
-  if (!result.verified) return;
-  assert.equal(result.transactionHash, TX_HASH);
-  assert.equal(result.blockNumber, "12345678");
-  assert.equal(result.attestor, ATTESTOR.toLowerCase());
-  assert.equal(result.chainId, "421614");
+  assert.ok(isAnchorVerificationProof(result));
+  assert.equal(result.facts.transactionHash, TX_HASH);
+  assert.equal(result.facts.blockNumber, "12345678");
+  assert.equal(result.facts.attestor, ATTESTOR.toLowerCase());
+  assert.equal(result.facts.chainId, "421614");
 });
 
 test("rejects a missing observation", () => {
@@ -323,7 +326,8 @@ test("handles the uint64 sequence boundary without precision loss", () => {
     observation({}, { sequence: max }),
   );
   assert.equal(atMax.verified, true);
-  if (atMax.verified) assert.equal(atMax.blockNumber, "12345678");
+  if (isAnchorVerificationProof(atMax))
+    assert.equal(atMax.facts.blockNumber, "12345678");
 
   // Beyond uint64 the commitment is invalid rather than silently truncated.
   assert.equal(
@@ -391,21 +395,37 @@ test("decodes the event strictly", () => {
   );
 });
 
-test("the presentation guard never upgrades an unverified result", () => {
-  assert.deepEqual(anchoringStatusFor(null), {
-    verified: false,
-    status: "not_verified",
-  });
+test("the presentation guard never upgrades anything but a real proof", () => {
+  assert.deepEqual(anchoringStatusFor(null), NOT_VERIFIED_ANCHORING);
+  assert.deepEqual(anchoringStatusFor(undefined), NOT_VERIFIED_ANCHORING);
   assert.deepEqual(
     anchoringStatusFor({
       verified: false,
       status: "not_verified",
       failure: "EVENT_MISSING",
     }),
-    { verified: false, status: "not_verified" },
+    NOT_VERIFIED_ANCHORING,
   );
-  const verified = verifyAnchorObservation(EXPECTED, observation());
-  const claim = anchoringStatusFor(verified);
+
+  // Every imitation of a verified claim is refused.
+  const forgeries: unknown[] = [
+    { verified: true, status: "verified", chainId: "421614" },
+    { verified: true, status: "verified", transactionHash: TX_HASH },
+    { facts: { transactionHash: TX_HASH }, verified: true, status: "verified" },
+    JSON.parse(JSON.stringify({ verified: true, status: "verified" })),
+  ];
+  for (const forged of forgeries)
+    assert.deepEqual(anchoringStatusFor(forged), NOT_VERIFIED_ANCHORING);
+
+  // A cloned real proof loses its private brand.
+  const real = verifyAnchorObservation(EXPECTED, observation());
+  assert.deepEqual(
+    anchoringStatusFor(structuredClone(real)),
+    NOT_VERIFIED_ANCHORING,
+  );
+  assert.deepEqual(anchoringStatusFor({ ...real }), NOT_VERIFIED_ANCHORING);
+
+  const claim = anchoringStatusFor(real);
   assert.equal(claim.verified, true);
   if (claim.verified) assert.equal(claim.transactionHash, TX_HASH);
 });
@@ -427,4 +447,115 @@ test("the production runtime exposes no chain reader and no test hook", async ()
   // returns null, so anchoring cannot be silently verified by configuration.
   assert.equal(runtime.resolveEvidenceChainReader(), null);
   assert.match(runtime.evidenceChainReaderUnavailableReason(), /not verified/);
+});
+
+test("a forged verified result is rejected by the proof check", () => {
+  const real = verifyAnchorObservation(EXPECTED, observation());
+  assert.ok(isAnchorVerificationProof(real));
+
+  // Every one of these is what a caller could hand-build to try to look verified.
+  const forgeries: unknown[] = [
+    { verified: true, status: "verified" },
+    {
+      verified: true,
+      status: "verified",
+      chainId: "421614",
+      registryAddress: REGISTRY,
+      transactionHash: TX_HASH,
+      blockNumber: "12345678",
+      blockHash: BLOCK_HASH,
+      attestor: ATTESTOR,
+    },
+    { facts: real.facts, verified: true, status: "verified" },
+    JSON.parse(
+      JSON.stringify({ facts: real.facts, verified: true, status: "verified" }),
+    ),
+    { ...real },
+    structuredClone(real),
+    // Prototype imitation: has the class in its chain but no private field.
+    Object.create(AnchorVerificationProof.prototype),
+  ];
+
+  for (const forged of forgeries) {
+    assert.equal(
+      isAnchorVerificationProof(forged),
+      false,
+      `forgery must be rejected: ${Object.prototype.toString.call(forged)}`,
+    );
+    // And it cannot produce a verified presentation claim either.
+    assert.deepEqual(anchoringStatusFor(forged), NOT_VERIFIED_ANCHORING);
+  }
+
+  // The genuine article is still accepted, so the guard is not simply "always no".
+  assert.equal(isAnchorVerificationProof(real), true);
+  assert.equal(anchoringStatusFor(real).verified, true);
+});
+
+test("the commitment digest binds the full commitment and block metadata", () => {
+  const proofOf = (obs: Parameters<typeof verifyAnchorObservation>[1]) => {
+    const proof = verifyAnchorObservation(EXPECTED, obs);
+    assert.ok(isAnchorVerificationProof(proof), "expected a proof");
+    return proof;
+  };
+
+  const base = commitmentDigest(proofOf(observation()).facts);
+  assert.match(base, /^[0-9a-f]{64}$/);
+
+  // Different transaction hash, same commitment.
+  const otherTx = `0x${"ee".repeat(32)}`;
+  assert.notEqual(
+    commitmentDigest(
+      proofOf(
+        observation(
+          { transactionHash: otherTx },
+          {},
+          { transactionHash: otherTx },
+        ),
+      ).facts,
+    ),
+    base,
+    "transaction hash must be bound",
+  );
+
+  // Different block metadata, same commitment.
+  assert.notEqual(
+    commitmentDigest(
+      proofOf(observation({}, {}, { blockNumber: "99999999" })).facts,
+    ),
+    base,
+    "block number must be bound",
+  );
+  assert.notEqual(
+    commitmentDigest(
+      proofOf(observation({}, {}, { blockHash: `0x${"ff".repeat(32)}` })).facts,
+    ),
+    base,
+    "block hash must be bound",
+  );
+});
+
+test("the proof carries its own commitment, so it cannot be re-pointed", () => {
+  const proof = verifyAnchorObservation(EXPECTED, observation());
+  assert.ok(isAnchorVerificationProof(proof));
+
+  // The commitment captured at verification time is exactly what was expected.
+  assert.deepEqual(proof.facts.commitment, {
+    chainId: EXPECTED.chainId,
+    registryAddress: EXPECTED.registryAddress.toLowerCase(),
+    evidenceId: EXPECTED.evidenceId.toLowerCase(),
+    payloadHash: EXPECTED.payloadHash.toLowerCase(),
+    evidenceKind: EXPECTED.evidenceKind,
+    sequence: EXPECTED.sequence,
+    previousPayloadHash: EXPECTED.previousPayloadHash.toLowerCase(),
+  });
+
+  // And it is frozen, so a caller cannot rewrite it to point at another record.
+  assert.throws(() => {
+    (proof.facts.commitment as { evidenceId: string }).evidenceId =
+      `0x${"ff".repeat(32)}`;
+  }, /read only|Cannot assign/i);
+  assert.equal(
+    proof.facts.commitment.evidenceId,
+    EXPECTED.evidenceId.toLowerCase(),
+  );
 });

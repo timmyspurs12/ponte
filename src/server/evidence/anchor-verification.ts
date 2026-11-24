@@ -10,6 +10,7 @@
  * different concern, and a caller-supplied transaction hash is never accepted as
  * proof: the receipt must come from a chain reader the caller did not author.
  */
+import { createHash } from "node:crypto";
 import { getAddress, id as keccakId } from "ethers";
 import type { EvidenceAnchoringStatus } from "../../lib/models";
 
@@ -120,26 +121,129 @@ export interface EvidenceChainReader {
   }): Promise<ChainObservation>;
 }
 
-export type AnchorVerificationResult =
-  | {
-      readonly verified: true;
-      readonly status: "verified";
-      readonly chainId: string;
-      readonly registryAddress: string;
-      readonly transactionHash: string;
-      readonly blockNumber: string;
-      readonly blockHash: string;
-      readonly attestor: string;
-    }
-  | {
-      readonly verified: false;
-      readonly status: "not_verified";
-      readonly failure: AnchorVerificationFailure;
-    };
+/**
+ * The fields a verified proof attests to. Everything here is canonical: lowercase
+ * 0x-hex for hashes and addresses, decimal strings for numbers. This is the shape
+ * of a proof, not the proof itself.
+ */
+export interface VerifiedAnchorFacts {
+  readonly chainId: string;
+  readonly registryAddress: string;
+  readonly transactionHash: string;
+  readonly blockNumber: string;
+  readonly blockHash: string;
+  readonly attestor: string;
+  /**
+   * The exact commitment this proof was minted against, captured inside the
+   * verification pipeline. The confirmation boundary compares *these* values to
+   * the persisted row, never a commitment supplied by its caller — otherwise a
+   * proof for one record could be bound to another by passing a different
+   * `expected` into the digest.
+   */
+  readonly commitment: ExpectedAnchorCommitment;
+}
 
-function notVerified(
-  failure: AnchorVerificationFailure,
-): AnchorVerificationResult {
+/**
+ * Commitment binding: a SHA-256 digest over every field the proof attests to plus
+ * the full expected commitment. Two proofs for different evidence records cannot
+ * share a digest, so a persistence write can be bound to the exact record.
+ */
+export const COMMITMENT_DIGEST_DOMAIN = "ponte.anchor-commitment.v1";
+
+export function commitmentDigest(facts: VerifiedAnchorFacts): string {
+  const { commitment: expected, transactionHash } = facts;
+  // Both halves are bound: the facts the proof attests to, and the full expected
+  // commitment. Omitting either half would let a digest collide across records
+  // that differ only in the unbound field.
+  const payload = [
+    COMMITMENT_DIGEST_DOMAIN,
+    transactionHash,
+    expected.chainId,
+    expected.registryAddress,
+    facts.chainId,
+    facts.registryAddress,
+    expected.evidenceId,
+    expected.payloadHash,
+    String(expected.evidenceKind),
+    expected.sequence,
+    expected.previousPayloadHash,
+    facts.blockNumber,
+    facts.blockHash,
+    facts.attestor,
+  ].join("\u0000");
+  return createHash("sha256").update(payload, "utf8").digest("hex");
+}
+
+/**
+ * An opaque, runtime-verified proof that a receipt was checked.
+ *
+ * `#brands` is a genuine ECMAScript private field, so it exists only on objects
+ * created by the constructor inside this module. `Object.freeze`, a spread, a
+ * `structuredClone`, a JSON round-trip, or an object literal that merely looks
+ * like this one has none of it: any own copy carries a *different* private field,
+ * and any plain imitation has none at all. A forged `{ verified: true }` object
+ * therefore fails `#brands.has(this)` and cannot pass `isAnchorVerificationProof`.
+ */
+export class AnchorVerificationProof {
+  readonly #brands: ReadonlySet<object>;
+
+  /** @internal Constructed only by `verifyAnchorObservation`. */
+  private constructor(readonly facts: VerifiedAnchorFacts) {
+    this.#brands = new Set<object>([this]);
+  }
+
+  get verified(): true {
+    return true;
+  }
+
+  get status(): "verified" {
+    return "verified";
+  }
+
+  /** @internal */
+  static create(facts: VerifiedAnchorFacts): AnchorVerificationProof {
+    return new AnchorVerificationProof(Object.freeze({ ...facts }));
+  }
+
+  /** @internal True only for objects built by this module. */
+  owns(value: unknown): boolean {
+    return (
+      typeof value === "object" && value !== null && this.#brands.has(value)
+    );
+  }
+}
+
+/**
+ * The module-private brand. Only `AnchorVerificationProof.create` can add to it,
+ * so a caller cannot register a hand-built object even with this reference.
+ */
+const ISSUED_PROOFS = new WeakSet<object>();
+
+/** True when `value` is a proof that this module actually issued. */
+export function isAnchorVerificationProof(
+  value: unknown,
+): value is AnchorVerificationProof {
+  if (value instanceof AnchorVerificationProof)
+    return ISSUED_PROOFS.has(value) && value.owns(value);
+  // An object carrying the prototype but not the private field is an imitation.
+  return false;
+}
+
+export type AnchorNotVerified = {
+  readonly verified: false;
+  readonly status: "not_verified";
+  readonly failure: AnchorVerificationFailure;
+};
+
+/**
+ * The pipeline result. `verified: true` is representable *only* by
+ * `AnchorVerificationProof`; a plain object literal with `verified: true` is not
+ * assignable to this type, and is rejected at runtime even if cast.
+ */
+export type AnchorVerificationResult =
+  AnchorVerificationProof | AnchorNotVerified;
+
+function notVerified(failure: AnchorVerificationFailure): AnchorNotVerified {
   return { verified: false, status: "not_verified", failure };
 }
 
@@ -339,35 +443,54 @@ export function verifyAnchorObservation(
   if (!blockNumber || !blockHash)
     return notVerified("BLOCK_METADATA_INCONSISTENT");
 
-  return {
-    verified: true,
-    status: "verified",
+  const facts: VerifiedAnchorFacts = Object.freeze({
     chainId: observedChain,
     registryAddress: expectedRegistry,
     transactionHash,
     blockNumber,
     blockHash,
     attestor: decoded.attestor,
-  };
+    commitment: Object.freeze({
+      chainId: expectedChain,
+      registryAddress: expectedRegistry,
+      evidenceId: expectedEvidenceId,
+      payloadHash: expectedPayloadHash,
+      evidenceKind: expected.evidenceKind,
+      sequence: expectedSequence,
+      previousPayloadHash: expectedPrevious,
+    }),
+  });
+  const proof = AnchorVerificationProof.create(facts);
+  ISSUED_PROOFS.add(proof);
+  return proof;
 }
 
+/** Shared frozen default so no caller can render or mutate a claim. */
+export const NOT_VERIFIED_ANCHORING: EvidenceAnchoringStatus = Object.freeze({
+  verified: false,
+  status: "not_verified",
+} as const);
+
 /**
- * Presentation guard. The status projection must derive its anchoring claim
- * from this function, so an outbox row cannot render as anchored on its own.
+ * Presentation guard.
+ *
+ * Takes the proof, not a status object. A caller cannot hand in a struct that
+ * merely claims `verified: true`: anything that is not a proof issued by this
+ * module yields the frozen not-verified claim, and the API therefore cannot be
+ * made to display an anchoring claim by request data or by a forged object.
  */
-export function anchoringStatusFor(
-  result: AnchorVerificationResult | null,
-): EvidenceAnchoringStatus {
-  if (!result || !result.verified)
-    return { verified: false, status: "not_verified" };
-  return {
+export function anchoringStatusFor(proof: unknown): EvidenceAnchoringStatus {
+  if (!isAnchorVerificationProof(proof)) return NOT_VERIFIED_ANCHORING;
+  const { facts } = proof;
+  const claim: EvidenceAnchoringStatus = {
     verified: true,
     status: "verified",
-    chainId: result.chainId,
-    registryAddress: result.registryAddress,
-    transactionHash: result.transactionHash,
-    blockNumber: result.blockNumber,
-    blockHash: result.blockHash,
-    attestor: result.attestor,
+    chainId: facts.chainId,
+    registryAddress: facts.registryAddress,
+    transactionHash: facts.transactionHash,
+    blockNumber: facts.blockNumber,
+    blockHash: facts.blockHash,
+    attestor: facts.attestor,
   };
+  return claim;
 }

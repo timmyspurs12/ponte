@@ -1,9 +1,15 @@
 import "server-only";
 
 import type { PoolClient } from "pg";
-import { ARBITRUM_SEPOLIA_CHAIN_ID } from "./anchor-verification";
+import {
+  ARBITRUM_SEPOLIA_CHAIN_ID,
+  commitmentDigest,
+  isAnchorVerificationProof,
+  verifyAnchorObservation,
+} from "./anchor-verification";
 import type {
   AnchorVerificationFailure,
+  AnchorVerificationProof,
   AnchorVerificationResult,
   EvidenceChainReader,
   ExpectedAnchorCommitment,
@@ -30,11 +36,17 @@ export type AnchorConfirmationFailure =
   | AnchorVerificationFailure
   | "CHAIN_READ_FAILED"
   | "OUTBOX_NOT_CONFIRMABLE"
+  | "PROOF_REQUIRED"
   | "COMMITMENT_MISMATCH"
   | "CONFIRMATION_METADATA_INCONSISTENT";
 
 export type AnchorConfirmationOutcome =
-  | { readonly confirmed: true; readonly transactionHash: string }
+  | {
+      readonly confirmed: true;
+      readonly transactionHash: string;
+      /** Digest binding this confirmation to one exact evidence commitment. */
+      readonly commitmentDigest: string;
+    }
   | { readonly confirmed: false; readonly failure: AnchorConfirmationFailure };
 
 export interface ConfirmableOutboxRow {
@@ -123,7 +135,6 @@ export async function verifyOutboxAgainstChain(
   row: ConfirmableOutboxRow,
   transactionHash: string,
 ): Promise<AnchorVerificationResult> {
-  const { verifyAnchorObservation } = await import("./anchor-verification");
   const expected = commitmentFromRow(row);
   let observation;
   try {
@@ -138,41 +149,81 @@ export async function verifyOutboxAgainstChain(
       failure: "NO_OBSERVATION",
     };
   }
+  // A reader must not be able to answer with a different — even individually
+  // valid — transaction and have it represented as verification of the one we
+  // asked about. `verifyAnchorObservation` also compares the receipt hash, but
+  // the check is asserted here so the request itself is pinned.
+  if (
+    typeof observation?.transactionHash !== "string" ||
+    observation.transactionHash.toLowerCase() !== transactionHash.toLowerCase()
+  )
+    return {
+      verified: false,
+      status: "not_verified",
+      failure: "RECEIPT_TRANSACTION_MISMATCH",
+    };
   return verifyAnchorObservation(expected, observation);
 }
 
 /**
- * Confirms an outbox row, but only from a verified result.
+ * Confirms an outbox row, but only from an issued verification proof.
  *
- * Rejects before touching the database when the result is not verified, when the
- * row is not in `submitted`, when the persisted chain is not Arbitrum Sepolia, or
- * when the verified commitment does not match the persisted one.
+ * The parameter type is the proof class, and it is checked again at runtime, so a
+ * caller cannot pass a hand-built `{ verified: true }` object, a spread copy, a
+ * JSON round-trip, or a prototype imitation. Only `verifyAnchorObservation` can
+ * mint a proof.
+ *
+ * The commitment comparisons are also pushed into the authoritative `UPDATE`, so
+ * the write itself is bound to the exact transaction hash, chain, registry,
+ * evidence id, payload hash, evidence kind, sequence and previous payload hash.
+ * A proof obtained for a different evidence record therefore cannot confirm this
+ * row, even if an earlier in-memory read were stale or wrong.
  */
 export async function confirmVerifiedAnchor(
   db: PoolClient,
   row: ConfirmableOutboxRow,
-  verification: AnchorVerificationResult,
+  proof: AnchorVerificationProof,
   now: Date,
 ): Promise<AnchorConfirmationOutcome> {
-  if (!verification.verified)
-    return { confirmed: false, failure: verification.failure };
+  if (!isAnchorVerificationProof(proof))
+    return { confirmed: false, failure: "PROOF_REQUIRED" };
+
+  const facts = proof.facts;
+  const committed = facts.commitment;
+
+  // Compare the proof's OWN commitment — captured inside the verification
+  // pipeline — against the persisted row. Nothing the caller passes can widen or
+  // redirect this binding, so a proof minted for another evidence record cannot
+  // be married to this one.
+  if (
+    committed.chainId !== row.chainId ||
+    committed.registryAddress !== row.registryAddress.toLowerCase() ||
+    committed.evidenceId !== row.evidenceId.toLowerCase() ||
+    committed.payloadHash !== row.payloadHash.toLowerCase() ||
+    committed.evidenceKind !== row.evidenceKind ||
+    committed.sequence !== row.sequence ||
+    committed.previousPayloadHash !== row.previousPayloadHash.toLowerCase()
+  )
+    return { confirmed: false, failure: "COMMITMENT_MISMATCH" };
+
   if (row.submissionState !== "submitted")
     return { confirmed: false, failure: "OUTBOX_NOT_CONFIRMABLE" };
   if (row.chainId !== ARBITRUM_SEPOLIA_CHAIN_ID.toString())
     return { confirmed: false, failure: "COMMITMENT_MISMATCH" };
   if (
-    verification.chainId !== row.chainId ||
-    verification.registryAddress !== row.registryAddress.toLowerCase()
+    facts.chainId !== row.chainId ||
+    facts.registryAddress !== row.registryAddress.toLowerCase()
   )
     return { confirmed: false, failure: "COMMITMENT_MISMATCH" };
   if (!now || !Number.isFinite(now.getTime()))
     return { confirmed: false, failure: "CONFIRMATION_METADATA_INCONSISTENT" };
 
-  // The transaction hash and the confirmed block metadata are written together
-  // with the state change, so a confirmed row can never lack its provenance and
-  // a later reader cannot observe a partially-populated confirmation.
+  // Every commitment field is compared against the persisted evidence row inside
+  // the write itself. The `WHERE` cannot succeed unless the proof's transaction,
+  // chain and registry, and the committed evidence id, payload hash, kind,
+  // sequence and previous hash all agree with what is stored.
   const result = await db.query(
-    `UPDATE evidence_outbox
+    `UPDATE evidence_outbox o
         SET submission_state = 'confirmed',
             transaction_hash = $2,
             confirmed_at = $3,
@@ -181,19 +232,40 @@ export async function confirmVerifiedAnchor(
             attestor_address = $6,
             last_failure_class = NULL,
             last_failure_at = NULL
-      WHERE id = $1
-        AND submission_state = 'submitted'
-        AND transaction_hash = $2`,
+       FROM route_decision_evidence e
+      WHERE o.id = $1
+        AND e.id = o.evidence_record_id
+        AND o.submission_state = 'submitted'
+        AND o.transaction_hash = $2
+        AND e.chain_id = $7
+        AND e.registry_address = $8
+        AND e.public_evidence_id = $9
+        AND e.payload_hash = $10
+        AND e.evidence_kind = $11
+        AND e.sequence = $12
+        AND e.previous_payload_hash = $13`,
     [
       row.outboxId,
-      Buffer.from(verification.transactionHash.slice(2), "hex"),
+      Buffer.from(facts.transactionHash.slice(2), "hex"),
       now,
-      verification.blockNumber,
-      Buffer.from(verification.blockHash.slice(2), "hex"),
-      Buffer.from(verification.attestor.slice(2), "hex"),
+      facts.blockNumber,
+      Buffer.from(facts.blockHash.slice(2), "hex"),
+      Buffer.from(facts.attestor.slice(2), "hex"),
+      committed.chainId,
+      Buffer.from(committed.registryAddress.slice(2), "hex"),
+      Buffer.from(committed.evidenceId.slice(2), "hex"),
+      Buffer.from(committed.payloadHash.slice(2), "hex"),
+      committed.evidenceKind,
+      committed.sequence,
+      Buffer.from(committed.previousPayloadHash.slice(2), "hex"),
     ],
   );
   if (result.rowCount !== 1)
     return { confirmed: false, failure: "OUTBOX_NOT_CONFIRMABLE" };
-  return { confirmed: true, transactionHash: verification.transactionHash };
+  const digest = commitmentDigest(facts);
+  return {
+    confirmed: true,
+    transactionHash: facts.transactionHash,
+    commitmentDigest: digest,
+  };
 }
