@@ -18,23 +18,36 @@
  * pipeline refuses by definition.
  *
  * Test configurations are a *separate* brand (`testOnly: true`) so a test-scoped
- * reader can never be mistaken for an operator one, and the pipeline refuses to
- * authorize from a test-scoped reader outside an explicit test harness flag that is
- * itself compile-time absent from production builds.
+ * reader can never be mistaken for an operator one. The refusal does not depend on any
+ * build-time or run-time switch:
+ *
+ * 1. the only issuer reachable here always sets `testOnly: true`;
+ * 2. the reader records that as `operatorScoped: false` in its module-private registry
+ *    entry;
+ * 3. `acquireForVerification()` tests that flag unconditionally, before it invokes the
+ *    acquisition closure, and returns `READER_NOT_TRUSTED`.
+ *
+ * There is **no test-harness flag, environment variable, build define or request field**
+ * anywhere in this codebase that alters step 3. An earlier revision of this comment
+ * claimed the pipeline refused test readers "outside an explicit test harness flag that
+ * is itself compile-time absent from production builds"; no such flag exists, and this
+ * comment now describes the actual mechanism.
  *
  * ## Why this does not import the canonical manifest validator
  *
  * `contracts/tools/registry-deployment-manifest.mjs` imports `node:fs`,
  * `node:path` and ends with a `process.argv` CLI entry point. Importing it would
  * drag build-only tooling into the Next.js server bundle. This module revalidates
- * fhe same fields against `registry-deployment-constants.mjs` (pure, no imports),
+ * the same fields against `registry-deployment-constants.mjs` (pure, no imports),
  * and `tests/evidence/trusted-reader-config.test.ts` cross-checks both validators
  * on identical inputs so they cannot silently drift.
  *
  * ## No production manifest exists
  *
- * `resolveTrustedReaderConfig()` returns `null`: there is no real deployment
- * manifest, so no address or bytecode hash can be pinned. Nothing invents one.
+ * `resolveTrustedReaderConfig()` takes no arguments and returns
+ * `{ ok: false, failure: "CONFIG_MISSING" }` unconditionally: there is no real
+ * deployment manifest, so no address or bytecode hash can be pinned. Nothing invents
+ * one, and no caller can supply one.
  */
 
 import "server-only";

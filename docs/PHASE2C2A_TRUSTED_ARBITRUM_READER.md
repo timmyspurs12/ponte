@@ -206,8 +206,10 @@ constructor accepts nothing else and throws
 `TRUSTED_READER_REQUIRES_BRANDED_CONFIG` otherwise. A JSON round-trip of a valid config
 is therefore rejected — asserted in the suite.
 
-Review pass 1 added three restrictions, and **review pass 2 removed the test-only
-machinery from production entirely**:
+Review pass 1 added three restrictions, and review pass 2 **removed the *production
+seams* that made test authority convenient** — the injectable transport and the
+`validateTestReaderConfig` helper. It did not remove every test-related function from
+`src/`; a test-scoped issuer remains there and is described below.
 
 - **The production resolver takes no parameters.** `resolveTrustedEvidenceReader()` and
   `resolveTrustedReaderConfig()` accept no input at all; an earlier revision accepted a
@@ -217,14 +219,40 @@ machinery from production entirely**:
   `registerTestTransport` and its `TEST_TRANSPORTS` table were **deleted** in pass 2.
   The suite reaches a loopback mock server by substituting `globalThis.fetch` for the
   duration of a call from test code, which requires no production seam.
-- **Test-only issuance is off the production surface, and operator issuance no longer
-  exists at all.** Pass 2 moved test issuance to a bridge under `tests/`, but left a
-  production function, `__issueConfigForHarness(input, operatorScope)`, which could mint
-  a configuration the trusted pipeline accepted. **Review pass 3 deleted it.** The only
-  issuer in `src/` is `__issueTestConfigForHarness(input)`, which has no scope argument
-  and always yields `testOnly: true`. There is therefore no caller-supplied input,
-  option, flag or environment value anywhere in production that produces an
-  operator-scoped configuration.
+- **Operator issuance no longer exists; a test-scoped issuer remains, exported, in
+  `src/`.** These are two different claims and an earlier revision of this section
+  conflated them. Stated precisely:
+
+  - **No operator-scoped configuration can be created from caller input.** Pass 2 left a
+    production function, `__issueConfigForHarness(input, operatorScope)`, that could mint
+    a configuration the trusted pipeline accepted. **Review pass 3 deleted it.** No
+    caller-supplied input, option, flag, environment variable or prototype-carried value
+    anywhere produces an operator brand.
+  - **The production resolver remains disabled.**
+    `resolveTrustedReaderConfig()` takes no arguments and returns
+    `{ ok: false, failure: "CONFIG_MISSING" }` unconditionally, so
+    `resolveTrustedEvidenceReader()` and `resolveEvidenceChainReader()` both return
+    `null`.
+  - **The internal test issuer is present in `src/` and is still exported.**
+    `__issueTestConfigForHarness(input)` lives in
+    `src/server/evidence/trusted-reader-config.ts` and is exported from it. It is *not*
+    absent from production source and this document does not claim it is.
+  - **Its output is always test-scoped and cannot authorize confirmation.** It has no
+    scope parameter; it always yields `testOnly: true`. The reader records that as
+    `operatorScoped: false`, and `acquireForVerification()` refuses it unconditionally
+    with `READER_NOT_TRUSTED` before invoking the acquisition closure.
+  - **Its endpoint restriction is enforced before branding.** The numeric-loopback HTTP
+    rule below runs inside the validator, ahead of any brand (review pass 4).
+  - **Its only current importer is the test bridge.** A source scan of the repository
+    finds `tests/evidence/helpers/test-config-bridge.ts` as the sole importer of
+    `__issueTestConfigForHarness`; the other occurrences are this module's own definition
+    and the tests that assert on the export surface.
+  - **No API route exposes it.** No module under `src/app/` references the issuer, so it
+    is not reachable as a user-facing configuration mechanism.
+
+  What makes this safe is therefore not the issuer's physical absence from production
+  source — it is not absent — but the fact that everything it can produce is refused at
+  the authorization boundary, and that its endpoint rule is enforced at issuance.
 - **The test issuer itself enforces numeric-loopback HTTP.** Review pass 4 found that
   `__issueTestConfigForHarness` called the validator in a mode that admitted **any** HTTPS
   endpoint, because the loopback condition was consulted only when the protocol was not
@@ -501,8 +529,19 @@ released on every path.
 
 ## 8. Why no production reader is active
 
-`resolveEvidenceChainReader()` returns **`null`**, and `resolveTrustedEvidenceReader()`
-returns `null` when no pinned configuration is supplied.
+The call chain is short and unconditional:
+
+1. `resolveTrustedEvidenceReader()` **accepts no arguments** — its parameter list is
+   empty.
+2. It calls `resolveTrustedReaderConfig()`, which also takes no arguments and returns
+   `{ ok: false, failure: "CONFIG_MISSING" }` unconditionally.
+3. Because that result is never `ok`, `resolveTrustedEvidenceReader()` returns `null`,
+   and `resolveEvidenceChainReader()` — which simply delegates to it — returns `null`
+   too.
+
+There is no path by which a caller supplies a pinned configuration. An earlier revision
+of this section said `resolveTrustedEvidenceReader()` returns `null` "when no pinned
+configuration is supplied", which wrongly implies an argument exists; it does not.
 
 No real Registry deployment manifest exists. Enabling the reader would require
 inventing a Registry address and a runtime bytecode hash — and a reader built from
@@ -511,11 +550,15 @@ appearing configured. That is strictly worse than being disabled.
 
 There is **no** environment variable, feature flag or test hook that can enable it.
 The tests assert this directly, including that setting plausible
-`PONTE_*RPC*`/`PONTE_*REGISTRY*` variables leaves the resolver `null`. Fakes live only
-under `tests/` and construct the production class against a loopback mock endpoint.
+`PONTE_*RPC*`/`PONTE_*REGISTRY*` variables leaves the resolver `null`.
 
-When a reviewed manifest exists, it is supplied in exactly one place
-(`chain-reader-runtime.ts`) and nothing else needs to change.
+The mock RPC servers and the fixture helpers that drive them live under `tests/`; they
+construct the *production* reader class (which lives in `src/`) against a loopback
+endpoint. The test-scoped configuration issuer is likewise in `src/` (§ "Configuration
+provenance"), not under `tests/`; only the thin bridge that calls it is in `tests/`.
+
+When a reviewed manifest exists, the **body** of `resolveTrustedReaderConfig()` changes
+to return it, and nothing else needs to. No signature changes and no caller changes.
 
 ---
 
