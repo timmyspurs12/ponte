@@ -8,6 +8,7 @@ For claim boundaries and CI evidence, read [HACKATHON_DEMO_EVIDENCE.md](HACKATHO
 
 - Node.js 22.17+ and npm.
 - Linux x64 with the `embedded-postgres` binaries supplied by `npm ci`. The project’s documented local PostgreSQL path uses port `54329`; a separately installed PostgreSQL 18 is the fallback.
+- For **Windows 10 Pro x64 (unverified)**, follow [HACKATHON_DEMO_WINDOWS.md](HACKATHON_DEMO_WINDOWS.md). It contains PowerShell commands, low-memory guidance and explicit verification limits; do not set `PONTE_BROWSER_FALLBACK`.
 - A free local loopback port `3000` and database port `54329`.
 - No wallet, key, RPC endpoint, paid service, Rust toolchain or cloud account.
 
@@ -116,7 +117,7 @@ With the dev server running and the seeded database in its initial state:
 PONTE_BROWSER_FALLBACK=1 node scripts/capture-hackathon-screenshots.mjs
 ```
 
-The script writes current desktop/mobile images to `docs/screenshots/`. The fallback is the existing registry-packaged Chromium used by the repository’s Linux tests; it contacts no external service. On other platforms, install Playwright Chromium normally and run `node scripts/capture-hackathon-screenshots.mjs`.
+The script writes current desktop/mobile images to `docs/screenshots/`. The fallback is the existing registry-packaged Chromium used by the repository’s Linux tests; it contacts no external service. On Windows, install Playwright Chromium with `npm run test:install` and run `node scripts/capture-hackathon-screenshots.mjs` without the fallback variable; see [HACKATHON_DEMO_WINDOWS.md](HACKATHON_DEMO_WINDOWS.md).
 
 ## Recovery if the demo fails
 

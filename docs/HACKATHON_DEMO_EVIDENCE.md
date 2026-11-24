@@ -87,6 +87,7 @@ Host and container WASM differ because the CLI image installs `rust-src` and bui
 - No `cargo stylus check` against an endpoint, deployment, activation or verification was performed. No RPC endpoint was contacted.
 - Selected Axe checks at five widths are not a full accessibility certification; no physical-device or screen-reader testing was performed.
 - The UI is a local development application. Production financial access is intentionally closed.
+- The executed demo evidence and test results were produced on Linux x64. A native Windows 10 Pro x64 path is statically assessed in [HACKATHON_DEMO_WINDOWS.md](HACKATHON_DEMO_WINDOWS.md), but no Windows commands or tests were verified; 4 GB RAM performance on Windows was not measured.
 
 ## Current visual evidence
 
