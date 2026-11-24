@@ -14,8 +14,15 @@ value. That was honest but unenforceable — a future change could have started
 reporting `confirmed` from an outbox row.
 
 Phase 2C.1 makes the honest answer the _only_ answer the type system permits, and
-makes the verified answer reachable only through a receipt that satisfies every
+makes the verified answer reachable only through verification that satisfies every
 check below.
+
+**Scope of that claim.** In this offline phase the verifier is handed a
+caller-supplied `ChainObservation`. The proof it issues therefore establishes that
+**the verification logic executed** over that observation — that the checks ran and
+passed against the commitment carried by the proof. It does **not** establish that a
+real chain receipt was independently retrieved, nor that the observation came from a
+trustworthy source. The detailed provenance analysis is in §2b.
 
 ## 2. Verification pipeline
 
@@ -179,9 +186,14 @@ operator log can use it to check what was confirmed. It is not written to
 `evidence_outbox`: the table has no `commitment_digest` column, and this phase adds
 no migration. Persisting it would require a separately justified schema change, so
 until then the digest is an audit value that exists only in the process that
-performed the confirmation. The durable record of the binding is the confirmed
-row's own `transaction_hash`, block number, block hash and attestor, together with
-the immutable `route_decision_evidence` commitment the write was joined against.
+performed the confirmation.
+
+The persisted record of what was written is the confirmed row's own
+`transaction_hash`, block number, block hash and attestor, together with the
+immutable `route_decision_evidence` commitment the write was joined against. Note
+that those columns record _that a row was written in that shape_ — they are not a
+tamper-evident or provenance-bearing proof that `confirmVerifiedAnchor` performed
+the write; see §3c.
 
 ## 3. Confirmed-state invariant
 
@@ -241,11 +253,28 @@ transaction that was rolled back): a direct `UPDATE` setting `submission_state =
 'confirmed'` on a row with `transaction_hash`, `confirmed_block_number` and
 `confirmed_at` all `NULL` **succeeded**.
 
-So "confirmed" in this table records that a row was set to that value. It does not,
-by itself, prove that a verified receipt was seen. Only rows known to have passed
-through `confirmVerifiedAnchor` carry that meaning, and the durable evidence for
-them is the confirmation metadata plus the immutable
-`route_decision_evidence` commitment the write was joined against.
+So `"confirmed"` in this table records only that a row was set to that value. It
+does not, by itself, prove that a verified receipt was seen.
+
+The same applies to the confirmation metadata. The supported application path
+writes `transaction_hash`, `confirmed_at`, `confirmed_block_number`,
+`confirmed_block_hash` and `attestor_address` **after** a genuine proof has been
+verified against the exact persisted commitment — but those fields, once written,
+**cannot independently establish that this path was used**. A different SQL writer
+can populate them just as easily, and the schema has no provenance mechanism that
+distinguishes one write from another: there is no signing, no per-writer column, no
+audit trail and no trigger that records who performed the update.
+
+Establishing that stronger guarantee would require at least one of:
+
+- a **database audit mechanism** that records the writer and the statement for each
+  transition;
+- a **permission boundary** that restricts `UPDATE` on `evidence_outbox` to a single
+  role whose only writer is `confirmVerifiedAnchor`;
+- **schema-level enforcement** of the transition and the metadata (a trigger or
+  partial `CHECK`).
+
+All three are **out of scope for Phase 2C.1**. None exists in this build.
 
 Adding a transition invariant at the schema level (a trigger or a partial
 `CHECK`) is **out of scope for this phase**; it would be a migration and would need
@@ -261,9 +290,15 @@ outcome, so a transient RPC failure can never be mistaken for success.
 `src/lib/models.ts` defines `EvidenceAnchoringStatus` as a discriminated union:
 the `verified: false` branch has **no** transaction hash, block, or attestor
 field at all. A non-verified record is structurally incapable of rendering
-anchoring details. `invoiceEvidenceStatus` defaults to `NOT_VERIFIED` and never
-reads the outbox state when deciding anchoring, so an operational `confirmed`
-row does not by itself produce an anchored claim.
+anchoring details.
+
+`invoiceEvidenceStatus` does not accept an anchoring claim. Its third parameter is
+`proofCandidate: unknown = null` — an untrusted candidate, defaulting to `null`. It
+is passed to `anchoringStatusFor(proof)`, which returns the frozen
+`NOT_VERIFIED_ANCHORING` for anything it did not itself issue, so the default
+renders `{ verified: false, status: "not_verified" }`. The projection never reads the
+outbox state when deciding anchoring, so an operational `confirmed` row does not by
+itself produce an anchored claim.
 
 ## 5. Runtime selection
 
