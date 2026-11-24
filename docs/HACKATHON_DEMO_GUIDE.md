@@ -6,7 +6,9 @@ For claim boundaries and CI evidence, read [HACKATHON_DEMO_EVIDENCE.md](HACKATHO
 
 ## Prerequisites
 
-- Node.js 22.17+ and npm.
+- Node.js **24.22.1** and npm. This is the exact runtime the project pins in
+  [`.node-version`](../.node-version), `package.json#engines` (`>=24.22.1 <25`)
+  and CI; other majors are not supported.
 - Linux x64 with the `embedded-postgres` binaries supplied by `npm ci`. The project’s documented local PostgreSQL path uses port `54329`; a separately installed PostgreSQL 18 is the fallback.
 - For **Windows 10 Pro x64 (unverified)**, follow [HACKATHON_DEMO_WINDOWS.md](HACKATHON_DEMO_WINDOWS.md). It contains PowerShell commands, low-memory guidance and explicit verification limits; do not set `PONTE_BROWSER_FALLBACK`.
 - A free local loopback port `3000` and database port `54329`.

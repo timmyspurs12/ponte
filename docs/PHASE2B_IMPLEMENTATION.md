@@ -36,7 +36,7 @@ On [CI run 43959588203](https://github.com/timmyspurs12/ponte/actions/runs/43959
 
 Legacy parity uses the untouched `quote()` implementation for inputs 100, 2500000 and 1000000000, with synthetic Direct/Split/Multi fee/impact bps 35/5, 48/8 and 65/12, rate 100/525 and tolerance 50. Rust and TypeScript match all nine per-route gross, fee, expected and minimum values; 18 permutation checks and 27 non-deduction-of-impact checks also passed.
 
-From the repository root (Node 22 and Rust 1.91 with rustfmt, clippy and the WASM target installed):
+From the repository root (Rust 1.91 with rustfmt, clippy and the WASM target installed; Node, currently pinned to **24.22.1** — these results were originally captured under Node 22):
 
 ```sh
 npm ci

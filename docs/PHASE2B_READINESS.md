@@ -9,7 +9,7 @@ Research date: **16 November 2026 UTC**. Baseline: merged main `acb82b5e1043fb4a
 | Gate | Result | Meaning / exit evidence |
 |---|---|---|
 | Merged application inspection | PASS | Actual quote, model, service, repository and four requested documents reviewed at the baseline above |
-| Exact fixture arithmetic | PASS | BigInt baseline independently invoked under Node 22; examples below. Not a market or execution test |
+| Exact fixture arithmetic | PASS | BigInt baseline independently invoked under Node 22 (historical; the project now pins Node 24.22.1); examples below. Not a market or execution test |
 | Pure Rust optimizer design | CONDITIONAL | Bounded deterministic design below; no Rust implementation or parity run yet |
 | Arena compilation readiness | FAIL | Rust, Cargo, rustup and Docker unavailable; build attempt exits 127 |
 | Official starter WASM compilation | UNKNOWN | Attempt could not start; no binary produced |

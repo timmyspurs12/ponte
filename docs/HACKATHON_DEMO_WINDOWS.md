@@ -7,7 +7,7 @@
 | Component | Finding | Confidence |
 | --- | --- | --- |
 | Host OS | Windows 10 Pro **x64** is the assumed target. Windows 10 32-bit, ARM and Windows 11 ARM are not covered by the pinned embedded PostgreSQL platform package. | Static |
-| Node.js | Use the official **x64** Node.js 22.17+ Windows installer. The project scripts use Node APIs and `npm run` commands without shell-specific syntax. | Static |
+| Node.js | Use the official **x64** Node.js **24.22.1** Windows installer. This is the exact pinned runtime (`.node-version`, `package.json#engines` `>=24.22.1 <25`, CI); Node 22 is not supported. The project scripts use Node APIs and `npm run` commands without shell-specific syntax. | Static |
 | Embedded PostgreSQL | The lockfile includes the optional `@embedded-postgres/windows-x64@18.6.0-beta.19` package. Its metadata declares `os: ["win32"]`, `cpu: ["x64"]`; `embedded-postgres/dist/binary.js` maps `win32`+`x64` to that package. The Windows package contains `initdb.exe`, `pg_ctl.exe` and `postgres.exe`, and its `pg-symlinks.json` is empty, so symlink hydration is not expected to require Developer Mode for this pinned version. | Inspected package metadata and tarball |
 | Windows runtime handling | `embedded-postgres` explicitly avoids `locale -a` on Windows and uses `taskkill` for shutdown because Windows does not support SIGINT for that path. | Inspected installed source |
 | Next.js application | `npm run dev` uses `next dev --hostname 0.0.0.0`; no Unix shell is involved. Demo auth is development-only and fails closed in production builds. | Static |
@@ -45,7 +45,7 @@ if (Get-NetTCPConnection -LocalPort 3000,54329 -State Listen -ErrorAction Silent
 npm ci --no-audit --no-fund
 ```
 
-Both `Is64Bit...` lines must return `True`; `node --version` must report `v22.17.0` or newer. Use the official x64 Node.js installer. If npm lifecycle scripts are disabled by policy, embedded PostgreSQL will not have its platform package prepared; reinstall normally or run `npm rebuild @embedded-postgres/windows-x64` before continuing.
+Both `Is64Bit...` lines must return `True`; `node --version` must report **`v24.22.1`**. The project pins this exact patch in `.node-version` and constrains `engines.node` to `>=24.22.1 <25`, so an older major fails `npm ci` engine checks rather than running unsupported. Use the official x64 Node.js installer. If npm lifecycle scripts are disabled by policy, embedded PostgreSQL will not have its platform package prepared; reinstall normally or run `npm rebuild @embedded-postgres/windows-x64` before continuing.
 
 ### 2. Create `.env.local` without printing the token
 

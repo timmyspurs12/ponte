@@ -8,7 +8,7 @@
 
 ## Reproduction and integrity
 
-Requirements: Node 22 and npm, with registry access for the initial install or a preprovisioned npm cache. From the repository root:
+Requirements: Node (the project currently pins **24.22.1**) and npm, with registry access for the initial install or a preprovisioned npm cache. These commands were originally recorded under Node 22; the Node version does not affect the ABI artefacts. From the repository root:
 
 ```sh
 npm --prefix rust/stylus-wrapper/abi-tools ci --ignore-scripts --no-audit --no-fund
