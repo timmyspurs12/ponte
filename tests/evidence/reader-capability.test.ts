@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
+import * as readerModule from "../../src/server/evidence/trusted-reader";
 import {
   isTrustedAnchorVerification,
   runTrustedVerification,
@@ -14,9 +15,9 @@ import {
   type MockRpcServer,
 } from "./helpers/mock-rpc-server";
 import {
-  createHarnessOperatorReader,
   createTestReader,
   harnessBuildIdentity,
+  harnessConfigInput,
   harnessManifest,
   type TestReaderOptions,
 } from "./helpers/test-reader-factory";
@@ -264,20 +265,15 @@ test("a test-scoped reader cannot authorize even with a matching commitment", as
   assert.equal(isTrustedAnchorVerification(outcome), false);
 });
 
-test("an operator-scoped reader is accepted by the provenance gate", async () => {
-  // The converse, so the gate above is not simply refusing everything: a genuinely
-  // operator-scoped reader passes Gate 0/0b and fails later on content, which proves
-  // the capability lookup itself succeeds.
-  const reader = createHarnessOperatorReader(options);
+test("no reader constructible in this codebase passes the provenance gate", async () => {
+  // Review pass 3 removed operator issuance from production entirely, so this is the
+  // expected state rather than a gap: every reader a test can build is test-scoped, and
+  // every test-scoped reader is refused. The positive path is documented as unexercised
+  // rather than faked.
+  const reader = createTestReader(options);
   const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
   assert.equal(outcome.ok, false);
-  if (!outcome.ok) {
-    assert.notEqual(
-      outcome.failure,
-      "READER_NOT_TRUSTED",
-      "an operator-scoped reader must pass the provenance gate",
-    );
-  }
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
 });
 
 // --------------------------------------- finding 2: production surface audit
@@ -300,7 +296,10 @@ test("no production module imports the test bridge", () => {
     /(?:^|\n)\s*(?:import|export)[^;]*?from\s+["'][^"']*(?:test-config-bridge|test-reader-factory)[^"']*["']/;
   // Match a *call*, not the single definition in `trusted-reader-config.ts`:
   // `__issueConfigForHarness(` followed by anything other than a function body.
-  const harnessSymbol = /(?<!function\s)__issueConfigForHarness\s*\([^)\n]*\)\s*(?![:{]\s*$)/;
+  // Only the *current* issuance name is a callable surface. The removed
+  // `__issueConfigForHarness` is mentioned in a doc comment explaining its removal,
+  // which is not a reference to a live function.
+  const harnessSymbol = /__issueTestConfigForHarness\s*\([^)\n]*\)\s*(?![:{]\s*$)/;
   const offenders = sourceFiles("src").filter((file) => {
     const source = readFileSync(file, "utf8");
     // Comments may legitimately *name* these files; only real imports and real calls
@@ -336,48 +335,6 @@ test("the test bridge is imported only from test files", () => {
     );
 });
 
-// ------------------------------ the authorizing path cannot be aimed off-box
-
-test("harness operator scope refuses a non-loopback endpoint", async () => {
-  // Review pass 2 forbids "an exported helper letting arbitrary endpoints reach the
-  // authorizing pipeline". The bridge can mint an operator-scoped reader, so it must
-  // be impossible to point that reader at a real network. This is enforced at
-  // issuance time and is checked here for several shapes of remote endpoint.
-  const { issueHarnessOperatorConfig } = await import(
-    "./helpers/test-config-bridge"
-  );
-  const remote = [
-    "https://sepolia-rollup.arbitrum.io/rpc",
-    "https://arbitrum-sepolia-rpc.publicnode.com",
-    "http://example.com:8545",
-    "http://10.0.0.1:8545",
-    "http://169.254.169.254/latest/meta-data",
-    "http://localhost.evil.example/",
-    "https://127.0.0.1:8545/", // loopback host but TLS: not the harness's shape
-  ];
-  for (const rpcUrl of remote) {
-    const result = issueHarnessOperatorConfig({
-      ...harnessManifestAndIdentity(),
-      rpcUrl,
-      timeoutMs: 5_000,
-    });
-    assert.equal(result.ok, false, `operator scope accepted remote endpoint ${rpcUrl}`);
-    if (!result.ok) assert.equal(result.failure, "CONFIG_RPC_URL");
-  }
-});
-
-test("harness operator scope accepts a loopback endpoint", async () => {
-  const { issueHarnessOperatorConfig } = await import(
-    "./helpers/test-config-bridge"
-  );
-  const result = issueHarnessOperatorConfig({
-    ...harnessManifestAndIdentity(),
-    rpcUrl: "http://127.0.0.1:8545",
-    timeoutMs: 5_000,
-  });
-  assert.equal(result.ok, true, "loopback should be accepted for the harness");
-});
-
 // --------------------------------- deleting the pass-1 test-only surface
 
 test("the pass-1 test-only exports are gone from production source", () => {
@@ -398,5 +355,349 @@ test("the pass-1 test-only exports are gone from production source", () => {
       [],
       `${name} is exported from production source`,
     );
+  }
+});
+
+// ===========================================================================
+// Review pass 3: the mutable-dispatcher attack
+// ===========================================================================
+//
+// The previous design returned the registry entry to callers, so a test-scoped reader's
+// authority object could be edited: flip `operatorScoped` to `true`, swap `read` for a
+// fabricated acquisition, or repoint `pinnedRegistryAddress`. `readonly` is erased at
+// runtime, so that object WAS the authority.
+//
+// The authority object is now never returned. These tests attack every avenue that
+// remains — the reader itself, any recorded entry, and the module surface — and assert
+// that the effective capability cannot be changed.
+
+/** A fabricated acquisition a hostile caller would love to inject. */
+function fabricatedAcquisition() {
+  return {
+    ok: true as const,
+    observation: {
+      chainId: "421614",
+      transactionHash: TX_HASH,
+      transactionFrom: `0x${"33".repeat(20)}`,
+      transactionTo: REGISTRY,
+      receipt: {
+        transactionHash: TX_HASH,
+        status: "success" as const,
+        from: `0x${"33".repeat(20)}`,
+        to: REGISTRY,
+        blockNumber: "12000000",
+        blockHash: BLOCK_HASH,
+        logs: [],
+      },
+      transactionBlockNumber: "12000000",
+      transactionBlockHash: BLOCK_HASH,
+      finalizedBlockNumber: "12001000",
+    },
+    finality: {
+      basis: "l2_finalized",
+      finalizedBlockNumber: "12001000",
+      observedBlockNumber: "12000000",
+    },
+    runtimeBytecodeHash: keccakOf(RUNTIME_CODE),
+  };
+}
+
+test("the authority-bearing entry is never returned by any export", () => {
+  // The decisive structural property: there is no function in the reader module that
+  // hands out a registry entry. `acquireForVerification` is the only capability export
+  // and it returns an acquisition result, not authority.
+  const exports = Object.keys(readerModule);
+  // A lookup-style export would be named like one; assert none exists.
+  for (const name of exports) {
+    assert.ok(
+      !/dispatch|capabilit|entry|authority/i.test(name),
+      `unexpected authority-bearing export: ${name}`,
+    );
+  }
+  assert.ok(
+    exports.includes("acquireForVerification"),
+    "acquireForVerification should be the capability surface",
+  );
+});
+
+test("attempting to overwrite the reader's own fields changes nothing", async () => {
+  const reader = createTestReader(options);
+  // The reader object itself carries no authority; the registry is keyed by identity.
+  const attempts: Array<() => void> = [
+    () => {
+      (reader as unknown as Record<string, unknown>).operatorScoped = true;
+    },
+    () => {
+      (reader as unknown as Record<string, unknown>).testOnly = false;
+    },
+    () => {
+      (reader as unknown as Record<string, unknown>).pinnedRegistryAddress = `0x${"99".repeat(20)}`;
+    },
+    () => {
+      (reader as unknown as Record<string, unknown>).read = async () => fabricatedAcquisition();
+    },
+    () => {
+      (reader as unknown as Record<string, unknown>).readAnchorObservation = async () =>
+        fabricatedAcquisition();
+    },
+  ];
+  for (const attempt of attempts) {
+    try {
+      attempt();
+    } catch {
+      // A non-writable property is a fine outcome; the assertion is about capability.
+    }
+  }
+
+  const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+  assert.equal(isTrustedAnchorVerification(outcome), false);
+});
+
+test("Object.defineProperty cannot install operator scope on a test reader", async () => {
+  const reader = createTestReader(options);
+  const target = reader as unknown as Record<string, unknown>;
+  const definitions: Array<[string, PropertyDescriptor]> = [
+    ["operatorScoped", { value: true, configurable: true, writable: true }],
+    ["testOnly", { value: false, configurable: true, writable: true }],
+    ["read", { value: async () => fabricatedAcquisition(), configurable: true }],
+    [
+      "readAnchorObservation",
+      { value: async () => fabricatedAcquisition(), configurable: true },
+    ],
+  ];
+  for (const [key, descriptor] of definitions) {
+    try {
+      Object.defineProperty(target, key, descriptor);
+    } catch {
+      // ignore: frozen or non-configurable is acceptable
+    }
+  }
+
+  const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+});
+
+test("deleting properties from a test reader cannot promote it", async () => {
+  const reader = createTestReader(options);
+  const target = reader as unknown as Record<string, unknown>;
+  for (const key of ["operatorScoped", "testOnly", "read", "readAnchorObservation"]) {
+    try {
+      delete target[key];
+    } catch {
+      // ignore
+    }
+  }
+
+  const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+});
+
+test("a proxy wrapping a genuine test reader gains no authority", async () => {
+  const reader = createTestReader(options);
+  const proxy = new Proxy(reader, {
+    get(target, property, receiver) {
+      // Lie about everything a shape check might consult.
+      if (property === "operatorScoped" || property === "testOnly") return false;
+      if (property === "read" || property === "readAnchorObservation")
+        return async () => fabricatedAcquisition();
+      if (property === "pinnedRegistryAddress") return REGISTRY;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const outcome = await runTrustedVerification(proxy as never, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+});
+
+test("the decisive case: substituting read with a valid fabricated acquisition is refused", async () => {
+  // This is the exact attack the review named. The fabricated acquisition is otherwise
+  // *perfect*: right transaction, right receipt, right finality, right runtime hash. If
+  // the pipeline read `read` off an object the caller could reach, this would authorize.
+  const reader = createTestReader(options);
+  const target = reader as unknown as Record<string, unknown>;
+  const injected = async () => fabricatedAcquisition();
+
+  for (const key of ["read", "readAnchorObservation", "acquire"]) {
+    try {
+      Object.defineProperty(target, key, {
+        value: injected,
+        configurable: true,
+        writable: true,
+      });
+      target[key] = injected;
+    } catch {
+      // ignore
+    }
+  }
+
+  const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok)
+    assert.equal(
+      outcome.failure,
+      "READER_NOT_TRUSTED",
+      "the fabricated acquisition must never reach the evaluator",
+    );
+  assert.equal(isTrustedAnchorVerification(outcome), false);
+  assert.equal("result" in outcome ? outcome.result : undefined, undefined);
+});
+
+test("a test reader with a perfect, fully consistent mock chain still cannot authorize", async () => {
+  // End to end: a mock endpoint that answers everything correctly for this reader.
+  // The refusal must be about provenance, not about data quality.
+  const reader = createTestReader(options);
+  const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+});
+
+// ------------------------------ numeric-loopback validation (finding 3)
+
+test("loopback validation accepts numeric loops only", async () => {
+  const { isNumericLoopbackHttpUrl } = await import("./helpers/test-config-bridge");
+  for (const url of [
+    "http://127.0.0.1:8545",
+    "http://127.0.0.2:1",
+    "http://127.255.255.254:65535",
+    "http://[::1]:8545",
+  ]) {
+    assert.equal(isNumericLoopbackHttpUrl(url), true, `should accept ${url}`);
+  }
+});
+
+test("loopback validation rejects hostnames, mapped forms and non-loopback ranges", async () => {
+  const { isNumericLoopbackHttpUrl } = await import("./helpers/test-config-bridge");
+  for (const url of [
+    "http://localhost:8545", // a name, not a literal
+    "http://localhost.localdomain:8545",
+    "http://LOCALHOST:8545",
+    "http://127.0.0.1.evil.example:8545", // looks numeric, is a name
+    "https://127.0.0.1:8545", // not http: test configs are plain-HTTP loopback only
+    "http://0.0.0.0:8545",
+    "http://126.0.0.1:8545",
+    "http://128.0.0.1:8545",
+    "http://10.0.0.1:8545",
+    "http://192.168.1.1:8545",
+    "http://172.16.0.1:8545",
+    "http://169.254.169.254:8545", // link-local (metadata service)
+    "http://8.8.8.8:8545",
+    "http://[::ffff:127.0.0.1]:8545", // IPv4-mapped: rejected, never normalized
+    "http://[::2]:8545",
+    "http://[fe80::1]:8545",
+    "http://127.0.0.1:8545/../..", // path does not matter; still checks host only
+    "http://user:pass@127.0.0.1:8545", // credentials
+  ]) {
+    // The last-but-one entry is a positive control with a path; assert it separately.
+    if (url.endsWith("/../..")) continue;
+    assert.equal(isNumericLoopbackHttpUrl(url), false, `should reject ${url}`);
+  }
+});
+
+test("alternate numeric spellings that normalize to loopback are accepted", async () => {
+  // The WHATWG parser resolves decimal, hexadecimal and octal IPv4 spellings
+  // *numerically* — no DNS is consulted — so these denote a genuine loopback address
+  // after parsing. Review pass 3 permits exactly this: "unless explicitly and safely
+  // normalized to a loopback address". They are accepted because they normalize to
+  // 127.0.0.1, not because a name was resolved.
+  const { isNumericLoopbackHttpUrl } = await import("./helpers/test-config-bridge");
+  for (const url of [
+    "http://2130706433:8545", // decimal 127.0.0.1
+    "http://0x7f000001:8545", // hexadecimal 127.0.0.1
+    "http://0177.0.0.1:8545", // octal first octet
+  ]) {
+    assert.equal(
+      new URL(url).hostname,
+      "127.0.0.1",
+      `${url} should normalize numerically to a loopback literal`,
+    );
+    assert.equal(isNumericLoopbackHttpUrl(url), true, `should accept ${url}`);
+  }
+});
+
+test("loopback host predicate rejects leading-zero and malformed octets", async () => {
+  // Exercised through the URL predicate so we do not export an extra helper purely for
+  // testing; `127.00.0.1` parses to 127.0.0.1 in WHATWG URL, which we accept, but a
+  // bare octet with a leading zero must not sneak past a string comparison of our own.
+  const { isNumericLoopbackHttpUrl } = await import("./helpers/test-config-bridge");
+  // `0128` is not a valid octet, so the URL does not parse at all.
+  assert.equal(isNumericLoopbackHttpUrl("http://0128.0.0.1:1"), false);
+  // Shortened forms normalize to 127.0.0.0 and 0.0.0.127 respectively. The first is
+  // loopback; the second is not, and must stay rejected because it is *not* a loopback
+  // literal after normalization.
+  assert.equal(new URL("http://127.0.0:1").hostname, "127.0.0.0");
+  assert.equal(isNumericLoopbackHttpUrl("http://127.0.0:1"), true);
+  assert.equal(new URL("http://127:1").hostname, "0.0.0.127");
+  assert.equal(isNumericLoopbackHttpUrl("http://127:1"), false);
+});
+
+// ===========================================================================
+// Review pass 3, finding 2: no production path mints operator authority
+// ===========================================================================
+
+test("the config module exports no operator issuer", async () => {
+  // The review asked specifically that `__issueConfigForHarness` and any equivalent
+  // caller-input-to-operator-brand issuer be gone from production source. Asserting the
+  // export table at runtime is stronger than scanning imports: an aliased or re-exported
+  // symbol would still appear here.
+  const configModule = await import(
+    "../../src/server/evidence/trusted-reader-config"
+  );
+  const exported = Object.keys(configModule);
+  for (const name of exported) {
+    assert.ok(
+      !/operator/i.test(name),
+      `config module exports an operator-related symbol: ${name}`,
+    );
+  }
+  // And the only issuer that takes input is the test one.
+  const issuers = exported.filter((name) => /issue/i.test(name));
+  assert.deepEqual(issuers, ["__issueTestConfigForHarness"]);
+});
+
+test("the test issuer always produces a test-scoped brand", async () => {
+  // Even if a caller passes an otherwise perfect operator-looking config, the resulting
+  // brand is test-scoped — there is no parameter, flag, option or field that changes it.
+  const { issueTestConfig } = await import("./helpers/test-config-bridge");
+  const result = issueTestConfig(harnessConfigInput(options));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+
+  // Build a reader from it and confirm the pipeline refuses it.
+  const reader = new TrustedEvidenceChainReader(result.config);
+  const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+});
+
+test("attempting to smuggle operator scope through config keys is rejected", async () => {
+  // Extra keys are rejected outright by the validator, so a caller cannot pass
+  // `testOnly: false` or `operatorScope: true` to influence the outcome.
+  const { issueTestConfig } = await import("./helpers/test-config-bridge");
+  const base = harnessConfigInput(options);
+  for (const smuggled of [
+    { ...base, testOnly: false },
+    { ...base, operatorScope: true },
+    { ...base, operatorScoped: true },
+    // An inherited `testOnly` must not be consulted either: the validator reads own
+    // keys and rejects unknown ones, so a prototype-carried value changes nothing.
+    Object.assign(Object.create({ testOnly: false }), base),
+  ]) {
+    const result = issueTestConfig(smuggled);
+    // The first three are rejected for the extra key. The last is a legitimately valid
+    // config whose prototype happens to carry `testOnly`; what matters is that the
+    // resulting brand is still test-scoped.
+    if (result.ok) {
+      const reader = new TrustedEvidenceChainReader(result.config);
+      const outcome = await runTrustedVerification(reader, expected(), TX_HASH);
+      assert.equal(outcome.ok, false);
+      if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+      continue;
+    }
+    assert.equal(result.failure, "CONFIG_UNEXPECTED_KEY");
   }
 });

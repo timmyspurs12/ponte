@@ -217,12 +217,14 @@ machinery from production entirely**:
   `registerTestTransport` and its `TEST_TRANSPORTS` table were **deleted** in pass 2.
   The suite reaches a loopback mock server by substituting `globalThis.fetch` for the
   duration of a call from test code, which requires no production seam.
-- **Test-only issuance is off the production surface.** `validateTestReaderConfig` was
-  replaced by `__issueConfigForHarness`, whose only importer is
-  `tests/evidence/helpers/test-config-bridge.ts`. It lives under `tests/`, so it is
-  never bundled into the application. `tests/evidence/reader-capability.test.ts`
-  enforces this structurally: it scans every file under `src/` and fails if any imports
-  the bridge or calls the harness issuance function.
+- **Test-only issuance is off the production surface, and operator issuance no longer
+  exists at all.** Pass 2 moved test issuance to a bridge under `tests/`, but left a
+  production function, `__issueConfigForHarness(input, operatorScope)`, which could mint
+  a configuration the trusted pipeline accepted. **Review pass 3 deleted it.** The only
+  issuer in `src/` is `__issueTestConfigForHarness(input)`, which has no scope argument
+  and always yields `testOnly: true`. There is therefore no caller-supplied input,
+  option, flag or environment value anywhere in production that produces an
+  operator-scoped configuration.
 
 No API handler, request body, header, query parameter or ordinary service can reach any
 of this: `resolveTrustedReaderConfig()` returns a `CONFIG_MISSING` failure regardless of
@@ -230,29 +232,53 @@ input, and nothing outside `chain-reader-runtime.ts` calls it.
 
 ### Reader provenance is a runtime capability, not a type
 
-Review pass 2 found the more serious hole: `runTrustedVerification` accepted **any**
-object with a plausible shape. A plain object returning a synthetic observation,
-synthetic finality evidence and a synthetic bytecode hash drove the pipeline to mint a
-genuine `TrustedAnchorVerification`. The TypeScript class type was never a boundary, and
-neither is `instanceof` — anything carrying the prototype satisfies it.
+Review pass 2 found that `runTrustedVerification` accepted **any** object with a
+plausible shape. A plain object returning a synthetic observation, synthetic finality
+evidence and a synthetic bytecode hash drove the pipeline to mint a genuine
+`TrustedAnchorVerification`. The TypeScript class type was never a boundary, and neither
+is `instanceof` — anything carrying the prototype satisfies it.
 
-The boundary is now a module-private `WeakMap` in `trusted-reader.ts`, mapping a reader
-instance to a dispatcher closure over that instance's private state. The map and its
-single writer are unexported; the constructor is the only code path that can add an
-entry. The pipeline calls `dispatchForReader()`, a **lookup**, and never touches the
-caller-supplied object. A Proxy, an `Object.create(TrustedEvidenceChainReader.prototype)`
-imitation, a prototype swap, a plain literal and a cross-realm clone all miss.
+Review pass 2 introduced a module-private `WeakMap` for this. Review pass 3 found that
+it returned the stored registry entry itself, so the authority was a live object: a
+caller could take its own test-scoped reader's entry and set `operatorScoped = true`,
+replace `read` with a fabricated acquisition, or repoint `pinnedRegistryAddress`.
+`readonly` is erased at runtime, so that object *was* the authority.
 
-A test-scoped reader is *registered* but marked `operatorScoped: false`, and
-`runTrustedVerification` refuses it with `READER_NOT_TRUSTED` before reading anything.
-So a test fixture can perform real RPC parsing and never authorize a confirmation. To
-keep that from being a way to aim the authorizing path at a real network, the harness
-issuance function refuses any operator-scoped configuration whose endpoint is not a
-loopback literal — a runtime check, not a convention.
+The entry is now never returned by anything. The map, its single writer and the entry
+records live in `trusted-reader.ts` in module scope, unexported. The only capability
+export is `acquireForVerification`, which looks the reader up, refuses anything
+unregistered, refuses a test-scoped entry **before touching it**, reads the entry's
+fixed values from the private record, invokes the closure and returns a fresh result
+object. There is no object to mutate because none escapes; freezing would also have
+worked, but returning nothing removes the attack surface rather than hardening it.
 
-`tests/evidence/reader-capability.test.ts` proves all of this, including a
-perfectly-formed forgery whose observation matches every expectation and is still
-refused on provenance alone.
+A Proxy, an `Object.create(TrustedEvidenceChainReader.prototype)` imitation, a prototype
+swap, a plain literal, a spread copy and a cross-realm clone all miss, because none of
+them ran the constructor. `tests/evidence/reader-capability.test.ts` proves this with a
+range of forgeries, and specifically attempts every mutation the review named —
+overwriting, redefining and deleting `operatorScoped`, `read`, `pinnedRegistryAddress`
+and `readAnchorObservation` — including the decisive case where `read` is replaced with
+an otherwise valid fabricated acquisition.
+
+### What this costs, stated plainly
+
+Because no operator-scoped reader can be constructed anywhere in this codebase, **no
+test can mint a `TrustedAnchorVerification` any more.** That is the intended consequence
+of removing test-only operator issuance, not a gap that was worked around.
+
+The affected tests are `skip`ped with a recorded reason, not deleted and not faked —
+minting a production-authorizing result in a fixture is exactly the vulnerability this
+pass closes. In particular:
+
+- the seal/binding property tests in `tests/evidence/trusted-authorization.test.ts`;
+- the positive confirmation and SQL write-metadata tests in
+  `tests-backend/evidence-anchor-confirmation.test.ts`.
+
+Everything that does not need a sealed result still runs: transport, decoding, finality
+ordering, ABI validation, hash binding, every forgery and look-alike rejection, and the
+confirmation boundary's `TRUSTED_PROVENANCE_REQUIRED` path. The end-to-end positive
+confirmation path requires a genuinely operator-pinned reader and a real reviewed
+deployment manifest, and is **unexercised**.
 
 ### Manifest handling: a deliberate, documented duplication
 

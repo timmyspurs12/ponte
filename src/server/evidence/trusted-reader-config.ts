@@ -10,9 +10,12 @@
  * So a validated configuration is returned as a branded `OperatorTrustedReaderConfig`
  * instance: an unexported class, registered in a module-private `WeakSet`, carrying
  * a private field. `TrustedEvidenceChainReader`'s constructor accepts nothing else.
- * There is no exported function that turns arbitrary caller input into production
- * authority except `issueOperatorConfig`, which is called only by
- * `resolveTrustedReaderConfig()` — the single server-controlled source.
+ * **No function in this module turns caller input into operator authority.** Review
+ * pass 3 removed the last one. `resolveTrustedReaderConfig()` is the single
+ * server-controlled source and takes no input at all; it currently reports
+ * `CONFIG_MISSING` unconditionally. The only issuer that accepts input,
+ * `__issueTestConfigForHarness`, always produces a test-scoped brand, which the
+ * pipeline refuses by definition.
  *
  * Test configurations are a *separate* brand (`testOnly: true`) so a test-scoped
  * reader can never be mistaken for an operator one, and the pipeline refuses to
@@ -83,8 +86,8 @@ export interface TrustedReaderConfigValues {
 }
 
 /**
- * A branded configuration. Only `issueOperatorConfig` / `issueTestConfig` can create
- * one, and both are module-private; the class is not exported either.
+ * A branded configuration. Only the module-private `validate`/`brand` path can create
+ * one; the class itself is not exported.
  */
 class BrandedTrustedReaderConfig implements TrustedReaderConfigValues {
   readonly #token: symbol;
@@ -442,61 +445,74 @@ function validate(
 }
 
 /**
- * Harness-only configuration issuance.
+ * Test-scoped configuration issuance.
  *
- * **Review pass 2:** the production surface exposes exactly one validator —
- * `resolveTrustedReaderConfig()`, which takes no arguments and always reports
- * `CONFIG_MISSING`. This function is the single remaining way to mint a brand, and it
- * exists solely so `tests/` can build readers. Its only importer is
- * `tests/evidence/helpers/test-config-bridge.ts`; no module under `src/` imports that
- * bridge, which `tests/evidence/reader-capability.test.ts` enforces by scanning the
- * source tree.
+ * **Review pass 3 removed operator issuance from production entirely.** Earlier
+ * revisions exposed `__issueConfigForHarness(input, operatorScope)`, which could mint a
+ * configuration that the trusted pipeline accepted. That function is gone: no code in
+ * `src/` can produce an operator-scoped brand, because the only issuer here always sets
+ * `testOnly: true`.
  *
- * `operatorScope` controls whether the resulting reader may authorize a confirmation.
- * It is false for the RPC-parsing readers the suite uses, and true only for the
- * harness that exercises the confirmation boundary itself.
+ * A test-scoped brand is refused by `runTrustedVerification` before any work is done, so
+ * it cannot authorize a confirmation however it is constructed. That makes this
+ * function safe to expose for tests: it mints something the authorization boundary
+ * rejects by definition.
  *
- * ## Why operator scope is additionally constrained to loopback
- *
- * An operator-scoped reader can authorize a confirmation. Handing one an arbitrary
- * endpoint would mean the test harness could be aimed at a real network, which is
- * precisely the "exported helper letting arbitrary endpoints reach the authorizing
- * pipeline" that review pass 2 forbids. So operator scope here is *self-limiting*: it
- * refuses any endpoint that is not a loopback literal. A caller cannot mint an
- * operator-scoped reader pointed anywhere else, whatever it passes, and this is a
- * runtime check rather than a convention.
+ * There is deliberately no parameter to make it operator-scoped. A caller cannot pass a
+ * flag, an option, or an environment value to change that.
  *
  * @internal Imported only by the test bridge under `tests/`.
  */
-export function __issueConfigForHarness(
+export function __issueTestConfigForHarness(
   input: unknown,
-  operatorScope: boolean,
 ): TrustedReaderConfigResult {
-  if (operatorScope) {
-    // Only an operator-scoped brand needs the loopback guarantee; test-scoped readers
-    // never authorize so they are harmless wherever they point.
-    const endpoint =
-      isPlainObject(input) && typeof input.rpcUrl === "string"
-        ? safeLoopbackCheck(input.rpcUrl)
-        : false;
-    if (!endpoint) return fail("CONFIG_RPC_URL");
-  }
-  return validate(input, !operatorScope, true);
+  return validate(input, true, true);
 }
 
-/** True only for an `http:` URL whose host is a loopback literal. */
-function safeLoopbackCheck(raw: string): boolean {
+/**
+ * Loopback validation for the **test** configuration path.
+ *
+ * Review pass 3 tightened this: the accepted forms are numeric loopback literals only.
+ * Hostname resolution is never used to establish loopback, so `localhost` and any DNS
+ * name are rejected — a name is not a literal and its resolution is not something this
+ * code controls. Link-local, private-range, remote and IPv4-mapped-IPv6 forms are all
+ * rejected, and IPv4-mapped IPv6 is *not* normalized into acceptance.
+ *
+ * This function does not authorize anything by itself; it narrows where a test-scoped
+ * reader may connect. Operator scope no longer exists in this module.
+ */
+export function isNumericLoopbackHttpUrl(raw: string): boolean {
+  let parsed: URL;
   try {
-    const parsed = new URL(raw);
-    if (parsed.protocol !== "http:") return false;
-    return (
-      parsed.hostname === "127.0.0.1" ||
-      parsed.hostname === "localhost" ||
-      parsed.hostname === "[::1]"
-    );
+    parsed = new URL(raw);
   } catch {
     return false;
   }
+  if (parsed.protocol !== "http:") return false;
+  if (parsed.username || parsed.password) return false;
+  return isNumericLoopbackHost(parsed.hostname);
+}
+
+/** True only for `127.0.0.0/8` or `::1`, written as a literal. */
+export function isNumericLoopbackHost(hostname: string): boolean {
+  // IPv6 literal arrives bracketed from `URL.hostname`, e.g. `[::1]`.
+  const bare = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+
+  if (bare === "::1") return true;
+  // Anything else containing a colon is a non-loopback IPv6 form, including
+  // IPv4-mapped (`::ffff:127.0.0.1`), which is rejected rather than normalized.
+  if (bare.includes(":")) return false;
+  // Reject IPv4-mapped-in-hostname and octal/hex tricks by requiring four plain
+  // decimal octets with no leading zeros beyond a single `0`.
+  const parts = bare.split(".");
+  if (parts.length !== 4) return false;
+  for (const part of parts) {
+    if (!/^(?:0|[1-9][0-9]{0,2})$/.test(part)) return false;
+    if (Number(part) > 255) return false;
+  }
+  return parts[0] === "127";
 }
 
 /**
@@ -505,6 +521,11 @@ function safeLoopbackCheck(raw: string): boolean {
  * Takes **no parameters**. An earlier revision accepted a caller-supplied `pinned`
  * argument, which would have let any module manufacture a production reader; that
  * parameter is gone.
+ *
+ * Review pass 3: this is now the only function in `src/` that could return an
+ * operator-scoped configuration, and it never does — it reports unavailable
+ * unconditionally. Operator brands cannot be minted in this codebase at all until a
+ * real reviewed manifest exists.
  *
  * Returns an error because **no real deployment manifest exists**. When one does,
  * it is loaded here — and only here — from a reviewed server-side artefact. There is

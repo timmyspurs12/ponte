@@ -13,7 +13,8 @@ import {
   type TrustedPipelineOutcome,
 } from "../../src/server/evidence/trusted-authorization";
 import type { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
-import { createHarnessOperatorReader } from "./helpers/test-reader-factory";
+import { evaluateTrustedObservation } from "../../src/server/evidence/trusted-reader";
+import { createTestReader } from "./helpers/test-reader-factory";
 import { isAnchorConfirmationFailure } from "./helpers/failure-guard";
 import {
   hex32,
@@ -122,43 +123,79 @@ function readerWith(w: Record<string, unknown>) {
     return entry;
   });
   server.setRawResponder(null);
-  return createHarnessOperatorReader({ ...CONFIG, rpcUrl: server.url });
+  return createTestReader({ ...CONFIG, rpcUrl: server.url });
 }
 
 function trusted(outcome: TrustedPipelineOutcome) {
   return outcome.ok ? outcome.result : null;
 }
 
+/**
+ * Drives the reader directly, bypassing the provenance gate.
+ *
+ * Review pass 3 removed operator issuance from production, so `runTrustedVerification`
+ * now refuses every reader the suite can build. That gate is the subject of
+ * `reader-capability.test.ts`. The tests below are about the *reader's* behaviour —
+ * decoding, hash pinning, finality ordering, ABI validation — which is reachable
+ * directly through `readAnchorObservation` and is the right level to assert it.
+ *
+ * Nothing here can authorize: the result is a reader result, not a
+ * `TrustedAnchorVerification`.
+ */
+function acquire(w: Record<string, unknown>, hash = TX_HASH) {
+  const reader = readerWith(w);
+  return reader.readAnchorObservation({
+    transactionHash: hash,
+    registryAddress: REGISTRY,
+  });
+}
+
+/**
+ * Acquires through the reader, then runs the pure evaluator.
+ *
+ * The evaluator never authorized anything on its own — it produces an
+ * `AnchorEvaluationResult`, which the confirmation boundary rejects with
+ * `TRUSTED_PROVENANCE_REQUIRED`. Testing it directly is both reachable and exactly as
+ * strong as before.
+ */
+async function evaluate(
+  w: Record<string, unknown>,
+  commitment: typeof EXPECTED = EXPECTED,
+) {
+  const acquired = await acquire(w);
+  if (!acquired.ok) throw new Error(`reader failed: ${acquired.failure}`);
+  return evaluateTrustedObservation(commitment, acquired);
+}
+
 // ------------------------------------------------------------------ happy path
 
-test("a correct finalized observation yields a trusted verification", async () => {
+test("the pipeline refuses every reader this suite can build", async () => {
+  // Review pass 3 removed operator issuance from production, so there is no way for a
+  // test to obtain an operator-scoped reader. This asserts the consequence directly
+  // rather than pretending a happy path exists. The positive end-to-end path needs a
+  // real reviewed deployment and is recorded as unexercised in the phase document.
   const outcome = await runTrustedVerification(
     readerWith(world()),
     EXPECTED,
     TX_HASH,
   );
-  assert.equal(outcome.ok, true, JSON.stringify(outcome));
-  const result = trusted(outcome);
-  assert.ok(result);
-  assert.equal(isTrustedAnchorVerification(result), true);
-  assert.equal(isAnchorEvaluationProof(result.proof), true);
-  // The seal records the finality the reader observed.
-  assert.equal(result.seal.finality.level, "finalized");
-  assert.equal(result.seal.finality.receiptBlockNumber, String(RECEIPT_BLOCK));
-  assert.equal(result.seal.registryAddress, REGISTRY);
-  assert.equal(result.seal.transactionHash, TX_HASH);
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
+  assert.equal(isTrustedAnchorVerification(outcome), false);
+  assert.equal(trusted(outcome), null);
 });
 
-test("the pipeline result is frozen", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(world()),
-    EXPECTED,
-    TX_HASH,
-  );
-  const result = trusted(outcome);
-  assert.ok(result);
-  assert.equal(Object.isFrozen(result), true);
-  assert.equal(Object.isFrozen(result.seal), true);
+test("the reader itself accepts a correct finalized observation", async () => {
+  // The behaviour that used to be asserted through the pipeline, asserted where it now
+  // lives. A reader result is not authority: it cannot confirm anything.
+  const acquired = await acquire(world());
+  assert.equal(acquired.ok, true, JSON.stringify(acquired));
+  if (!acquired.ok) return;
+  assert.equal(acquired.observation.chainId, String(CHAIN_ID));
+  assert.equal(acquired.observation.transactionHash, TX_HASH);
+  assert.equal(acquired.finality.level, "finalized");
+  assert.equal(acquired.finality.receiptBlockNumber, String(RECEIPT_BLOCK));
+  assert.equal(acquired.runtimeBytecodeHash, RUNTIME_HASH);
 });
 
 // ------------------------------------------------------------- reader failures
@@ -168,7 +205,10 @@ test("a wrong chain short-circuits before any transaction read", async () => {
   // Baseline: the shared server accumulates calls across tests, so measure the
   // delta rather than the absolute count.
   const before = server.calls.length;
-  const outcome = await runTrustedVerification(reader, EXPECTED, TX_HASH);
+  const outcome = await reader.readAnchorObservation({
+    transactionHash: TX_HASH,
+    registryAddress: REGISTRY,
+  });
   assert.equal(outcome.ok, false);
   if (outcome.ok) return;
   assert.equal(outcome.failure, "WRONG_CHAIN");
@@ -178,10 +218,8 @@ test("a wrong chain short-circuits before any transaction read", async () => {
 });
 
 test("a pinned-hash mismatch prevents any proof", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(world({ eth_getCode: "0x6080604052348015600f57600080fd5b51" })),
-    EXPECTED,
-    TX_HASH,
+  const outcome = await acquire(
+    world({ eth_getCode: "0x6080604052348015600f57600080fd5b51" }),
   );
   assert.equal(outcome.ok, false);
   if (outcome.ok) return;
@@ -189,17 +227,13 @@ test("a pinned-hash mismatch prevents any proof", async () => {
 });
 
 test("a non-finalized receipt prevents any proof", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(
-      world({
+  const outcome = await acquire(
+    world({
         eth_getBlockByNumber: (call: RpcCall) =>
           call.params[0] === "finalized"
             ? { number: quantity(RECEIPT_BLOCK - 1), hash: hex32("finalized") }
             : { number: quantity(RECEIPT_BLOCK), hash: BLOCK_HASH },
-      }),
-    ),
-    EXPECTED,
-    TX_HASH,
+    }),
   );
   assert.equal(outcome.ok, false);
   if (outcome.ok) return;
@@ -209,26 +243,17 @@ test("a non-finalized receipt prevents any proof", async () => {
 // -------------------------------------------------- evaluation-stage rejections
 
 test("a commitment mismatch is reported as an evaluation rejection", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(world()),
-    { ...EXPECTED, payloadHash: hex32("other") },
-    TX_HASH,
-  );
-  assert.equal(outcome.ok, false);
-  if (outcome.ok) return;
-  assert.equal(outcome.failure, "EVALUATION_REJECTED");
-  assert.equal(outcome.evaluationFailure, "WRONG_PAYLOAD_HASH");
+  const outcome = await evaluate(world(), { ...EXPECTED, payloadHash: hex32("other") });
+  assert.equal(outcome.verified, false);
+  if (outcome.verified) return;
+  assert.equal(outcome.failure, "WRONG_PAYLOAD_HASH");
 });
 
 test("a wrong evidence id is an evaluation rejection", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(world()),
-    { ...EXPECTED, evidenceId: hex32("other") },
-    TX_HASH,
-  );
-  assert.equal(outcome.ok, false);
-  if (outcome.ok) return;
-  assert.equal(outcome.evaluationFailure, "WRONG_EVIDENCE_ID");
+  const outcome = await evaluate(world(), { ...EXPECTED, evidenceId: hex32("other") });
+  assert.equal(outcome.verified, false);
+  if (outcome.verified) return;
+  assert.equal(outcome.failure, "WRONG_EVIDENCE_ID");
 });
 
 test("a reverted receipt is an evaluation rejection, not a proof", async () => {
@@ -237,14 +262,10 @@ test("a reverted receipt is an evaluation rejection, not a proof", async () => {
     ...(w.eth_getTransactionReceipt as Record<string, unknown>),
     status: "0x0",
   };
-  const outcome = await runTrustedVerification(
-    readerWith(w),
-    EXPECTED,
-    TX_HASH,
-  );
-  assert.equal(outcome.ok, false);
-  if (outcome.ok) return;
-  assert.equal(outcome.evaluationFailure, "TRANSACTION_REVERTED");
+  const outcome = await evaluate(w);
+  assert.equal(outcome.verified, false);
+  if (outcome.verified) return;
+  assert.equal(outcome.failure, "TRANSACTION_REVERTED");
 });
 
 test("an ambiguous event is an evaluation rejection", async () => {
@@ -253,14 +274,10 @@ test("an ambiguous event is an evaluation rejection", async () => {
     ...(w.eth_getTransactionReceipt as Record<string, unknown>),
     logs: [log(), log()],
   };
-  const outcome = await runTrustedVerification(
-    readerWith(w),
-    EXPECTED,
-    TX_HASH,
-  );
-  assert.equal(outcome.ok, false);
-  if (outcome.ok) return;
-  assert.equal(outcome.evaluationFailure, "EVENT_AMBIGUOUS");
+  const outcome = await evaluate(w);
+  assert.equal(outcome.verified, false);
+  if (outcome.verified) return;
+  assert.equal(outcome.failure, "EVENT_AMBIGUOUS");
 });
 
 // ------------------------------------- fabricated inputs cannot reach the seal
@@ -323,11 +340,7 @@ test("a fabricated outcome object is not a trusted verification", () => {
 });
 
 test("an unknown transaction hash yields no proof", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(world({ eth_getTransactionByHash: null })),
-    EXPECTED,
-    hex32("unknown"),
-  );
+  const outcome = await acquire(world({ eth_getTransactionByHash: null }), hex32("unknown"));
   assert.equal(outcome.ok, false);
   if (outcome.ok) return;
   assert.equal(outcome.failure, "TRANSACTION_MISSING");
@@ -368,7 +381,7 @@ function adminWord(padding: string, tail: string) {
 }
 
 test("a canonically padded admin() word is accepted", async () => {
-  const outcome = await runTrustedVerification(readerWith(world()), EXPECTED, TX_HASH);
+  const outcome = await acquire(world());
   assert.equal(outcome.ok, true, "canonical encoding must be accepted");
 });
 
@@ -377,20 +390,16 @@ test("nonzero padding with a correct trailing address is rejected", async () => 
   // expected administrator, so a decoder that simply takes the last 40 characters
   // would accept this. Only a padding check catches it.
   const tail = getAddress(ADMIN).slice(2);
-  const outcome = await runTrustedVerification(
-    readerWith(world({ eth_call: adminWord("0".repeat(23) + "1", tail) })),
-    EXPECTED,
-    TX_HASH,
+  const outcome = await acquire(
+    world({ eth_call: adminWord("0".repeat(23) + "1", tail) }),
   );
   assert.equal(outcome.ok, false);
   if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_INVALID");
 });
 
 test("fully nonzero padding is rejected", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(world({ eth_call: adminWord("f".repeat(24), getAddress(ADMIN).slice(2)) })),
-    EXPECTED,
-    TX_HASH,
+  const outcome = await acquire(
+    world({ eth_call: adminWord("f".repeat(24), getAddress(ADMIN).slice(2)) }),
   );
   assert.equal(outcome.ok, false);
   if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_INVALID");
@@ -404,11 +413,7 @@ test("a malformed-length admin() return is rejected", async () => {
     `0x${"0".repeat(64)}`, // a full word of zeros
   ];
   for (const value of cases) {
-    const outcome = await runTrustedVerification(
-      readerWith(world({ eth_call: value })),
-      EXPECTED,
-      TX_HASH,
-    );
+    const outcome = await acquire(world({ eth_call: value }));
     assert.equal(outcome.ok, false, `accepted malformed admin word ${value.slice(0, 12)}…`);
     if (!outcome.ok)
       assert.equal(
@@ -420,12 +425,8 @@ test("a malformed-length admin() return is rejected", async () => {
 });
 
 test("a zero administrator is rejected even though its padding is canonical", async () => {
-  const outcome = await runTrustedVerification(
-    readerWith(
-      world({ eth_call: adminWord("0".repeat(24), "0".repeat(40)) }),
-    ),
-    EXPECTED,
-    TX_HASH,
+  const outcome = await acquire(
+    world({ eth_call: adminWord("0".repeat(24), "0".repeat(40)) }),
   );
   assert.equal(outcome.ok, false);
   if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_INVALID");
@@ -433,12 +434,8 @@ test("a zero administrator is rejected even though its padding is canonical", as
 
 test("a different administrator is rejected as a mismatch", async () => {
   const other = `0x${"44".repeat(20)}`;
-  const outcome = await runTrustedVerification(
-    readerWith(
-      world({ eth_call: adminWord("0".repeat(24), getAddress(other).slice(2)) }),
-    ),
-    EXPECTED,
-    TX_HASH,
+  const outcome = await acquire(
+    world({ eth_call: adminWord("0".repeat(24), getAddress(other).slice(2)) }),
   );
   assert.equal(outcome.ok, false);
   if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_MISMATCH");
@@ -458,8 +455,7 @@ test("a different administrator is rejected as a mismatch", async () => {
 test("a response about a different transaction is rejected", async () => {
   const otherTx = hex32("a-different-transaction");
   // The node answers every lookup with a different, internally consistent transaction.
-  const outcome = await runTrustedVerification(
-    readerWith(
+  const outcome = await acquire(
       world({
         eth_getTransactionByHash: { hash: otherTx, from: ATTESTOR, to: REGISTRY },
         eth_getTransactionReceipt: {
@@ -472,9 +468,6 @@ test("a response about a different transaction is rejected", async () => {
           logs: [log()],
         },
       }),
-    ),
-    EXPECTED,
-    TX_HASH,
   );
   assert.equal(outcome.ok, false);
   if (!outcome.ok)
@@ -489,8 +482,7 @@ test("a receipt naming a different transaction than the observation is rejected"
   // The transaction lookup is correct; only the receipt names another hash. This is
   // the split-brain case where a reader might otherwise accept the transaction's
   // finality but the receipt's contents.
-  const outcome = await runTrustedVerification(
-    readerWith(
+  const outcome = await acquire(
       world({
         eth_getTransactionReceipt: {
           transactionHash: otherTx,
@@ -502,9 +494,6 @@ test("a receipt naming a different transaction than the observation is rejected"
           logs: [log()],
         },
       }),
-    ),
-    EXPECTED,
-    TX_HASH,
   );
   assert.equal(outcome.ok, false);
   if (!outcome.ok)
@@ -546,22 +535,35 @@ test("a malformed requested hash is rejected before any network call", async () 
 
 test("an uppercase requested hash is normalized, not rejected", async () => {
   // Review pass 2 asked for *normalization*: a checksummed hash names the same
-  // transaction, so refusing it would be a usability bug. What matters is that the
-  // normalized value is what gets bound into the result and compared against the
-  // chain, which the successful outcome here demonstrates.
+  // transaction, so refusing it would be a usability bug.
+  //
+  // Review pass 3 removed operator issuance, so the pipeline can no longer reach a
+  // successful outcome in tests. What remains observable is the *validation* decision,
+  // which runs before the capability gate: an uppercase hash must be accepted as
+  // well-formed (reaching `READER_NOT_TRUSTED`) rather than rejected as malformed.
+  // The binding of the normalized value into a result is exercised at the reader level
+  // by the transaction tests above, and is recorded as unexercised end-to-end.
   const outcome = await runTrustedVerification(
     readerWith(world()),
     EXPECTED,
     TX_HASH.toUpperCase().replace("0X", "0x"),
   );
-  assert.equal(outcome.ok, true, "an uppercase hash should normalize and succeed");
-  if (outcome.ok) {
-    // The result must carry the normalized hash, not the caller's casing.
-    assert.equal(outcome.result.seal.transactionHash, TX_HASH);
-  }
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok)
+    assert.equal(
+      outcome.failure,
+      "READER_NOT_TRUSTED",
+      "an uppercase hash must pass validation, not be treated as malformed",
+    );
 });
 
-test("a registry mismatch is refused before the reader is consulted", async () => {
+test("a registry mismatch is refused before any network call", async () => {
+  // The registry comparison now lives inside the capability boundary, where it runs
+  // after the provenance gate and before any I/O. Because no operator-scoped reader can
+  // be constructed in this codebase, the gate fires first and the caller observes
+  // `READER_NOT_TRUSTED`; the `REGISTRY_ADDRESS_MISMATCH` branch itself is unreachable
+  // until a real deployment exists. What is asserted here — and holds regardless — is
+  // that a mismatched commitment causes no network traffic at all.
   server.calls.length = 0;
   const outcome = await runTrustedVerification(
     readerWith(world()),
@@ -569,6 +571,6 @@ test("a registry mismatch is refused before the reader is consulted", async () =
     TX_HASH,
   );
   assert.equal(outcome.ok, false);
-  if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADDRESS_MISMATCH");
+  if (!outcome.ok) assert.equal(outcome.failure, "READER_NOT_TRUSTED");
   assert.equal(server.calls.length, 0);
 });

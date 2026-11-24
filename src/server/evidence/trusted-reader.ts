@@ -51,7 +51,7 @@ import {
   type OperatorTrustedReaderConfig,
 } from "./trusted-reader-config";
 import type { FinalityEvidence } from "./trusted-observation";
-import type { ReaderAcquisition, ReaderDispatch } from "./reader-capability";
+import type { ReaderAcquisition, VerifiedAcquisition } from "./reader-capability";
 
 /** `admin()` — the public address getter on the Registry. */
 const ADMIN_SELECTOR = "0xf851a440";
@@ -94,34 +94,92 @@ export type TrustedReaderResult =
   | { readonly ok: false; readonly failure: TrustedReaderFailure };
 
 /**
- * The reader registry, and the only place a capability is ever written.
+ * One registered reader's authority, held only inside this module.
  *
- * Review pass 2 left this map in `reader-capability.ts` next to an exported
- * `attachReaderCapability`, so any module could mint a reader by importing the writer.
- * It now lives here, in module scope, with no exported writer at all. The constructor
- * below is the only code path that can add an entry, which makes "is a reader" and
- * "was constructed from a genuine branded config" the same statement.
+ * Review pass 3 found that the previous version returned this object from
+ * `dispatchForReader()`, so a caller holding any reader — including its own test-scoped
+ * one — could flip `operatorScoped` to `true` or swap `read` for a fabricated
+ * acquisition. `readonly` is erased at runtime, so the object it returned *was* the
+ * authority, and authority that can be edited is not authority.
  *
- * Only the lookup leaves this module.
+ * The record is frozen, but freezing is not the mechanism relied on: the record never
+ * leaves this module. `acquireForVerification` reads it and returns a result, so there
+ * is no object for a caller to reach in the first place.
  */
-const DISPATCHERS = new WeakMap<object, ReaderDispatch>();
-
-/** Attaches a capability. Module-private; reachable only from the constructor below. */
-function attachReaderCapability(target: object, dispatch: ReaderDispatch): void {
-  DISPATCHERS.set(target, dispatch);
+interface ReaderEntry {
+  /** False for a test-scoped reader. The pipeline refuses those. */
+  readonly operatorScoped: boolean;
+  readonly pinnedRegistryAddress: string;
+  readonly read: (input: {
+    readonly transactionHash: string;
+    readonly registryAddress: string;
+  }) => Promise<ReaderAcquisition>;
 }
 
 /**
- * Resolves the dispatcher for a candidate reader, or `null`.
+ * The reader registry, and the only place a capability is ever written.
  *
- * This is the entire surface the authorization pipeline sees. It cannot create an
- * entry: a Proxy, `Object.create(TrustedEvidenceChainReader.prototype)`, a plain
- * object literal, or a cross-realm clone all miss, because none of them ran the
- * constructor.
+ * The map and its writer live here, in module scope, unexported. The constructor below
+ * is the only code path that can add an entry, which makes "is a reader" and "was
+ * constructed from a genuine branded config" the same statement.
+ *
+ * No object in this map is ever returned to a caller.
  */
-export function dispatchForReader(candidate: unknown): ReaderDispatch | null {
-  if (candidate === null || typeof candidate !== "object") return null;
-  return DISPATCHERS.get(candidate) ?? null;
+const READERS = new WeakMap<object, ReaderEntry>();
+
+/** Attaches a capability. Module-private; reachable only from the constructor below. */
+function attachReaderCapability(target: object, entry: ReaderEntry): void {
+  READERS.set(target, Object.freeze({ ...entry }));
+}
+
+/**
+ * The entire surface the authorization pipeline sees.
+ *
+ * This function returns a **result**, never the authority behind it. It cannot create
+ * an entry: a Proxy, `Object.create(TrustedEvidenceChainReader.prototype)`, a plain
+ * object literal or a cross-realm clone all miss, because none of them ran the
+ * constructor.
+ *
+ * Order matters. The scope check happens before the acquisition closure is invoked, so
+ * a test-scoped reader is refused without performing any work — and, more importantly,
+ * the `operatorScoped` value that gate reads comes from the module-private record, not
+ * from anything the caller supplied or can touch.
+ */
+export async function acquireForVerification(
+  candidate: unknown,
+  input: {
+    readonly transactionHash: string;
+    /** The registry the persisted commitment names. Compared before any I/O. */
+    readonly expectedRegistryAddress: string;
+  },
+): Promise<VerifiedAcquisition> {
+  if (candidate === null || typeof candidate !== "object")
+    return { ok: false, failure: "READER_NOT_TRUSTED" };
+  const entry = READERS.get(candidate);
+  if (!entry) return { ok: false, failure: "READER_NOT_TRUSTED" };
+  if (!entry.operatorScoped) return { ok: false, failure: "READER_NOT_TRUSTED" };
+
+  // The commitment's registry must be the one this reader is pinned to, and the check
+  // happens here so it precedes any network call. Comparing inside the boundary means
+  // the pinned value never has to be handed out for the caller to compare.
+  if (input.expectedRegistryAddress.toLowerCase() !== entry.pinnedRegistryAddress)
+    return { ok: false, failure: "REGISTRY_ADDRESS_MISMATCH" };
+
+  const acquired = await entry.read({
+    transactionHash: input.transactionHash,
+    registryAddress: entry.pinnedRegistryAddress,
+  });
+  if (!acquired.ok) return { ok: false, failure: acquired.failure };
+
+  // A fresh object. The entry's address is copied into the result so the pipeline never
+  // has to reach back for it.
+  return {
+    ok: true,
+    pinnedRegistryAddress: entry.pinnedRegistryAddress,
+    observation: acquired.observation,
+    finality: acquired.finality,
+    runtimeBytecodeHash: acquired.runtimeBytecodeHash,
+  };
 }
 
 function fail(failure: TrustedReaderFailure): TrustedReaderResult {
@@ -220,9 +278,9 @@ export class TrustedEvidenceChainReader {
       timeoutMs: config.timeoutMs,
     });
 
-    // The dispatcher closes over THIS instance's private state. The pipeline calls
-    // the closure, never a method on a caller-supplied object, so a Proxy or a
-    // prototype imitation cannot interpose.
+    // The entry closes over THIS instance's private state. The pipeline calls the
+    // closure, never a method on a caller-supplied object, so a Proxy or a prototype
+    // imitation cannot interpose. The entry is frozen and never returned.
     attachReaderCapability(this, {
       pinnedRegistryAddress: config.registryAddress,
       operatorScoped: !config.testOnly,

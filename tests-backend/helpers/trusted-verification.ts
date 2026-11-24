@@ -1,12 +1,21 @@
 /**
- * Builds genuine `TrustedAnchorVerification` values for the backend tests.
+ * An in-process mock chain for the backend tests.
  *
- * Phase 2C.2A made a bare evaluation proof insufficient for confirmation: the
- * boundary now also requires a seal that only the trusted pipeline can issue, and
- * that seal exists only if a *real reader* acquired the observation over a *real
- * transport*. So these tests cannot hand-build a result. They stand up an
- * in-process mock JSON-RPC endpoint, point the production reader class at it, and
- * run the production pipeline. The fake is the endpoint, never the reader.
+ * **Review pass 3 removed test-only operator issuance from production.** Earlier
+ * revisions built a genuinely trusted result here by pointing an operator-scoped reader
+ * at a mock endpoint. That is no longer possible, and deliberately so: a mock server
+ * returning fabricated chain data cannot establish operator provenance, and the
+ * confirmation boundary must not be satisfiable by one.
+ *
+ * So this helper now produces only what a test-scoped reader can produce: a *reader
+ * result* obtained over a real transport, which is enough to exercise transport,
+ * decoding, finality ordering and the confirmation boundary's rejection paths. It
+ * cannot produce a `TrustedAnchorVerification`, and `confirmable()` therefore throws if
+ * asked for one — loudly, rather than returning something that looks authorized.
+ *
+ * The positive path through `runTrustedVerification` → `confirmVerifiedAnchor` requires
+ * a genuinely operator-pinned reader and a real reviewed deployment manifest. It is
+ * recorded as unexercised in `docs/PHASE2C2A_TRUSTED_ARBITRUM_READER.md`, not faked.
  *
  * No public endpoint is contacted; the socket is loopback-only and ephemeral.
  */
@@ -20,7 +29,7 @@ import {
 import { runTrustedVerification } from "../../src/server/evidence/trusted-authorization";
 import { readConfirmableOutboxRow } from "../../src/server/evidence/anchor-confirmation";
 import { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
-import { createHarnessOperatorReader } from "../../tests/evidence/helpers/test-reader-factory";
+import { createTestReader } from "../../tests/evidence/helpers/test-reader-factory";
 import type { TrustedAnchorVerification } from "../../src/server/evidence/trusted-authorization";
 import type { TrustedPipelineOutcome } from "../../src/server/evidence/trusted-authorization";
 import {
@@ -56,7 +65,10 @@ export interface AnchorWorld {
   setOverride(method: string, value: unknown): void;
   /** Run the real pipeline against this world. */
   verify(commitment: ExpectedAnchorCommitment): Promise<TrustedPipelineOutcome>;
-  /** Verify for an outbox row and narrow to a trusted result, or throw. */
+  /**
+   * Historically verified an outbox row and narrowed to a trusted result. Since review
+   * pass 3 no test can mint one, so this always throws with that reason.
+   */
   confirmable(
     db: PoolClient,
     outboxId: string,
@@ -64,6 +76,11 @@ export interface AnchorWorld {
     row: NonNullable<Awaited<ReturnType<typeof readConfirmableOutboxRow>>>;
     trusted: TrustedAnchorVerification;
   }>;
+  /** The reader result over the mock chain, for reachable assertions. */
+  acquire(
+    transactionHash: string,
+    registryAddress: string,
+  ): ReturnType<TrustedEvidenceChainReader["readAnchorObservation"]>;
   close(): Promise<void>;
 }
 
@@ -141,7 +158,7 @@ export async function startAnchorWorld(
     return entry;
   });
 
-  const reader = createHarnessOperatorReader({
+  const reader = createTestReader({
     rpcUrl: server.url,
     registryAddress: options.registry,
     runtimeBytecodeHash: runtimeHash,
@@ -162,7 +179,13 @@ export async function startAnchorWorld(
         options.transactionHash,
       );
     },
-    async confirmable(db, outboxId) {
+    /**
+     * Historically returned a genuinely trusted result. It cannot: no operator-scoped
+     * reader can be constructed in this codebase since review pass 3. Tests that need a
+     * sealed result are skipped with that reason; calling this throws so the situation
+     * cannot be mistaken for a passing assertion.
+     */
+    async confirmable(db, outboxId): Promise<never> {
       const row = await readConfirmableOutboxRow(db, outboxId);
       if (!row) throw new Error("outbox row not found");
       const outcome = await runTrustedVerification(
@@ -178,15 +201,13 @@ export async function startAnchorWorld(
         },
         options.transactionHash,
       );
-      if (!outcome.ok)
-        throw new Error(
-          `expected a trusted verification, got ${outcome.failure}${
-            "evaluationFailure" in outcome && outcome.evaluationFailure
-              ? `/${outcome.evaluationFailure}`
-              : ""
-          }`,
-        );
-      return { row, trusted: outcome.result };
+      throw new Error(
+        `no trusted verification can be minted in tests (review pass 3): ${outcome.ok ? "unexpectedly authorized" : outcome.failure}`,
+      );
+    },
+    /** The reader result over the mock chain, for the reachable assertions. */
+    acquire(transactionHash: string, registryAddress: string) {
+      return reader.readAnchorObservation({ transactionHash, registryAddress });
     },
     close() {
       return server.close();

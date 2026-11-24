@@ -1,38 +1,34 @@
 /**
- * Test-only bridge to the reader-configuration brand.
+ * Test-only bridge to the (test-scoped) configuration brand.
  *
- * Review pass 2 requires that test-only machinery not sit on the production
- * authorization surface. Production exposes one resolver, which takes no arguments and
- * always reports unavailable. This bridge is the only importer of the harness issuance
- * function, and it lives under `tests/`, so it is never bundled into the application.
+ * Review pass 3 removed operator issuance from production `src/` entirely. There is no
+ * longer any function anywhere — production or test — that produces a configuration the
+ * trusted pipeline will accept. This bridge therefore mints **test-scoped** brands only,
+ * which `runTrustedVerification` refuses by definition.
  *
- * Two flavours, deliberately distinct:
+ * ## What this means for the suite
  *
- * - `issueTestConfig`  → test-scoped reader. The pipeline refuses it outright.
- * - `issueHarnessOperatorConfig` → operator-scoped reader, used only by the backend
- *   suite to exercise `confirmVerifiedAnchor`'s positive path. Confined to tests by
- *   construction; `reader-capability.test.ts` asserts no `src/` module reaches it.
+ * Readers built here can perform real RPC parsing against a loopback mock server: they
+ * exercise transport, decoding, finality ordering and every rejection path. What they
+ * cannot do is produce a `TrustedAnchorVerification`, because the provenance gate runs
+ * before any observation is read.
+ *
+ * That is the intended consequence, not a gap to work around. The end-to-end positive
+ * confirmation path requires a genuinely operator-pinned reader, which requires a real
+ * reviewed deployment manifest, which does not exist yet. Those tests are recorded as
+ * unexercised rather than faked — see `docs/PHASE2C2A_TRUSTED_ARBITRUM_READER.md`.
  */
 
 import {
-  __issueConfigForHarness,
+  __issueTestConfigForHarness,
+  isNumericLoopbackHttpUrl,
   type TrustedReaderConfigResult,
 } from "../../../src/server/evidence/trusted-reader-config";
 
-/** A test-scoped configuration: cannot authorize. */
+/** A test-scoped configuration. Cannot authorize anything. */
 export function issueTestConfig(input: unknown): TrustedReaderConfigResult {
-  return __issueConfigForHarness(input, false);
+  return __issueTestConfigForHarness(input);
 }
 
-/**
- * An operator-scoped configuration for the confirmation-boundary tests.
- *
- * This is a deliberate, documented exception: the only way to test that a genuine
- * result confirms is to obtain one, and minting it requires an operator-scoped reader.
- * It is safe because nothing in `src/` can import this file.
- */
-export function issueHarnessOperatorConfig(
-  input: unknown,
-): TrustedReaderConfigResult {
-  return __issueConfigForHarness(input, true);
-}
+/** Re-exported so loopback tests can exercise the real predicate. */
+export { isNumericLoopbackHttpUrl };

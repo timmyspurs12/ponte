@@ -99,10 +99,17 @@ test("the production reader is disabled and its resolver takes no input", () => 
 });
 
 test("no environment variable can enable the reader", () => {
+  // Scope the assertion to the *trusted reader's* namespace. `.env.local` legitimately
+  // sets `PONTE_LOCAL_EVIDENCE_TEST_*` for the unrelated local routing provider, which
+  // must not be mistaken for a trusted-reader switch. Neither
+  // `trusted-reader-config.ts` nor `trusted-reader.ts` reads `process.env` at all; this
+  // test pins that no reader-specific variable exists to be read.
   const before = Object.keys(process.env).filter((k) =>
-    /PONTE.*(RPC|READER|REGISTRY|MANIFEST)/i.test(k),
+    /PONTE.*(TRUSTED_READER|READER_CONFIG|EVIDENCE_RPC|REGISTRY_MANIFEST|DEPLOYMENT_MANIFEST)/i.test(
+      k,
+    ),
   );
-  assert.deepEqual(before, [], "no reader-related env var exists");
+  assert.deepEqual(before, [], "no trusted-reader env var exists");
   process.env.PONTE_RPC_URL = "https://evil.example";
   process.env.PONTE_REGISTRY_MANIFEST = "/tmp/m.json";
   try {

@@ -20,7 +20,7 @@
 
 import { TrustedEvidenceChainReader } from "../../../src/server/evidence/trusted-reader";
 import type { OperatorTrustedReaderConfig } from "../../../src/server/evidence/trusted-reader-config";
-import { issueTestConfig, issueHarnessOperatorConfig } from "./test-config-bridge";
+import { issueTestConfig } from "./test-config-bridge";
 
 export interface TestReaderOptions {
   readonly rpcUrl: string;
@@ -132,23 +132,6 @@ export async function withFetch<T>(
     delete (patched as { __patched?: boolean }).__patched;
     globalThis.fetch = original;
   }
-}
-
-/**
- * Builds an **operator-scoped** reader for the confirmation-boundary tests.
- *
- * Only the backend suite uses this, and only to obtain a genuine authorization result
- * so that `confirmVerifiedAnchor`'s positive path can be exercised. It is confined to
- * tests by construction: no module under `src/` imports this file, which
- * `reader-capability.test.ts` asserts by scanning the source tree.
- */
-export function createHarnessOperatorReader(
-  options: TestReaderOptions,
-): TrustedEvidenceChainReader {
-  const result = issueHarnessOperatorConfig(harnessConfigInput(options));
-  if (!result.ok)
-    throw new Error(`harness operator config rejected: ${result.failure}`);
-  return new TrustedEvidenceChainReader(result.config);
 }
 
 /** The config type, re-exported so harness helpers can be typed. */

@@ -38,7 +38,7 @@ import type {
   TrustedObservedAnchor,
 } from "./trusted-observation";
 import type { TrustedReaderFailure } from "./trusted-reader";
-import { dispatchForReader } from "./trusted-reader";
+import { acquireForVerification } from "./trusted-reader";
 
 /**
  * The fourteen values a trusted result is bound to.
@@ -338,46 +338,53 @@ export type TrustedPipelineOutcome =
 /**
  * Acquires, evaluates, binds and issues.
  *
- * `reader` must be a `TrustedEvidenceChainReader` built from a branded
- * configuration. A structural imitation fails on its first private-field access.
+ * `reader` must be a `TrustedEvidenceChainReader` that this codebase constructed from a
+ * branded configuration. The check is **not** a private-field access and not an
+ * `instanceof`: it is a capability lookup inside `trusted-reader.ts`, where a
+ * module-private `WeakMap` is keyed by the instance. This function never reads a
+ * property from `reader` and never receives an authority-bearing object back, so a
+ * structural imitation — object literal, `Object.create`, Proxy, prototype swap, spread
+ * copy or cross-realm clone — misses the map and is refused with `READER_NOT_TRUSTED`.
+ *
+ * A registered reader is still refused unless it is operator-scoped, and no
+ * operator-scoped reader can be constructed in this codebase (review pass 3), so this
+ * function currently returns `READER_NOT_TRUSTED` for every caller.
  */
 export async function runTrustedVerification(
   reader: unknown,
   expected: ExpectedAnchorCommitment,
   transactionHash: string,
 ): Promise<TrustedPipelineOutcome> {
-  // ---- Gate 0: the reader must carry this codebase's capability ----
+  // ---- Gate 0: the reader must be one this codebase constructed ----
   //
-  // `reader` is deliberately typed `unknown`. A class type is not a runtime boundary:
-  // review pass 2 showed a plain object with `readAnchorObservation()` and
-  // `pinnedRegistryAddress` could drive the whole pipeline. The capability lookup is
-  // a WeakMap hit, which no Proxy, prototype imitation or structural clone can
-  // fabricate.
-  const dispatch = dispatchForReader(reader);
-  if (!dispatch) return { ok: false, failure: "READER_NOT_TRUSTED" };
-
-  // ---- Gate 0b: a test-scoped reader may never authorize ----
+  // `reader` is deliberately typed `unknown`, and no property of it is read here.
+  // The security mechanism is a capability lookup inside `trusted-reader.ts`: a
+  // module-private `WeakMap` keyed by the instance. Review pass 2 showed that a plain
+  // object with a plausible shape could drive the whole pipeline, and review pass 3
+  // showed that *returning* the registry entry let a caller mutate its authority. The
+  // entry is now never returned. `acquireForVerification` performs the lookup, checks
+  // scope against the private record, invokes the closure, and hands back a result.
   //
-  // Unit tests drive RPC parsing through a loopback endpoint, but such a reader is
-  // marked non-operator and is refused here, so no test fixture can mint a result the
-  // production confirmation boundary would accept.
-  if (!dispatch.operatorScoped) return { ok: false, failure: "READER_NOT_TRUSTED" };
-
-  // ---- Finding 3: the requested hash must be load-bearing ----
+  // Nothing here inspects a caller-supplied field or private brand: an imitation —
+  // object literal, `Object.create`, Proxy, prototype swap or spread copy — misses the
+  // map entirely.
   const requested = canonicalTransactionHash(transactionHash);
   if (!requested) return { ok: false, failure: "TRANSACTION_HASH_MALFORMED" };
-  if (expected.registryAddress.toLowerCase() !== dispatch.pinnedRegistryAddress)
-    return { ok: false, failure: "REGISTRY_ADDRESS_MISMATCH" };
 
   let acquired;
   try {
-    acquired = await dispatch.read({
+    // The registry comparison happens inside the boundary, before any I/O, so a
+    // mismatched commitment never causes a network call and the pinned value is never
+    // handed out for the caller to compare.
+    acquired = await acquireForVerification(reader, {
       transactionHash: requested,
-      registryAddress: dispatch.pinnedRegistryAddress,
+      expectedRegistryAddress: expected.registryAddress,
     });
   } catch {
     return { ok: false, failure: "RPC_UNAVAILABLE" };
   }
+  // `READER_NOT_TRUSTED` here covers both an unregistered candidate and a registered
+  // test-scoped reader; the distinction is deliberately not exposed to the caller.
   if (!acquired.ok) return { ok: false, failure: acquired.failure as TrustedReaderFailure };
 
   // The reader must answer about the transaction that was requested. This is checked
@@ -399,7 +406,7 @@ export async function runTrustedVerification(
     observation: acquired.observation,
     finality: acquired.finality,
     runtimeBytecodeHash: acquired.runtimeBytecodeHash,
-    registryAddress: dispatch.pinnedRegistryAddress,
+    registryAddress: acquired.pinnedRegistryAddress,
     transactionHash: requested,
   };
 
