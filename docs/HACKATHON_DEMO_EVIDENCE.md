@@ -1,6 +1,6 @@
 # Hackathon demo evidence
 
-**Baseline:** PR #13 head `051b2f17d658a0e11af68afe4666fc85c16b1ca4`, 18 November 2026. PR #13 remains open and draft against `main`; PR #14 is incorporated into that branch. `main` was not changed by this work.
+**Baseline:** `main` `b79026f51dac8e0b869d79fa0995c44173b5d5d5`, 19 November 2026. This document was rebased from the PR #15 branch onto `main` after PR #16 merged; the claim boundaries below describe the current application.
 
 This is the authoritative, evidence-first description of what PONTE is today. It deliberately separates the user-facing simulation from the separate Rust optimizer and Stylus work. No live payment, liquidity, wallet or blockchain settlement is claimed.
 
@@ -23,7 +23,7 @@ Evidence: `DESIGN.md` (“financial bridge for Brazilian businesses and internat
 | Bilingual/responsive UI | Portuguese default, English option, five tested widths, selected Axe checks and reduced-motion behaviour. | `src/lib/i18n/`, `tests/localization.spec.ts`, `tests/frontend.spec.ts` |
 | Separate Rust optimizer | Independent `no_std + alloc` library with checked `U256` arithmetic, 1–64 candidate validation, deterministic rejection precedence and tie-breaking. | `rust/optimizer/`, `docs/PHASE2B_IMPLEMENTATION.md` |
 | Separate Stylus wrapper | Synthetic-only ABI evaluator `evaluateSynthetic`, selector `0x31631981`, bounded calldata, complete client ABI and offline WASM host-stub tests. | `rust/stylus-wrapper/`, `docs/PHASE2B2_IMPLEMENTATION.md`, `docs/PHASE2B3_2A_BOUNDED_CALLDATA.md`, `docs/PHASE2B3_3_CLIENT_ABI.md` |
-| Build provenance | Pinned SDK/CLI/toolchain; host and reproducible container builds recorded; container path fixed in Phase 2B.6.1. | `docs/PHASE2B6_1_WORKSPACE_LAYOUT.md` |
+| Build provenance | Pinned SDK/CLI/toolchain recorded in the candidate-artifact run; the unactivated candidate WASM is reproduced and its provenance record is `complete`. | `docs/PHASE2B6_TESTNET_ARTIFACT_READINESS.md`, `.github/workflows/stylus-testnet-artifact.yml` |
 
 ## What is simulated
 
