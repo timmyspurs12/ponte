@@ -99,7 +99,7 @@ The push and pull-request evidence runs at this head are duplicates of the same 
 
 - [Wrapper run 44398146837](https://github.com/timmyspurs12/ponte/actions/runs/44398146837) passed advisory guard, ABI checks, formatter, tests, Clippy, WASM inspection and offline host-stub execution at commit `d3dae37`.
 - [Candidate artifact run 44398147388](https://github.com/timmyspurs12/ponte/actions/runs/44398147388) passed all 17 steps with a `complete` record at the same commit. [Artifact 14471989038](https://github.com/timmyspurs12/ponte/actions/runs/44398147388/artifacts/14471989038) is a locally built, unactivated candidate.
-- Current baseline head `051b2f17` differs from `d3dae37` only by two documentation files; no Rust source, manifest, lockfile or workflow changed.
+- The measured commit `d3dae37` is on `main`. The only differences introduced by the unmerged PR #13 branch are documentation files; no Rust source, manifest, lockfile or workflow changed here.
 
 | Artifact measurement | Value |
 | --- | --- |
