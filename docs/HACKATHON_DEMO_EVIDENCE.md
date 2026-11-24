@@ -132,3 +132,15 @@ Regenerated from the running application at the current branch state:
 - `docs/screenshots/developers-desktop.png`, `docs/screenshots/developers-mobile.png`
 
 Files prefixed `phase1.1-pt-` are historical Phase 1.1 visual baselines and are not current product evidence.
+
+Composition notes, so the images are read for what they are:
+
+- `invoice-routes-desktop.png` is captured at **850 CSS px**, not 1440. At 1440 the
+  invoice page is a two-column grid whose right column (the workspace-restricted
+  payment link, ~440 px tall) is much shorter than the left column (~900 px), which
+  leaves a large white area on the right. 850 px is the width at which that grid
+  collapses to one column, so the same content — funding details, simulation
+  notices, evidence labels and all three route candidates — fills the frame with no
+  empty region and nothing removed. It is a narrower viewport, not a crop.
+- Screenshots are captured only after the page's enter transitions have settled, so
+  no panel is rendered mid-animation.
