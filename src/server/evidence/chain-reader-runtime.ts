@@ -1,28 +1,66 @@
 import "server-only";
 
-import type { EvidenceChainReader } from "./anchor-verification";
+import { TrustedEvidenceChainReader } from "./trusted-reader";
+import {
+  resolveTrustedReaderConfig,
+  type TrustedReaderConfigResult,
+} from "./trusted-reader-config";
 
 /**
- * Runtime resolution of the evidence chain reader.
+ * Runtime resolution of the evidence chain reader (Phase 2C.2A).
  *
- * This phase ships **no** implementation that performs network access, so the
- * resolver always returns `null` and the caller must treat every anchoring claim
- * as unverified. It exists now so the eventual production reader has exactly one
- * governed entry point, and so fakes cannot be selected by environment variable.
+ * ## This returns `null` in the current repository, on purpose
  *
- * There is deliberately no `PONTE_*` switch, feature flag, or test hook here.
- * A fake reader is constructed directly in a test and passed as an argument; it
- * can never be reached through the normal application runtime because nothing in
- * `src/` constructs one.
+ * No real Registry deployment manifest exists yet. Without one there is no pinned
+ * Registry address and no pinned runtime bytecode hash, so a reader could only be
+ * built from placeholders — and a reader built from placeholders would silently
+ * "verify" whatever an operator pointed it at. The resolver therefore returns `null`
+ * and every anchoring claim stays unverified.
+ *
+ * ## No switch, no bypass
+ *
+ * There is deliberately no `PONTE_*` environment variable, feature flag, or test
+ * hook that can enable a reader here. A test constructs `TrustedEvidenceChainReader`
+ * directly against an in-process mock server; nothing in `src/` constructs a fake,
+ * and no request field can reach this function. That is what makes "no production
+ * reader" a property of the code rather than of configuration hygiene.
+ *
+ * ## Where configuration would come from, and where it never comes from
+ *
+ * `resolveTrustedReaderConfig()` takes no arguments, and this module passes it
+ * none. Nothing here — and nothing anywhere else — hands it a pinned
+ * configuration. If a reviewed manifest is introduced in a future change, it must
+ * be loaded **internally** by `resolveTrustedReaderConfig()` from an approved,
+ * server-controlled artifact. No argument, request field or environment variable
+ * supplies configuration to this module.
+ *
+ * An earlier revision of this comment said a manifest "is supplied to
+ * `resolveTrustedReaderConfig` in exactly one place — here", which implied a
+ * supply point that does not exist.
  */
-export function resolveEvidenceChainReader(): EvidenceChainReader | null {
-  return null;
+export function resolveEvidenceChainReader(): TrustedEvidenceChainReader | null {
+  return resolveTrustedEvidenceReader();
 }
 
 /**
- * Describes why anchoring cannot be verified in this runtime, for operational
- * logs and documentation. Never surfaced to an API client as a claim.
+ * Resolves the trusted reader, or `null` when no pinned deployment exists.
+ *
+ * Takes **no parameters**, deliberately. An earlier revision accepted a
+ * caller-supplied pinned configuration, which let any module manufacture the
+ * production reader with an address and endpoint of its choosing. Nothing outside
+ * this function may now choose the Registry address, expected bytecode hash, manifest
+ * or RPC endpoint.
+ */
+export function resolveTrustedEvidenceReader(): TrustedEvidenceChainReader | null {
+  const resolved: TrustedReaderConfigResult = resolveTrustedReaderConfig();
+  if (!resolved.ok) return null;
+  return new TrustedEvidenceChainReader(resolved.config);
+}
+
+/**
+ * Describes why anchoring cannot be verified in this runtime, for operational logs
+ * and documentation. Never surfaced to an API client as a claim.
  */
 export function evidenceChainReaderUnavailableReason(): string {
-  return "no on-chain reader is configured in this build; anchoring is not verified";
+  return "no pinned Registry deployment manifest is configured; no reader is enabled and anchoring is not verified";
 }

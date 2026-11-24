@@ -6,17 +6,28 @@
  * observation and the persisted evidence commitment, and decides whether that
  * observation proves the specific commitment was anchored.
  *
- * Nothing here is a submission mechanism. Preparing or submitting evidence is a
- * different concern, and a caller-supplied transaction hash is never accepted as
- * proof: a proof is only minted from a full observation that satisfied every check.
+ * ## Evaluation is not authorization (Phase 2C.2A)
  *
- * What a proof guarantees is narrow and deliberate: that THIS MODULE ran the
- * verification over the commitment it carries. It does not authenticate where the
- * observation came from. In this offline phase the observation is caller-supplied
- * and the `registryIdentity` flag is a caller declaration, so a caller who
- * fabricates both can obtain a proof — of the check, not of the chain. Phase 2C.2
- * must supply a trusted reader that derives both before live confirmation means
- * anything.
+ * Nothing here mints a **confirmation-authorizing** result. This module performs
+ * *evaluation*: given an observation, does it match the commitment? Its output is an
+ * `AnchorEvaluationProof`, which records that the checks ran and passed. It does not
+ * record who obtained the observation.
+ *
+ * To confirm, a caller must additionally obtain a `TrustedAnchorVerification` from
+ * `trusted-pipeline.ts`, which requires a seal issued only after the configured
+ * server-side reader acquired the observation, verified Registry identity against an
+ * operator-pinned bytecode hash, and established parent-chain finality. See
+ * `docs/PHASE2C2A_TRUSTED_ARBITRUM_READER.md`.
+ *
+ * The three concerns are deliberately separate:
+ *
+ * - **evaluation** (this module, pure, synthetic-data testable);
+ * - **acquisition** (`trusted-reader.ts`, needs network and configuration);
+ * - **authorization** (`trusted-seal.ts` + `trusted-pipeline.ts`, requires both).
+ *
+ * What an evaluation proof guarantees is therefore narrow: that THIS MODULE ran the
+ * checks over the commitment it carries. It does not authenticate the observation,
+ * and this module has no way to tell a synthetic observation from a real one.
  */
 import { createHash } from "node:crypto";
 import { getAddress, id as keccakId } from "ethers";
@@ -194,12 +205,12 @@ export function commitmentDigest(facts: VerifiedAnchorFacts): string {
  * `structuredClone`, a JSON round-trip, or an object literal that merely looks
  * like this one has none of it: any own copy carries a *different* private field,
  * and any plain imitation has none at all. A forged `{ verified: true }` object
- * therefore fails `#brands.has(this)` and cannot pass `isAnchorVerificationProof`.
+ * therefore fails `#brands.has(this)` and cannot pass `isAnchorEvaluationProof`.
  */
-export class AnchorVerificationProof {
+export class AnchorEvaluationProof {
   readonly #brands: ReadonlySet<object>;
 
-  /** @internal Constructed only by `verifyAnchorObservation`. */
+  /** @internal Constructed only by `evaluateAnchorObservation`. */
   private constructor(readonly facts: VerifiedAnchorFacts) {
     this.#brands = new Set<object>([this]);
   }
@@ -213,8 +224,8 @@ export class AnchorVerificationProof {
   }
 
   /** @internal */
-  static create(facts: VerifiedAnchorFacts): AnchorVerificationProof {
-    return new AnchorVerificationProof(Object.freeze({ ...facts }));
+  static create(facts: VerifiedAnchorFacts): AnchorEvaluationProof {
+    return new AnchorEvaluationProof(Object.freeze({ ...facts }));
   }
 
   /** @internal True only for objects built by this module. */
@@ -226,16 +237,21 @@ export class AnchorVerificationProof {
 }
 
 /**
- * The module-private brand. Only `AnchorVerificationProof.create` can add to it,
- * so a caller cannot register a hand-built object even with this reference.
+ * The module-private brand. Only `AnchorEvaluationProof.create` can add to it, so a
+ * caller cannot register a hand-built object even with this reference.
+ *
+ * Note what this brand does *not* mean: it is not a claim that the observation was
+ * genuine. A test or a caller can obtain one of these from synthetic data. Branding
+ * here protects the *shape* of the result; provenance is protected by the seal in
+ * `trusted-seal.ts`.
  */
 const ISSUED_PROOFS = new WeakSet<object>();
 
 /** True when `value` is a proof that this module actually issued. */
-export function isAnchorVerificationProof(
+export function isAnchorEvaluationProof(
   value: unknown,
-): value is AnchorVerificationProof {
-  if (value instanceof AnchorVerificationProof)
+): value is AnchorEvaluationProof {
+  if (value instanceof AnchorEvaluationProof)
     return ISSUED_PROOFS.has(value) && value.owns(value);
   // An object carrying the prototype but not the private field is an imitation.
   return false;
@@ -249,11 +265,10 @@ export type AnchorNotVerified = {
 
 /**
  * The pipeline result. `verified: true` is representable *only* by
- * `AnchorVerificationProof`; a plain object literal with `verified: true` is not
+ * `AnchorEvaluationProof`; a plain object literal with `verified: true` is not
  * assignable to this type, and is rejected at runtime even if cast.
  */
-export type AnchorVerificationResult =
-  AnchorVerificationProof | AnchorNotVerified;
+export type AnchorEvaluationResult = AnchorEvaluationProof | AnchorNotVerified;
 
 function notVerified(failure: AnchorVerificationFailure): AnchorNotVerified {
   return { verified: false, status: "not_verified", failure };
@@ -361,10 +376,10 @@ export function decodeEvidenceAnchored(
  * destination, a matching chain, a matching Registry identity and an exact event
  * match on all six fields.
  */
-export function verifyAnchorObservation(
+export function evaluateAnchorObservation(
   expected: ExpectedAnchorCommitment,
   observation: ChainObservation | null,
-): AnchorVerificationResult {
+): AnchorEvaluationResult {
   if (!observation) return notVerified("NO_OBSERVATION");
 
   const expectedChain = canonicalDecimal(expected.chainId);
@@ -472,7 +487,7 @@ export function verifyAnchorObservation(
       previousPayloadHash: expectedPrevious,
     }),
   });
-  const proof = AnchorVerificationProof.create(facts);
+  const proof = AnchorEvaluationProof.create(facts);
   ISSUED_PROOFS.add(proof);
   return proof;
 }
@@ -492,7 +507,7 @@ export const NOT_VERIFIED_ANCHORING: EvidenceAnchoringStatus = Object.freeze({
  * made to display an anchoring claim by request data or by a forged object.
  */
 export function anchoringStatusFor(proof: unknown): EvidenceAnchoringStatus {
-  if (!isAnchorVerificationProof(proof)) return NOT_VERIFIED_ANCHORING;
+  if (!isAnchorEvaluationProof(proof)) return NOT_VERIFIED_ANCHORING;
   const { facts } = proof;
   // Frozen as well: a downstream consumer must not be able to mutate an issued
   // claim into a different one after the boundary has approved it.

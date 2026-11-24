@@ -103,7 +103,7 @@ function outboxState(value: unknown): EvidenceOutboxSubmissionState | null {
  *
  * The anchoring claim is **derived here**, not accepted from the caller. The
  * third parameter is an untrusted candidate — a value that may or may not be a
- * proof issued by `verifyAnchorObservation` — and it is passed straight to
+ * proof issued by `evaluateAnchorObservation` — and it is passed straight to
  * `anchoringStatusFor()`, which returns the frozen not-verified claim for
  * anything it did not issue.
  *

@@ -5,8 +5,8 @@ import type { InvoiceEvidenceStatusRow } from "../../src/server/repository";
 import { invoiceEvidenceStatus } from "../../src/server/evidence/status";
 import {
   NOT_VERIFIED_ANCHORING,
-  isAnchorVerificationProof,
-  verifyAnchorObservation,
+  isAnchorEvaluationProof,
+  evaluateAnchorObservation,
   type ChainObservation,
   type ExpectedAnchorCommitment,
 } from "../../src/server/evidence/anchor-verification";
@@ -91,8 +91,8 @@ function row(
 }
 
 function genuineProof() {
-  const proof = verifyAnchorObservation(EXPECTED, observation());
-  assert.ok(isAnchorVerificationProof(proof), "fixture must be a real proof");
+  const proof = evaluateAnchorObservation(EXPECTED, observation());
+  assert.ok(isAnchorEvaluationProof(proof), "fixture must be a real proof");
   return proof;
 }
 
