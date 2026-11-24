@@ -36,7 +36,39 @@ Evidence: `DESIGN.md` (“financial bridge for Brazilian businesses and internat
 
 ## What is not implemented
 
-Production identity/session integration, hosted deployment, PSP/webhook adapter, wallet or signing, verified USDG token adapter, market/liquidity data, real settlement, audit, KYB/AML, reconciliation/retry orchestration, public supplier access, PDF receipts, and any deployed or activated Stylus program.
+Production identity/session integration, hosted deployment, PSP/webhook adapter,
+wallet or signing, verified USDG token adapter, market/liquidity data, real
+settlement, audit, KYB/AML, reconciliation/retry orchestration, public supplier
+access, PDF receipts, and any deployed or activated Stylus program.
+
+### Boundaries stated explicitly
+
+- **Pix payment is simulated.** No PSP, QR code, webhook or real funds are involved.
+- **USDG transfer and settlement are simulated.** No token moves; the receipt is a demo artefact with a `SIM-…` identifier.
+- **The Rust optimizer is not integrated into UI quote calculation.** The displayed candidates come from `src/lib/quotes.ts`. The optimizer is a separate, separately tested component.
+- **The Stylus wrapper is not integrated into the web application.** No page or API route calls it, and its candidate artifact is unactivated.
+- **Local Nitro execution is not a public Arbitrum deployment.** Nothing in this repository has been broadcast to Arbitrum One, Nova or Sepolia; no read-only RPC check, deployment, activation or verification was performed.
+
+## Solidity Registry: implemented, tested, not deployed
+
+The route-decision evidence registry was added to `main` by PR #16, after this
+document was first written. These statements are restricted to what the
+repository and a local test run actually establish.
+
+| Statement | Status |
+| --- | --- |
+| Registry source code implemented | **Yes.** `contracts/src/PonteRouteDecisionEvidenceRegistry.sol` (Solidity 0.8.28): append-only per-`evidenceId` heads, monotonic sequence, predecessor-hash chaining, attestor allow-list, and a two-step admin handover. It moves no assets. |
+| Registry tests passed | **Yes, locally.** `npm test` in `contracts/` (the project's solcjs/Foundry wrapper) ran **37 tests, 37 passed, 0 failed** across the registry and deployment suites. This is a local run, not a GitHub Actions result. |
+| Deployed to Arbitrum | **No.** No deployment manifest is committed; `contracts/` ships only a manifest *schema*. No deployed registry address is recorded anywhere in the repository. |
+| Activated, or any public transaction | **No.** The constructor reverts with `UnsupportedChain` unless `block.chainid == 421614`. Nothing has been broadcast to Arbitrum One, Nova or Sepolia. |
+| Evidence panel proves anchoring | **No.** The panel states "Anchoring not verified" and "No independently verified transaction receipt and registry event are persisted." |
+| Caller-supplied registry address proves anchoring | **No.** `PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS` is validated only for syntactic form (a non-zero EVM address); the application never checks that a contract exists at it. |
+
+**What the evidence panel is.** It persists a locally prepared, KMS-or-local-encrypted
+envelope with a commit-to-payload hash and an outbox submission state, using the
+local test provider when explicitly enabled. That is an **operational record that
+a submission is still awaited**, not evidence that anything reached a chain. An
+`evidence_outbox` row reading "awaiting submission" is not an anchoring claim.
 
 ## Three separate calculation layers
 
