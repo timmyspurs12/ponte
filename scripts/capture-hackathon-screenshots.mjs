@@ -112,6 +112,10 @@ try {
   await page.getByRole('radio', { name: /Split liquidity/ }).click();
   await page.getByRole('button', { name: 'Select route & continue' }).click();
   await page.getByRole('heading', { name: 'Ready for settlement' });
+  // The status transition is persisted server-side; reload so the action button
+  // renders the settled-state control ('Simulate settlement').
+  await page.reload();
+  await page.getByRole('heading', { name: 'Ready for settlement' });
   await page.getByRole('button', { name: 'Simulate settlement', exact: true }).click();
   await page.getByRole('dialog').waitFor();
   await page.getByRole('button', { name: 'Confirm simulation' }).click();
