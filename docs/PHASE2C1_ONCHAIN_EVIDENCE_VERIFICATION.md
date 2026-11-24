@@ -22,7 +22,8 @@ check below.
 `src/server/evidence/anchor-verification.ts` is a pure module. It has no network
 access, no database access, no clock, and no randomness. Given an
 `ExpectedAnchorCommitment` (the persisted commitment) and a `ChainObservation`
-(what a trusted reader saw), it returns either a verified result or a specific
+(what some reader reported — in this phase a caller-supplied value, **not**
+authenticated; see §2b), it returns either a verified result or a specific
 failure.
 
 Checks, in the order they are applied:
@@ -184,25 +185,76 @@ the immutable `route_decision_evidence` commitment the write was joined against.
 
 ## 3. Confirmed-state invariant
 
-`evidence_outbox.submission_state = 'confirmed'` can only be written by
-`confirmVerifiedAnchor` in `src/server/evidence/anchor-confirmation.ts`, which:
+This invariant holds **through the supported application confirmation path**. It
+is not a database-wide guarantee, and the schema does not establish one. The three
+layers are distinct and are described separately below.
+
+### 3a. Application confirmation boundary
+
+`confirmVerifiedAnchor` in `src/server/evidence/anchor-confirmation.ts` is the
+supported way to reach `confirmed`. It:
 
 1. accepts a **verification result**, not a transaction hash and not a receipt;
-2. refuses unless the result is `verified: true`;
-3. refuses unless the row is currently `submitted` (so `pending → confirmed` and
-   `retryable → confirmed` are both impossible);
-4. refuses unless the persisted chain is `421614` and the verified chain and
+2. refuses unless that result is a genuine issued `AnchorVerificationProof`;
+3. compares the proof's own captured commitment to the persisted row, so a proof
+   minted for a different evidence record cannot be applied here;
+4. refuses unless the row is currently `submitted` (so `pending → confirmed` and
+   `retryable → confirmed` are both impossible through this function);
+5. refuses unless the persisted chain is `421614` and the verified chain and
    Registry address still match the persisted row;
-5. writes `transaction_hash`, `confirmed_at`, `confirmed_block_number`,
-   `confirmed_block_hash` and `attestor_address` in the _same_ `UPDATE`;
-6. includes `AND submission_state = 'submitted'` and `AND transaction_hash = $2`
-   in the `UPDATE` itself, so the state machine is enforced by the database and
-   not only by the preceding `SELECT`. Repeated processing matches zero rows.
+6. writes `transaction_hash`, `confirmed_at`, `confirmed_block_number`,
+   `confirmed_block_hash` and `attestor_address` in the _same_ `UPDATE`.
 
-A pending or submitted row therefore cannot become confirmed because a caller
-supplied a transaction hash. `verifyOutboxAgainstChain` also converts a reader
-exception into an unverified outcome, so a transient RPC failure can never be
-mistaken for success.
+### 3b. Atomic write predicate
+
+The `UPDATE` does not rely on the preceding `SELECT`. It independently re-checks
+the current state and the commitment in its own `WHERE` clause, joining
+`FROM route_decision_evidence` and comparing `submission_state = 'submitted'`,
+`transaction_hash`, chain id, Registry address, evidence id, payload hash, kind,
+sequence and previous payload hash. The predicate is evaluated atomically by that
+statement, so a concurrent change since the read causes the write to match zero
+rows, and repeated processing matches zero rows. This is a property of **this
+statement**, not of the table.
+
+### 3c. Database-wide limitation
+
+The schema does **not** enforce the confirmed-state invariant. Migration
+`003_route_decision_evidence.sql` defines `evidence_outbox.submission_state` with a
+`CHECK` on the permitted **values** (`pending`, `submitted`, `confirmed`,
+`retryable`, `failed`, `reconciliation_required`) and attaches one
+`BEFORE UPDATE` trigger, `evidence_outbox_updated`, whose only job is to maintain
+`updated_at`. There is:
+
+- **no** constraint on **transitions** — any permitted value may be written over
+  any other permitted value;
+- **no** constraint tying confirmation metadata to the state — `transaction_hash`,
+  `confirmed_at`, `confirmed_block_number` and `confirmed_block_hash` are all
+  nullable, and nothing requires them to be present when
+  `submission_state = 'confirmed'`;
+- **no** trigger or privileged path that rejects a direct write.
+
+Consequently a different SQL writer — another service, a migration, an operator
+with database credentials, or any code that bypasses `confirmVerifiedAnchor` — can
+set `submission_state = 'confirmed'` directly, without a proof and without any
+confirmation metadata. This was verified against the local schema (in a
+transaction that was rolled back): a direct `UPDATE` setting `submission_state =
+'confirmed'` on a row with `transaction_hash`, `confirmed_block_number` and
+`confirmed_at` all `NULL` **succeeded**.
+
+So "confirmed" in this table records that a row was set to that value. It does not,
+by itself, prove that a verified receipt was seen. Only rows known to have passed
+through `confirmVerifiedAnchor` carry that meaning, and the durable evidence for
+them is the confirmation metadata plus the immutable
+`route_decision_evidence` commitment the write was joined against.
+
+Adding a transition invariant at the schema level (a trigger or a partial
+`CHECK`) is **out of scope for this phase**; it would be a migration and would need
+separate justification and review. Until then, the invariant is an application
+property, and anything that audits or reports anchoring status must apply the
+presentation rules in §4 rather than trusting the raw column value.
+
+`verifyOutboxAgainstChain` also converts a reader exception into an unverified
+outcome, so a transient RPC failure can never be mistaken for success.
 
 ## 4. Presentation
 
