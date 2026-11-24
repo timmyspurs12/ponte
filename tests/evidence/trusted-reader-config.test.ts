@@ -7,8 +7,8 @@ import {
 import {
   isBrandedReaderConfig,
   resolveTrustedReaderConfig,
-  validateTestReaderConfig,
 } from "../../src/server/evidence/trusted-reader-config";
+import { issueTestConfig } from "./helpers/test-config-bridge";
 import {
   evidenceChainReaderUnavailableReason,
   resolveEvidenceChainReader,
@@ -137,7 +137,7 @@ test("a reader cannot be constructed from an unbranded configuration", () => {
 });
 
 test("a reader cannot be constructed from a JSON round-trip of a valid config", () => {
-  const result = validateTestReaderConfig(input());
+  const result = issueTestConfig(input());
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(isBrandedReaderConfig(result.config), true);
@@ -150,14 +150,14 @@ test("a reader cannot be constructed from a JSON round-trip of a valid config", 
 });
 
 test("a test-scoped config branches as test-only", () => {
-  const result = validateTestReaderConfig(input());
+  const result = issueTestConfig(input());
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.config.testOnly, true);
 });
 
 test("the read-only test reader never reads as an operator config", () => {
-  const result = validateTestReaderConfig(input());
+  const result = issueTestConfig(input());
   assert.equal(result.ok, true);
   if (!result.ok) return;
   // No exported validator produces an operator brand, so this is the only brand a
@@ -169,9 +169,9 @@ test("the read-only test reader never reads as an operator config", () => {
 
 test("missing, non-object and unexpected-key inputs are rejected", () => {
   for (const value of [undefined, null, "config", 42, [], true]) {
-    assert.equal(validateTestReaderConfig(value).ok, false);
+    assert.equal(issueTestConfig(value).ok, false);
   }
-  const unexpected = validateTestReaderConfig(input({ requestBody: {} }));
+  const unexpected = issueTestConfig(input({ requestBody: {} }));
   assert.equal(unexpected.ok, false);
   if (unexpected.ok) return;
   assert.equal(unexpected.failure, "CONFIG_UNEXPECTED_KEY");
@@ -185,7 +185,7 @@ test("an insecure or credentialed production-style endpoint is rejected", () => 
     "ftp://example.com",
   ]) {
     assert.equal(
-      validateTestReaderConfig(input({ rpcUrl })).ok,
+      issueTestConfig(input({ rpcUrl })).ok,
       false,
       `${rpcUrl} must be rejected`,
     );
@@ -193,19 +193,19 @@ test("an insecure or credentialed production-style endpoint is rejected", () => 
 });
 
 test("a loopback http endpoint is allowed only for a test-scoped config", () => {
-  const viaTest = validateTestReaderConfig(
+  const viaTest = issueTestConfig(
     input({ rpcUrl: "http://127.0.0.1:8545" }),
   );
   assert.equal(viaTest.ok, true);
   // The production resolver never reaches this path, and there is no exported
   // operator validator that accepts http.
-  const external = validateTestReaderConfig(input({ rpcUrl: "http://evil.example" }));
+  const external = issueTestConfig(input({ rpcUrl: "http://evil.example" }));
   assert.equal(external.ok, false);
 });
 
 test("an out-of-range timeout is rejected", () => {
   for (const timeoutMs of [0, 99, 30_001, 1.5, Number.NaN]) {
-    assert.equal(validateTestReaderConfig(input({ timeoutMs })).ok, false);
+    assert.equal(issueTestConfig(input({ timeoutMs })).ok, false);
   }
 });
 
@@ -417,7 +417,7 @@ for (const [label, makeManifest] of PARITY_CASES) {
     // The canonical validator must reject it...
     assert.throws(() => validateDeploymentManifest(manifest));
     // ...and so must the runtime validator.
-    const result = validateTestReaderConfig(input({ manifest }));
+    const result = issueTestConfig(input({ manifest }));
     assert.equal(result.ok, false, `runtime validator should reject: ${label}`);
   });
 }
@@ -428,20 +428,20 @@ test("both validators accept the same valid manifest", () => {
   assert.doesNotThrow(() =>
     assertManifestMatchesBuildIdentity(manifest, buildIdentity()),
   );
-  const result = validateTestReaderConfig(input());
+  const result = issueTestConfig(input());
   assert.equal(result.ok, true);
 });
 
 test("a build identity that disagrees with the manifest is rejected", () => {
   const mismatch = { ...buildIdentity(), runtimeBytecodeHash: hex32("other") };
-  const result = validateTestReaderConfig(input({ buildIdentity: mismatch }));
+  const result = issueTestConfig(input({ buildIdentity: mismatch }));
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.equal(result.failure, "CONFIG_BUILD_IDENTITY_MISSING");
 });
 
 test("a missing build identity is rejected", () => {
-  const result = validateTestReaderConfig(input({ buildIdentity: undefined }));
+  const result = issueTestConfig(input({ buildIdentity: undefined }));
   assert.equal(result.ok, false);
 });
 
@@ -450,7 +450,7 @@ test("a build identity with a mismatched ABI hash is rejected", () => {
     ...buildIdentity(),
     abi: { version: 1, hashAlgorithm: "sha256", hash: hex32("other-abi") },
   };
-  const result = validateTestReaderConfig(input({ buildIdentity: identity }));
+  const result = issueTestConfig(input({ buildIdentity: identity }));
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.equal(result.failure, "CONFIG_ABI_INVALID");

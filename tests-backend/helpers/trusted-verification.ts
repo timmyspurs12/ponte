@@ -20,7 +20,7 @@ import {
 import { runTrustedVerification } from "../../src/server/evidence/trusted-authorization";
 import { readConfirmableOutboxRow } from "../../src/server/evidence/anchor-confirmation";
 import { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
-import { createTestReader } from "../../tests/evidence/helpers/test-reader-factory";
+import { createHarnessOperatorReader } from "../../tests/evidence/helpers/test-reader-factory";
 import type { TrustedAnchorVerification } from "../../src/server/evidence/trusted-authorization";
 import type { TrustedPipelineOutcome } from "../../src/server/evidence/trusted-authorization";
 import {
@@ -141,7 +141,7 @@ export async function startAnchorWorld(
     return entry;
   });
 
-  const reader = createTestReader({
+  const reader = createHarnessOperatorReader({
     rpcUrl: server.url,
     registryAddress: options.registry,
     runtimeBytecodeHash: runtimeHash,

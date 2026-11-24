@@ -51,30 +51,9 @@ import {
   type OperatorTrustedReaderConfig,
 } from "./trusted-reader-config";
 import type { FinalityEvidence } from "./trusted-observation";
+import type { ReaderAcquisition, ReaderDispatch } from "./reader-capability";
 
 /** `admin()` — the public address getter on the Registry. */
-/**
- * Private channel mapping a test-scoped configuration to its transport stand-in.
- *
- * Nothing in `src/` writes to this map. The only writer is
- * `tests/evidence/helpers/test-reader-factory.ts`, which uses the exported-but-
- * test-named `registerTestTransport` below. Production configurations are never in
- * this map, so a production reader always uses the global `fetch`.
- */
-const TEST_TRANSPORTS = new WeakMap<object, typeof fetch>();
-
-/** @testonly Registers a transport for a *test-scoped* configuration. */
-export function registerTestTransport(
-  config: OperatorTrustedReaderConfig,
-  fetchImpl: typeof fetch,
-): void {
-  if (!isBrandedReaderConfig(config))
-    throw new Error("TRUSTED_READER_REQUIRES_BRANDED_CONFIG");
-  if (!config.testOnly)
-    throw new Error("TEST_TRANSPORT_REQUIRES_TEST_CONFIG");
-  TEST_TRANSPORTS.set(config, fetchImpl);
-}
-
 const ADMIN_SELECTOR = "0xf851a440";
 /** EIP-7702 delegation designator prefix: 0xef0100 || address. */
 const EIP7702_PREFIX = "0xef0100";
@@ -113,6 +92,37 @@ export type TrustedReaderResult =
       readonly runtimeBytecodeHash: string;
     }
   | { readonly ok: false; readonly failure: TrustedReaderFailure };
+
+/**
+ * The reader registry, and the only place a capability is ever written.
+ *
+ * Review pass 2 left this map in `reader-capability.ts` next to an exported
+ * `attachReaderCapability`, so any module could mint a reader by importing the writer.
+ * It now lives here, in module scope, with no exported writer at all. The constructor
+ * below is the only code path that can add an entry, which makes "is a reader" and
+ * "was constructed from a genuine branded config" the same statement.
+ *
+ * Only the lookup leaves this module.
+ */
+const DISPATCHERS = new WeakMap<object, ReaderDispatch>();
+
+/** Attaches a capability. Module-private; reachable only from the constructor below. */
+function attachReaderCapability(target: object, dispatch: ReaderDispatch): void {
+  DISPATCHERS.set(target, dispatch);
+}
+
+/**
+ * Resolves the dispatcher for a candidate reader, or `null`.
+ *
+ * This is the entire surface the authorization pipeline sees. It cannot create an
+ * entry: a Proxy, `Object.create(TrustedEvidenceChainReader.prototype)`, a plain
+ * object literal, or a cross-realm clone all miss, because none of them ran the
+ * constructor.
+ */
+export function dispatchForReader(candidate: unknown): ReaderDispatch | null {
+  if (candidate === null || typeof candidate !== "object") return null;
+  return DISPATCHERS.get(candidate) ?? null;
+}
 
 function fail(failure: TrustedReaderFailure): TrustedReaderResult {
   return { ok: false, failure };
@@ -191,11 +201,15 @@ export class TrustedEvidenceChainReader {
   readonly #rpc: ReadOnlyRpcClient;
 
   /**
-   * The constructor refuses anything that is not a configuration this codebase
-   * branded, so a structurally valid object built by a request handler, a service or
-   * a test cannot become a production reader. There is no second argument: an earlier
-   * revision accepted an injectable `fetchImpl`, which let any caller redirect the
-   * transport. Test fetch injection goes through `createTestReader` below.
+   * Constructs a reader and registers its **capability**.
+   *
+   * The constructor refuses anything that is not a configuration this module branded.
+   * It takes no transport argument: review pass 2 removed the exported
+   * `registerTestTransport`, so no code path can inject a fetch into a reader that
+   * the pipeline would consider authoritative.
+   *
+   * Registration is what makes `runTrustedVerification` willing to use this object;
+   * the class identity alone does not, and neither does the shape.
    */
   constructor(config: OperatorTrustedReaderConfig) {
     if (!isBrandedReaderConfig(config))
@@ -204,20 +218,24 @@ export class TrustedEvidenceChainReader {
     this.#rpc = new ReadOnlyRpcClient({
       url: config.rpcUrl,
       timeoutMs: config.timeoutMs,
-      // A test-scoped configuration is the only thing that may carry a fetch stand-in,
-      // and it is supplied through the private channel set by `createTestReader`.
-      fetchImpl: TEST_TRANSPORTS.get(config),
+    });
+
+    // The dispatcher closes over THIS instance's private state. The pipeline calls
+    // the closure, never a method on a caller-supplied object, so a Proxy or a
+    // prototype imitation cannot interpose.
+    attachReaderCapability(this, {
+      pinnedRegistryAddress: config.registryAddress,
+      operatorScoped: !config.testOnly,
+      read: (input) => this.#acquire(input),
     });
   }
 
-  /** The pinned Registry address, for binding. Never taken from an observation. */
+  /**
+   * The pinned Registry address. Exposed for diagnostics only; the pipeline reads the
+   * capability's copy, not this getter.
+   */
   get pinnedRegistryAddress(): string {
     return this.#config.registryAddress;
-  }
-
-  /** True when this reader was built from a test-scoped configuration. */
-  get testScoped(): boolean {
-    return this.#config.testOnly;
   }
 
   /**
@@ -225,6 +243,14 @@ export class TrustedEvidenceChainReader {
    * transaction the persisted commitment expects.
    */
   async readAnchorObservation(input: {
+    readonly transactionHash: string;
+    readonly registryAddress: string;
+  }): Promise<TrustedReaderResult> {
+    return this.#acquire(input);
+  }
+
+  /** The real acquisition. Reached by the capability dispatcher. */
+  async #acquire(input: {
     readonly transactionHash: string;
     readonly registryAddress: string;
   }): Promise<TrustedReaderResult> {
@@ -423,7 +449,14 @@ export class TrustedEvidenceChainReader {
     // A revert, or an empty return, is not a valid administrator.
     if (result === "0x" || result.length !== 66)
       return "REGISTRY_ADMIN_INVALID";
-    const admin = address(`0x${result.slice(26)}`);
+    // `admin()` returns a single 32-byte ABI word: 12 bytes of zero padding followed
+    // by the 20-byte address. The padding must actually be zero — a response whose
+    // leading 24 hex characters are nonzero is not a canonical ABI encoding of an
+    // address, and extracting the trailing 20 bytes would silently accept it.
+    const padded = result.slice(2);
+    if (!/^0{24}$/.test(padded.slice(0, 24)))
+      return "REGISTRY_ADMIN_INVALID";
+    const admin = address(`0x${padded.slice(24)}`);
     if (!admin || admin === ZERO_ADDRESS) return "REGISTRY_ADMIN_INVALID";
     if (admin !== this.#config.administrator) return "REGISTRY_ADMIN_MISMATCH";
     return null;

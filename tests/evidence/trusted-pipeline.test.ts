@@ -13,7 +13,7 @@ import {
   type TrustedPipelineOutcome,
 } from "../../src/server/evidence/trusted-authorization";
 import type { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
-import { createTestReader } from "./helpers/test-reader-factory";
+import { createHarnessOperatorReader } from "./helpers/test-reader-factory";
 import { isAnchorConfirmationFailure } from "./helpers/failure-guard";
 import {
   hex32,
@@ -122,7 +122,7 @@ function readerWith(w: Record<string, unknown>) {
     return entry;
   });
   server.setRawResponder(null);
-  return createTestReader({ ...CONFIG, rpcUrl: server.url });
+  return createHarnessOperatorReader({ ...CONFIG, rpcUrl: server.url });
 }
 
 function trusted(outcome: TrustedPipelineOutcome) {
@@ -342,7 +342,10 @@ test("a zero transaction hash is refused before the pipeline touches the network
   );
   assert.equal(outcome.ok, false);
   if (outcome.ok) return;
-  assert.equal(outcome.failure, "TRANSACTION_MALFORMED");
+  // Review pass 2 renamed this to make the distinction explicit: the *requested*
+  // hash is malformed, which is a different condition from a mismatch between the
+  // requested hash and what the chain returned.
+  assert.equal(outcome.failure, "TRANSACTION_HASH_MALFORMED");
   assert.equal(server.calls.length, 0);
 });
 
@@ -353,4 +356,219 @@ test("failure guard helper is consistent", () => {
     true,
   );
   assert.equal(isAnchorConfirmationFailure("NOT_A_REAL_FAILURE"), false);
+});
+
+// ---------------------------------------------------------------------------
+// Review pass 2, finding 5: `admin()` ABI decoding
+// ---------------------------------------------------------------------------
+
+/** Builds an `admin()` return word from 24 padding chars + 40 address chars. */
+function adminWord(padding: string, tail: string) {
+  return `0x${padding}${tail}`;
+}
+
+test("a canonically padded admin() word is accepted", async () => {
+  const outcome = await runTrustedVerification(readerWith(world()), EXPECTED, TX_HASH);
+  assert.equal(outcome.ok, true, "canonical encoding must be accepted");
+});
+
+test("nonzero padding with a correct trailing address is rejected", async () => {
+  // The dangerous case: length is right (66 chars) and the trailing 20 bytes are the
+  // expected administrator, so a decoder that simply takes the last 40 characters
+  // would accept this. Only a padding check catches it.
+  const tail = getAddress(ADMIN).slice(2);
+  const outcome = await runTrustedVerification(
+    readerWith(world({ eth_call: adminWord("0".repeat(23) + "1", tail) })),
+    EXPECTED,
+    TX_HASH,
+  );
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_INVALID");
+});
+
+test("fully nonzero padding is rejected", async () => {
+  const outcome = await runTrustedVerification(
+    readerWith(world({ eth_call: adminWord("f".repeat(24), getAddress(ADMIN).slice(2)) })),
+    EXPECTED,
+    TX_HASH,
+  );
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_INVALID");
+});
+
+test("a malformed-length admin() return is rejected", async () => {
+  const cases = [
+    "0x",
+    `0x${"0".repeat(63)}`, // one char short
+    adminWord("0".repeat(24), getAddress(ADMIN).slice(2).padEnd(41, "0")), // one char long
+    `0x${"0".repeat(64)}`, // a full word of zeros
+  ];
+  for (const value of cases) {
+    const outcome = await runTrustedVerification(
+      readerWith(world({ eth_call: value })),
+      EXPECTED,
+      TX_HASH,
+    );
+    assert.equal(outcome.ok, false, `accepted malformed admin word ${value.slice(0, 12)}…`);
+    if (!outcome.ok)
+      assert.equal(
+        outcome.failure,
+        "REGISTRY_ADMIN_INVALID",
+        `wrong failure for ${value.slice(0, 12)}…`,
+      );
+  }
+});
+
+test("a zero administrator is rejected even though its padding is canonical", async () => {
+  const outcome = await runTrustedVerification(
+    readerWith(
+      world({ eth_call: adminWord("0".repeat(24), "0".repeat(40)) }),
+    ),
+    EXPECTED,
+    TX_HASH,
+  );
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_INVALID");
+});
+
+test("a different administrator is rejected as a mismatch", async () => {
+  const other = `0x${"44".repeat(20)}`;
+  const outcome = await runTrustedVerification(
+    readerWith(
+      world({ eth_call: adminWord("0".repeat(24), getAddress(other).slice(2)) }),
+    ),
+    EXPECTED,
+    TX_HASH,
+  );
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADMIN_MISMATCH");
+});
+
+// ---------------------------------------------------------------------------
+// Review pass 2, finding 3: the requested transaction hash is load-bearing
+// ---------------------------------------------------------------------------
+
+/**
+ * Both the reader and the pipeline check that the chain answered about the requested
+ * transaction. The reader checks first, so with a genuine reader its code is the one
+ * observed; the pipeline's own check is a backstop for any future reader that omits
+ * it. These tests therefore assert *rejection*, and that the rejection is for a hash
+ * reason, rather than pretending to prove which of the two layers fired.
+ */
+test("a response about a different transaction is rejected", async () => {
+  const otherTx = hex32("a-different-transaction");
+  // The node answers every lookup with a different, internally consistent transaction.
+  const outcome = await runTrustedVerification(
+    readerWith(
+      world({
+        eth_getTransactionByHash: { hash: otherTx, from: ATTESTOR, to: REGISTRY },
+        eth_getTransactionReceipt: {
+          transactionHash: otherTx,
+          status: "0x1",
+          from: ATTESTOR,
+          to: REGISTRY,
+          blockNumber: quantity(RECEIPT_BLOCK),
+          blockHash: BLOCK_HASH,
+          logs: [log()],
+        },
+      }),
+    ),
+    EXPECTED,
+    TX_HASH,
+  );
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok)
+    assert.ok(
+      ["TRANSACTION_MISMATCH", "TRANSACTION_MALFORMED"].includes(outcome.failure),
+      `expected a hash rejection, got ${outcome.failure}`,
+    );
+});
+
+test("a receipt naming a different transaction than the observation is rejected", async () => {
+  const otherTx = hex32("receipt-of-another-transaction");
+  // The transaction lookup is correct; only the receipt names another hash. This is
+  // the split-brain case where a reader might otherwise accept the transaction's
+  // finality but the receipt's contents.
+  const outcome = await runTrustedVerification(
+    readerWith(
+      world({
+        eth_getTransactionReceipt: {
+          transactionHash: otherTx,
+          status: "0x1",
+          from: ATTESTOR,
+          to: REGISTRY,
+          blockNumber: quantity(RECEIPT_BLOCK),
+          blockHash: BLOCK_HASH,
+          logs: [log()],
+        },
+      }),
+    ),
+    EXPECTED,
+    TX_HASH,
+  );
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok)
+    // The reader rejects this as `RECEIPT_MALFORMED` because the receipt's hash
+    // disagrees with the transaction it belongs to; the pipeline's own
+    // `TRANSACTION_MISMATCH` is the backstop. Either is a rejection for the right
+    // reason — the point is that a receipt for another transaction never authorizes.
+    assert.ok(
+      ["TRANSACTION_MISMATCH", "TRANSACTION_MALFORMED", "RECEIPT_MALFORMED"].includes(
+        outcome.failure,
+      ),
+      `expected a hash rejection, got ${outcome.failure}`,
+    );
+});
+
+test("a malformed requested hash is rejected before any network call", async () => {
+  const malformed = [
+    "",
+    "0x",
+    "not-a-hash",
+    `0x${"a".repeat(63)}`,
+    `0x${"a".repeat(65)}`,
+    `0x${"00".repeat(32)}`, // zero hash
+    `0x${"zz".repeat(32)}`, // non-hex
+  ];
+  for (const hash of malformed) {
+    server.calls.length = 0;
+    const outcome = await runTrustedVerification(readerWith(world()), EXPECTED, hash);
+    assert.equal(outcome.ok, false, `accepted ${JSON.stringify(hash)}`);
+    if (!outcome.ok)
+      assert.equal(
+        outcome.failure,
+        "TRANSACTION_HASH_MALFORMED",
+        `wrong failure for ${JSON.stringify(hash)}`,
+      );
+    assert.equal(server.calls.length, 0, `network touched for ${JSON.stringify(hash)}`);
+  }
+});
+
+test("an uppercase requested hash is normalized, not rejected", async () => {
+  // Review pass 2 asked for *normalization*: a checksummed hash names the same
+  // transaction, so refusing it would be a usability bug. What matters is that the
+  // normalized value is what gets bound into the result and compared against the
+  // chain, which the successful outcome here demonstrates.
+  const outcome = await runTrustedVerification(
+    readerWith(world()),
+    EXPECTED,
+    TX_HASH.toUpperCase().replace("0X", "0x"),
+  );
+  assert.equal(outcome.ok, true, "an uppercase hash should normalize and succeed");
+  if (outcome.ok) {
+    // The result must carry the normalized hash, not the caller's casing.
+    assert.equal(outcome.result.seal.transactionHash, TX_HASH);
+  }
+});
+
+test("a registry mismatch is refused before the reader is consulted", async () => {
+  server.calls.length = 0;
+  const outcome = await runTrustedVerification(
+    readerWith(world()),
+    { ...EXPECTED, registryAddress: `0x${"77".repeat(20)}` },
+    TX_HASH,
+  );
+  assert.equal(outcome.ok, false);
+  if (!outcome.ok) assert.equal(outcome.failure, "REGISTRY_ADDRESS_MISMATCH");
+  assert.equal(server.calls.length, 0);
 });

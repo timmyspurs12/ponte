@@ -14,7 +14,7 @@ import {
   rebindTrustedResult,
   runTrustedVerification,
 } from "../../src/server/evidence/trusted-authorization";
-import { createTestReader } from "./helpers/test-reader-factory";
+import { createHarnessOperatorReader } from "./helpers/test-reader-factory";
 import {
   hex32,
   keccakOf,
@@ -116,7 +116,7 @@ function readerFor(w: Record<string, unknown>) {
     return entry;
   });
   server.setRawResponder(null);
-  return createTestReader({
+  return createHarnessOperatorReader({
     rpcUrl: server.url,
     registryAddress: REGISTRY,
     runtimeBytecodeHash: RUNTIME_HASH,

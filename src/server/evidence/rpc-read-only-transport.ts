@@ -198,8 +198,12 @@ export class ReadOnlyRpcClient {
     const body = JSON.stringify({ jsonrpc: "2.0", id, method, params });
 
     const controller = new AbortController();
-    // One deadline for the entire operation. Cleared in the `finally` below, which
-    // runs only after the body has been read (or the attempt has failed).
+    // One deadline for the *entire* call, not just the network phase: the timestamp is
+    // captured here and re-checked after parsing below, so a response that arrives in
+    // time but parses slowly still fails as a timeout. The timer is also what aborts an
+    // in-flight request or a stalled body read.
+    const startedAt = Date.now();
+    const deadlineAt = startedAt + this.#timeoutMs;
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
 
     let text: string;
@@ -240,12 +244,19 @@ export class ReadOnlyRpcClient {
       clearTimeout(timer);
     }
 
+    // The deadline covers parsing too. A pathological but well-formed body can spend
+    // arbitrary time in `JSON.parse`, and a response that lands after the deadline must
+    // not be accepted just because the bytes arrived in time.
+    if (Date.now() > deadlineAt) throw new RpcTransportError("RPC_TIMEOUT");
+
     let envelope: unknown;
     try {
       envelope = JSON.parse(text);
     } catch {
       throw new RpcTransportError("RPC_INVALID_JSON");
     }
+
+    if (Date.now() > deadlineAt) throw new RpcTransportError("RPC_TIMEOUT");
 
     if (!isPlainObject(envelope))
       throw new RpcTransportError("RPC_INVALID_ENVELOPE");

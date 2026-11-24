@@ -206,22 +206,53 @@ constructor accepts nothing else and throws
 `TRUSTED_READER_REQUIRES_BRANDED_CONFIG` otherwise. A JSON round-trip of a valid config
 is therefore rejected — asserted in the suite.
 
-Three further restrictions were applied in review pass 1:
+Review pass 1 added three restrictions, and **review pass 2 removed the test-only
+machinery from production entirely**:
 
 - **The production resolver takes no parameters.** `resolveTrustedEvidenceReader()` and
   `resolveTrustedReaderConfig()` accept no input at all; an earlier revision accepted a
   caller-supplied pinned configuration, which let any module manufacture the production
   reader.
-- **No injectable transport in production.** The constructor has no second argument. A
-  fetch stand-in can only be registered against a _test-scoped_ brand, and
-  `registerTestTransport` throws for an operator brand.
-- **Test configuration is a separate brand** (`testOnly: true`), produced only by
-  `validateTestReaderConfig`, which additionally allows a loopback `http:` endpoint.
-  Production configuration requires `https:` unconditionally.
+- **No injectable transport, anywhere.** The constructor has no second argument.
+  `registerTestTransport` and its `TEST_TRANSPORTS` table were **deleted** in pass 2.
+  The suite reaches a loopback mock server by substituting `globalThis.fetch` for the
+  duration of a call from test code, which requires no production seam.
+- **Test-only issuance is off the production surface.** `validateTestReaderConfig` was
+  replaced by `__issueConfigForHarness`, whose only importer is
+  `tests/evidence/helpers/test-config-bridge.ts`. It lives under `tests/`, so it is
+  never bundled into the application. `tests/evidence/reader-capability.test.ts`
+  enforces this structurally: it scans every file under `src/` and fails if any imports
+  the bridge or calls the harness issuance function.
 
 No API handler, request body, header, query parameter or ordinary service can reach any
 of this: `resolveTrustedReaderConfig()` returns a `CONFIG_MISSING` failure regardless of
 input, and nothing outside `chain-reader-runtime.ts` calls it.
+
+### Reader provenance is a runtime capability, not a type
+
+Review pass 2 found the more serious hole: `runTrustedVerification` accepted **any**
+object with a plausible shape. A plain object returning a synthetic observation,
+synthetic finality evidence and a synthetic bytecode hash drove the pipeline to mint a
+genuine `TrustedAnchorVerification`. The TypeScript class type was never a boundary, and
+neither is `instanceof` — anything carrying the prototype satisfies it.
+
+The boundary is now a module-private `WeakMap` in `trusted-reader.ts`, mapping a reader
+instance to a dispatcher closure over that instance's private state. The map and its
+single writer are unexported; the constructor is the only code path that can add an
+entry. The pipeline calls `dispatchForReader()`, a **lookup**, and never touches the
+caller-supplied object. A Proxy, an `Object.create(TrustedEvidenceChainReader.prototype)`
+imitation, a prototype swap, a plain literal and a cross-realm clone all miss.
+
+A test-scoped reader is *registered* but marked `operatorScoped: false`, and
+`runTrustedVerification` refuses it with `READER_NOT_TRUSTED` before reading anything.
+So a test fixture can perform real RPC parsing and never authorize a confirmation. To
+keep that from being a way to aim the authorizing path at a real network, the harness
+issuance function refuses any operator-scoped configuration whose endpoint is not a
+loopback literal — a runtime check, not a convention.
+
+`tests/evidence/reader-capability.test.ts` proves all of this, including a
+perfectly-formed forgery whose observation matches every expectation and is still
+refused on provenance alone.
 
 ### Manifest handling: a deliberate, documented duplication
 
@@ -370,10 +401,25 @@ validation that rejects non-HTTP(S) schemes and embedded credentials.
 
 An earlier revision cleared the `AbortController` timer once `fetch()` returned
 headers, leaving body transfer and parsing unbounded. The timer now covers the wait for
-headers, the transfer of the body and the parse of the JSON, and is cleared only after
-the body has been consumed. An endpoint that sends headers promptly and then stalls the
-body is timed out (`RPC_TIMEOUT`). Tests cover: no headers at all, headers-then-stall,
-abort mid-body, and valid responses after each failure.
+headers and the transfer of the body, and is cleared only after the body has been
+consumed. An endpoint that sends headers promptly and then stalls the body is timed out
+(`RPC_TIMEOUT`). Tests cover: no headers at all, headers-then-stall, abort mid-body, and
+valid responses after each failure.
+
+**Correction (review pass 2).** This section previously claimed the deadline also
+covered the `JSON.parse` call. It did not: `clearTimeout` ran in the `finally` block
+before parsing began, so a body that arrived in time but parsed slowly was accepted
+regardless of elapsed time. The claim was wrong and has been replaced by an
+implementation that matches it. The transport now captures `deadlineAt` before the
+request, re-checks it immediately before parsing and again immediately after, and
+reports `RPC_TIMEOUT` if either check fails. A small body with a pathological payload
+therefore cannot outlive its deadline.
+
+Proving this needs care, because a body large enough to parse slowly would hit the size
+cap first. The test therefore substitutes a slow `JSON.parse` for one call, keeping the
+payload small and well-formed, so only elapsed time can reject it. A companion test
+confirms the deadline is computed per call and does not leak into later ones. None of
+this weakens the 2 MiB cap, which still rejects before and during body consumption.
 
 ### Response size is bounded
 

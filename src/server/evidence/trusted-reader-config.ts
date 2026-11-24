@@ -165,17 +165,29 @@ function fail(failure: TrustedReaderConfigFailure): TrustedReaderConfigResult {
   return { ok: false, failure };
 }
 
+/**
+ * Canonical lowercase address.
+ *
+ * The canonical validator tests `/^0x[0-9a-f]{40}$/` against the value **as given**,
+ * so an uppercase (checksummed) address is rejected. This module must agree, so the
+ * pattern is applied to the raw string and no case folding happens before the check.
+ */
 function canonicalAddress(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const lowered = value.toLowerCase();
-  return CANONICAL_ADDRESS.test(lowered) ? lowered : null;
+  return CANONICAL_ADDRESS.test(value) ? value : null;
 }
 
+/**
+ * Canonical non-zero bytes32.
+ *
+ * Like the address helper, this does not case fold: the canonical validator rejects
+ * uppercase hex, so accepting it here would be a divergence in the permissive
+ * direction.
+ */
 function nonzeroBytes32(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const lowered = value.toLowerCase();
-  if (!NONZERO_BYTES32.test(lowered)) return null;
-  return lowered === ZERO_BYTES32 ? null : lowered;
+  if (!NONZERO_BYTES32.test(value)) return null;
+  return value === ZERO_BYTES32 ? null : value;
 }
 
 function positiveDecimal(value: unknown): string | null {
@@ -341,7 +353,7 @@ function validate(
   // 64-hex value that is not all zeroes.
   if (typeof manifest.abi.hash !== "string")
     return fail("CONFIG_ABI_INVALID");
-  const abiHash = manifest.abi.hash.toLowerCase();
+  const abiHash = manifest.abi.hash;
   if (!/^0x[0-9a-f]{64}$/.test(abiHash) || abiHash === ZERO_BYTES32)
     return fail("CONFIG_ABI_INVALID");
 
@@ -352,10 +364,12 @@ function validate(
   if (!["not_submitted", "verified", "failed"].includes(status as string))
     return fail("CONFIG_SOURCE_VERIFICATION_INVALID");
   const url = manifest.sourceVerification.url;
-  if (status === "not_submitted") {
+  // Exact parity with the canonical `assertHttpsUrlOrNull`: the URL must be `null`
+  // for ANY status other than "verified" — including "failed" — and when verified it
+  // must be an HTTPS URL with no embedded username or password.
+  if (status !== "verified") {
     if (url !== null) return fail("CONFIG_SOURCE_VERIFICATION_INVALID");
   } else {
-    // `verified` and `failed` require an HTTPS explorer URL.
     if (typeof url !== "string") return fail("CONFIG_SOURCE_VERIFICATION_INVALID");
     let parsed: URL;
     try {
@@ -363,22 +377,18 @@ function validate(
     } catch {
       return fail("CONFIG_SOURCE_VERIFICATION_INVALID");
     }
-    if (parsed.protocol !== "https:") return fail("CONFIG_SOURCE_VERIFICATION_INVALID");
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password)
+      return fail("CONFIG_SOURCE_VERIFICATION_INVALID");
   }
 
   // ---- build identity cross-check (operator-pinned artifact) ----
-  if (
-    !exactKeys(buildIdentity, [
-      "contract",
-      "compiler",
-      "optimizer",
-      "evmVersion",
-      "viaIR",
-      "runtimeBytecodeHashAlgorithm",
-      "runtimeBytecodeHash",
-      "abi",
-    ])
-  )
+  //
+  // Parity note (review pass 2): the canonical validator compares only the fields
+  // listed below and tolerates extra keys on the build identity, which is a trusted
+  // artifact read from the repository rather than attacker-supplied JSON. The runtime
+  // validator matches that behaviour exactly, and `tests/evidence/manifest-parity.test.ts`
+  // asserts the agreement. The *manifest* remains exact-keys, in both validators.
+  if (!isPlainObject(buildIdentity))
     return fail("CONFIG_BUILD_IDENTITY_MISSING");
   if (!exactKeys(buildIdentity.contract, ["name", "version"]))
     return fail("CONFIG_BUILD_IDENTITY_MISSING");
@@ -411,7 +421,7 @@ function validate(
   if (
     buildIdentity.abi.version !== REGISTRY_ABI_VERSION ||
     buildIdentity.abi.hashAlgorithm !== ABI_HASH_ALGORITHM ||
-    String(buildIdentity.abi.hash).toLowerCase() !== abiHash
+    buildIdentity.abi.hash !== abiHash
   )
     return fail("CONFIG_ABI_INVALID");
 
@@ -432,17 +442,61 @@ function validate(
 }
 
 /**
- * Validates a **test-scoped** configuration.
+ * Harness-only configuration issuance.
  *
- * This is the only exported validator, and it can never produce an operator brand.
- * It is named `...Test...` so an accidental production import is obvious in review,
- * and it permits a loopback `http:` endpoint so the suite can drive the real reader
- * against an in-process mock server. Production configuration requires `https:`.
+ * **Review pass 2:** the production surface exposes exactly one validator —
+ * `resolveTrustedReaderConfig()`, which takes no arguments and always reports
+ * `CONFIG_MISSING`. This function is the single remaining way to mint a brand, and it
+ * exists solely so `tests/` can build readers. Its only importer is
+ * `tests/evidence/helpers/test-config-bridge.ts`; no module under `src/` imports that
+ * bridge, which `tests/evidence/reader-capability.test.ts` enforces by scanning the
+ * source tree.
+ *
+ * `operatorScope` controls whether the resulting reader may authorize a confirmation.
+ * It is false for the RPC-parsing readers the suite uses, and true only for the
+ * harness that exercises the confirmation boundary itself.
+ *
+ * ## Why operator scope is additionally constrained to loopback
+ *
+ * An operator-scoped reader can authorize a confirmation. Handing one an arbitrary
+ * endpoint would mean the test harness could be aimed at a real network, which is
+ * precisely the "exported helper letting arbitrary endpoints reach the authorizing
+ * pipeline" that review pass 2 forbids. So operator scope here is *self-limiting*: it
+ * refuses any endpoint that is not a loopback literal. A caller cannot mint an
+ * operator-scoped reader pointed anywhere else, whatever it passes, and this is a
+ * runtime check rather than a convention.
+ *
+ * @internal Imported only by the test bridge under `tests/`.
  */
-export function validateTestReaderConfig(
+export function __issueConfigForHarness(
   input: unknown,
+  operatorScope: boolean,
 ): TrustedReaderConfigResult {
-  return validate(input, true, true);
+  if (operatorScope) {
+    // Only an operator-scoped brand needs the loopback guarantee; test-scoped readers
+    // never authorize so they are harmless wherever they point.
+    const endpoint =
+      isPlainObject(input) && typeof input.rpcUrl === "string"
+        ? safeLoopbackCheck(input.rpcUrl)
+        : false;
+    if (!endpoint) return fail("CONFIG_RPC_URL");
+  }
+  return validate(input, !operatorScope, true);
+}
+
+/** True only for an `http:` URL whose host is a loopback literal. */
+function safeLoopbackCheck(raw: string): boolean {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:") return false;
+    return (
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "[::1]"
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

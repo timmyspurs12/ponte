@@ -332,3 +332,76 @@ test("a response at exactly the size ceiling is accepted", async () => {
   const result = await rpc.call("eth_chainId", []);
   assert.equal(result, padding);
 });
+
+test("the deadline covers parsing, not just the network phase", async () => {
+  // Review pass 2, finding 6. The previous implementation cleared the timer as soon as
+  // the body had been read, so a small body with a pathological payload could occupy
+  // the event loop in `JSON.parse` for arbitrarily long and still be accepted. The
+  // documented claim was "one deadline for the entire operation"; this test holds the
+  // source to it.
+  //
+  // A body only parses slowly if it is very large, so the size cap would normally fire
+  // first. To isolate the *deadline* from the *size cap*, this test replaces
+  // `JSON.parse` with a slow stand-in for the duration of one call: the payload is
+  // small and well-formed, so only elapsed time can reject it.
+  server.setRawResponder((_body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x66eee" }));
+  });
+
+  const realParse = JSON.parse;
+  let parseCalls = 0;
+  JSON.parse = ((text: string, reviver?: unknown) => {
+    parseCalls += 1;
+    // Block past the deadline without yielding.
+    const until = Date.now() + 400;
+    while (Date.now() < until) {
+      /* spin */
+    }
+    return realParse(text, reviver as never);
+  }) as typeof JSON.parse;
+
+  try {
+    const rpc = client({ timeoutMs: 100 });
+    const started = Date.now();
+    await assert.rejects(() => rpc.call("eth_chainId", []), /RPC_TIMEOUT/);
+    const elapsed = Date.now() - started;
+    assert.equal(parseCalls, 1, "the body should have been parsed exactly once");
+    assert.ok(elapsed >= 100, `should not resolve before the deadline: ${elapsed}ms`);
+  } finally {
+    JSON.parse = realParse;
+  }
+});
+
+test("the deadline is per call and does not leak into later calls", async () => {
+  // An earlier call that times out must not poison a later one: the deadline is
+  // computed per invocation, not stored on the client.
+  // Note: the responder must not call `JSON.parse` — the mock server runs in this
+  // process, and the patched parse below would slow it down too, turning this into a
+  // test of the server rather than the client.
+  server.setRawResponder((body, res) => {
+    const id = (body as { id?: number })?.id ?? 1;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(`{"jsonrpc":"2.0","id":${id},"result":"0x66eee"}`);
+  });
+
+  const realParse = JSON.parse;
+  JSON.parse = ((text: string, reviver?: unknown) => {
+    const until = Date.now() + 300;
+    while (Date.now() < until) {
+      /* spin */
+    }
+    return realParse(text, reviver as never);
+  }) as typeof JSON.parse;
+
+  const rpc = client({ timeoutMs: 100 });
+  try {
+    await assert.rejects(() => rpc.call("eth_chainId", []), /RPC_TIMEOUT/);
+  } finally {
+    JSON.parse = realParse;
+  }
+
+  // Same client instance, no slow parse this time: must succeed.
+  const result = await rpc.call("eth_chainId", []);
+  assert.equal(result, "0x66eee");
+});

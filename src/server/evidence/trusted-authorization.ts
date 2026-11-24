@@ -37,10 +37,8 @@ import type {
   FinalityEvidence,
   TrustedObservedAnchor,
 } from "./trusted-observation";
-import type {
-  TrustedEvidenceChainReader,
-  TrustedReaderFailure,
-} from "./trusted-reader";
+import type { TrustedReaderFailure } from "./trusted-reader";
+import { dispatchForReader } from "./trusted-reader";
 
 /**
  * The fourteen values a trusted result is bound to.
@@ -73,6 +71,18 @@ interface Acquisition {
   readonly runtimeBytecodeHash: string;
   readonly registryAddress: string;
   readonly transactionHash: string;
+}
+
+/**
+ * Canonical form of a transaction hash, or `null` when it is not a usable 32-byte
+ * value. Lowercased so the same hash written two ways compares equal, and rejects the
+ * zero hash because no transaction can have it.
+ */
+function canonicalTransactionHash(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const lowered = value.toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(lowered)) return null;
+  return lowered === `0x${"0".repeat(64)}` ? null : lowered;
 }
 
 /** Recursively freezes an object graph so later mutation cannot change meaning. */
@@ -306,7 +316,16 @@ export function rebindTrustedResult(
 // The pipeline: the only exported issuance entry point
 // ---------------------------------------------------------------------------
 
-export type TrustedPipelineFailure = TrustedReaderFailure | "EVALUATION_REJECTED";
+export type TrustedPipelineFailure =
+  | TrustedReaderFailure
+  | "EVALUATION_REJECTED"
+  /** The supplied reader did not carry this codebase's capability, or was test-scoped. */
+  | "READER_NOT_TRUSTED"
+  /** The requested transaction hash was malformed. */
+  | "TRANSACTION_HASH_MALFORMED"
+  /** The reader answered about a different transaction than the one requested. */
+  | "TRANSACTION_MISMATCH"
+  | "REGISTRY_ADDRESS_MISMATCH";
 
 export type TrustedPipelineOutcome =
   | { readonly ok: true; readonly result: TrustedAnchorVerification }
@@ -323,20 +342,56 @@ export type TrustedPipelineOutcome =
  * configuration. A structural imitation fails on its first private-field access.
  */
 export async function runTrustedVerification(
-  reader: TrustedEvidenceChainReader,
+  reader: unknown,
   expected: ExpectedAnchorCommitment,
   transactionHash: string,
 ): Promise<TrustedPipelineOutcome> {
+  // ---- Gate 0: the reader must carry this codebase's capability ----
+  //
+  // `reader` is deliberately typed `unknown`. A class type is not a runtime boundary:
+  // review pass 2 showed a plain object with `readAnchorObservation()` and
+  // `pinnedRegistryAddress` could drive the whole pipeline. The capability lookup is
+  // a WeakMap hit, which no Proxy, prototype imitation or structural clone can
+  // fabricate.
+  const dispatch = dispatchForReader(reader);
+  if (!dispatch) return { ok: false, failure: "READER_NOT_TRUSTED" };
+
+  // ---- Gate 0b: a test-scoped reader may never authorize ----
+  //
+  // Unit tests drive RPC parsing through a loopback endpoint, but such a reader is
+  // marked non-operator and is refused here, so no test fixture can mint a result the
+  // production confirmation boundary would accept.
+  if (!dispatch.operatorScoped) return { ok: false, failure: "READER_NOT_TRUSTED" };
+
+  // ---- Finding 3: the requested hash must be load-bearing ----
+  const requested = canonicalTransactionHash(transactionHash);
+  if (!requested) return { ok: false, failure: "TRANSACTION_HASH_MALFORMED" };
+  if (expected.registryAddress.toLowerCase() !== dispatch.pinnedRegistryAddress)
+    return { ok: false, failure: "REGISTRY_ADDRESS_MISMATCH" };
+
   let acquired;
   try {
-    acquired = await reader.readAnchorObservation({
-      transactionHash,
-      registryAddress: expected.registryAddress,
+    acquired = await dispatch.read({
+      transactionHash: requested,
+      registryAddress: dispatch.pinnedRegistryAddress,
     });
   } catch {
     return { ok: false, failure: "RPC_UNAVAILABLE" };
   }
-  if (!acquired.ok) return { ok: false, failure: acquired.failure };
+  if (!acquired.ok) return { ok: false, failure: acquired.failure as TrustedReaderFailure };
+
+  // The reader must answer about the transaction that was requested. This is checked
+  // independently of the reader's own internal checks, because the pipeline must not
+  // assume they exist.
+  const observedHash = canonicalTransactionHash(acquired.observation.transactionHash);
+  if (!observedHash || observedHash !== requested)
+    return { ok: false, failure: "TRANSACTION_MISMATCH" };
+  // The receipt must name the same transaction, not merely a plausible one.
+  const receiptHash = canonicalTransactionHash(
+    acquired.observation.receipt?.transactionHash ?? "",
+  );
+  if (!receiptHash || receiptHash !== requested)
+    return { ok: false, failure: "TRANSACTION_MISMATCH" };
 
   // The seal's registry address is the pinned one the reader used, never a value
   // taken from the observation it just returned.
@@ -344,8 +399,8 @@ export async function runTrustedVerification(
     observation: acquired.observation,
     finality: acquired.finality,
     runtimeBytecodeHash: acquired.runtimeBytecodeHash,
-    registryAddress: reader.pinnedRegistryAddress,
-    transactionHash: acquired.observation.transactionHash,
+    registryAddress: dispatch.pinnedRegistryAddress,
+    transactionHash: requested,
   };
 
   const evaluated = evaluateAnchorObservation(expected, acquisition.observation);
