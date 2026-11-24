@@ -123,6 +123,28 @@ export interface PersistedInvoiceEvidenceStatus {
   outboxSubmissionState: EvidenceOutboxSubmissionState | null;
 }
 
+/**
+ * Anchoring claim for one evidence record.
+ *
+ * The `verified: false` branch carries no transaction hash, block, or attestor
+ * field at all, so a not-yet-verified record cannot accidentally render as
+ * anchored. Only a receipt that has satisfied every check in
+ * `src/server/evidence/anchor-verification.ts` produces the `verified: true`
+ * branch, and that branch is never persisted on its own.
+ */
+export type EvidenceAnchoringStatus =
+  | { verified: false; status: "not_verified" }
+  | {
+      verified: true;
+      status: "verified";
+      chainId: string;
+      registryAddress: string;
+      transactionHash: string;
+      blockNumber: string;
+      blockHash: string;
+      attestor: string;
+    };
+
 export type InvoiceEvidenceStatus =
   | {
       state: "missing";
@@ -133,8 +155,7 @@ export type InvoiceEvidenceStatus =
       state: "persisted";
       invoiceId: string;
       evidence: PersistedInvoiceEvidenceStatus;
-      /** There is no independently verified receipt and registry event today. */
-      anchoring: { verified: false; status: "not_verified" };
+      anchoring: EvidenceAnchoringStatus;
     };
 
 export interface WorkspaceAuthentication {

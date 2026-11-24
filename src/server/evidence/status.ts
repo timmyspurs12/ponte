@@ -8,6 +8,7 @@ import type {
   EvidenceProvider,
   InvoiceEvidenceStatus,
 } from "../../lib/models";
+import { anchoringStatusFor } from "./anchor-verification";
 import { fail } from "../errors";
 import type { InvoiceEvidenceStatusRow } from "../repository";
 
@@ -99,13 +100,24 @@ function outboxState(value: unknown): EvidenceOutboxSubmissionState | null {
 
 /**
  * Converts one deliberately narrow SQL projection into the documented response.
- * There is no independently verified registry receipt/event persisted today, so
- * this projection never returns a transaction hash or an anchored/confirmed
- * claim, regardless of an operational outbox state.
+ *
+ * The anchoring claim is **derived here**, not accepted from the caller. The
+ * third parameter is an untrusted candidate — a value that may or may not be a
+ * proof issued by `verifyAnchorObservation` — and it is passed straight to
+ * `anchoringStatusFor()`, which returns the frozen not-verified claim for
+ * anything it did not issue.
+ *
+ * A caller therefore cannot render an anchoring claim by supplying a pre-built
+ * `EvidenceAnchoringStatus`, a `{ verified: true }` object, a spread copy, a
+ * JSON round-trip or a `structuredClone`. There is no parameter whose type
+ * accepts an already-constructed verified status.
+ *
+ * An operational outbox state, including `confirmed`, is never consulted here.
  */
 export function invoiceEvidenceStatus(
   invoiceId: string,
   row: InvoiceEvidenceStatusRow | undefined,
+  proofCandidate: unknown = null,
 ): InvoiceEvidenceStatus {
   if (!row)
     return {
@@ -130,9 +142,7 @@ export function invoiceEvidenceStatus(
       createdAt: createdAt(row.created_at),
       outboxSubmissionState: outboxState(row.submission_state),
     },
-    anchoring: {
-      verified: false,
-      status: "not_verified",
-    },
+    // Derived from the untrusted candidate inside this boundary.
+    anchoring: anchoringStatusFor(proofCandidate),
   };
 }
