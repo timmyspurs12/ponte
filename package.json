@@ -2,6 +2,9 @@
   "name": "ponte",
   "version": "0.2.0",
   "private": true,
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
@@ -9,25 +12,34 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node scripts/run-tests.mjs",
+    "test:evidence": "node --conditions=react-server --import tsx --test tests/evidence/*.test.ts",
     "format": "prettier --write src tests playwright.config.ts",
     "test:install": "playwright install chromium",
     "db:local": "tsx scripts/local-postgres.ts",
     "db:migrate": "node --env-file-if-exists=.env.local --import tsx scripts/database.ts",
     "db:seed": "node --env-file-if-exists=.env.local --import tsx scripts/database.ts --seed",
-    "db:fixtures": "node --env-file-if-exists=.env.local --import tsx scripts/seed-fixtures.ts",
-    "test:backend": "node --env-file-if-exists=.env.local --import tsx --test tests-backend/*.test.ts",
+    "db:fixtures": "node --env-file-if-exists=.env.local --import ./scripts/test-server-only-stub.mjs --import tsx scripts/seed-fixtures.ts",
+    "test:backend": "node scripts/run-backend-tests.mjs",
     "db:reset": "node --env-file-if-exists=.env.local --import tsx scripts/reset-database.ts",
-    "test:migrations": "node --env-file-if-exists=.env.local --import tsx scripts/test-migrations.ts"
+    "test:migrations": "node --env-file-if-exists=.env.local --import tsx scripts/test-migrations.ts",
+    "db:bootstrap-business": "node --env-file-if-exists=.env.local --import tsx scripts/bootstrap-production-business.ts",
+    "db:bootstrap-public-demo": "node --env-file-if-exists=.env.local --import tsx scripts/bootstrap-public-demo.ts",
+    "db:ops:validate": "node --import tsx scripts/validate-database-operation.ts",
+    "db:ops:run": "node --import tsx scripts/manual-database-operations.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.0",
     "@fontsource/manrope": "^5.2.0",
+    "@google-cloud/kms": "^6.3.0",
+    "ethers": "6.17.0",
     "lucide-react": "^0.468.0",
     "motion": "^12.23.0",
     "next": "^16.0.0",
+    "next-auth": "5.0.0-beta.32",
     "pg": "^8.23.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "server-only": "0.0.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

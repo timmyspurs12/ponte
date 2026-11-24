@@ -3,14 +3,27 @@ import type {
   InvoiceInput,
   InvoiceService,
   BusinessActivityEvent,
+  InvoiceEvidenceStatus,
   Status,
+  WorkspaceAuthentication,
 } from "./models";
 import { majorToMinor } from "./quotes";
+
+export class ApiRequestError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly status: number,
+  ) {
+    super(code);
+  }
+}
+
 async function api<T>(
   path: string,
   body?: unknown,
   method = "POST",
   resource = "invoices",
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api/v1/${resource}${path}`, {
     method: body === undefined ? "GET" : method,
@@ -23,11 +36,40 @@ async function api<T>(
           },
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
+    signal,
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error?.code ?? "REQUEST_FAILED");
+  if (!response.ok)
+    throw new ApiRequestError(
+      result.error?.code ?? "REQUEST_FAILED",
+      response.status,
+    );
   return result.data;
 }
+
+export async function workspaceAuthentication(): Promise<WorkspaceAuthentication> {
+  const response = await fetch("/api/auth/context", {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    // This UI-only status endpoint keeps the correct 403 semantics while
+    // returning a safe account label for the access-denied presentation.
+    if (
+      response.status === 403 &&
+      result.data?.authenticated === true &&
+      result.data?.access === null
+    )
+      return result.data as WorkspaceAuthentication;
+    throw new ApiRequestError(
+      result.error?.code ?? "REQUEST_FAILED",
+      response.status,
+    );
+  }
+  return result.data;
+}
+
 export const invoiceService: InvoiceService = {
   activity() {
     return api<BusinessActivityEvent[]>(
@@ -65,5 +107,14 @@ export const invoiceService: InvoiceService = {
       ...(route ? { route } : {}),
       ...(quoteId ? { quoteId } : {}),
     });
+  },
+  evidence(id: string, signal?: AbortSignal) {
+    return api<InvoiceEvidenceStatus>(
+      `/${id}/evidence`,
+      undefined,
+      "GET",
+      "invoices",
+      signal,
+    );
   },
 };

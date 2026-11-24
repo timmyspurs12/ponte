@@ -185,7 +185,7 @@ test("state machine rejects skipped transitions; server quote locks route and ex
   );
   const q = (await request(`/${i.id}/quotes`, {})) as { id: string };
   await pool.query(
-    "UPDATE quotes SET expires_at=now()-interval '1 second' WHERE id=$1",
+    "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 second' WHERE id=$1",
     [q.id],
   );
   await assert.rejects(
@@ -199,7 +199,7 @@ test("state machine rejects skipped transitions; server quote locks route and ex
     error("ROUTE_LOCKED"),
   );
   await pool.query(
-    "UPDATE quotes SET expires_at=now()-interval '1 second' WHERE id=$1",
+    "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 second' WHERE id=$1",
     [fresh.id],
   );
   await assert.rejects(

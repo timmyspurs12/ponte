@@ -1,5 +1,6 @@
 import { ZodError } from "zod";
 import { ApiError, execute } from "@/server/service";
+import { mapEvidenceError } from "@/server/evidence/error-boundary";
 export const runtime = "nodejs";
 async function handler(
   request: Request,
@@ -17,24 +18,29 @@ async function handler(
       { status: created ? 201 : 200, headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    const pgCode = (error as { code?: string }).code;
+    // Evidence/provider exceptions must be normalized before the generic branch
+    // below: its raw-error logging remains unchanged for unrelated operations.
+    const evidenceError = mapEvidenceError(error);
+    const mappedError = evidenceError ?? error;
+    const pgCode = (mappedError as { code?: string }).code;
     const status =
-      error instanceof ApiError
-        ? error.status
-        : error instanceof ZodError
+      mappedError instanceof ApiError
+        ? mappedError.status
+        : mappedError instanceof ZodError
           ? 422
           : pgCode === "23505"
             ? 409
             : 500;
     const code =
-      error instanceof ApiError
-        ? error.code
-        : error instanceof ZodError
+      mappedError instanceof ApiError
+        ? mappedError.code
+        : mappedError instanceof ZodError
           ? "VALIDATION_ERROR"
           : pgCode === "23505"
             ? "DUPLICATE_REFERENCE"
             : "INTERNAL_ERROR";
-    if (status === 500) console.error("API request failed", requestId, error);
+    if (status === 500 && !evidenceError)
+      console.error("API request failed", requestId, error);
     return Response.json(
       { error: { code }, requestId },
       {

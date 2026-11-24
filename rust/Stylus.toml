@@ -1,0 +1,7 @@
+# cargo-stylus 0.10.10 requires this [workspace] table at the Cargo workspace root. No
+# cargo-stylus 0.10.10 command reads the network entry below: RPC commands use --endpoint
+# (default http://localhost:8547). No deployment data is recorded here.
+[workspace]
+
+[workspace.networks.arbitrum-sepolia]
+endpoint = "https://sepolia-rollup.arbitrum.io/rpc"

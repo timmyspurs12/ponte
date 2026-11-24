@@ -20,16 +20,22 @@ import { Invoice, Status } from "@/lib/models";
 import { minorToDisplayNumber } from "@/lib/quotes";
 import { invoiceService as service } from "@/lib/services";
 import { Badge } from "./ui";
+import { InvoiceEvidencePanel } from "./invoice-evidence-panel";
+import { SyntheticDemoNotice } from "./synthetic-demo-notice";
 export function InvoiceDetail({
   invoice,
   refresh,
   notify,
   publicPage = false,
+  readOnly = false,
+  publicDemo = false,
 }: {
   invoice: Invoice;
   refresh: () => void;
   notify: (s: string) => void;
   publicPage?: boolean;
+  readOnly?: boolean;
+  publicDemo?: boolean;
 }) {
   const { t, money, number, date } = useLocale();
 
@@ -60,6 +66,10 @@ export function InvoiceDetail({
             ? 1
             : 0;
   async function transition(status: Status) {
+    if (readOnly) {
+      setError("This demo workspace is read-only.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -129,13 +139,20 @@ export function InvoiceDetail({
           </span>
           <h1>{invoice.supplier}</h1>
           <p>
-            {publicPage
-              ? t("Requested by Aurora Comércio Ltda.")
-              : t("International supplier payment")}{" "}
+            {publicDemo
+              ? t("Synthetic sample invoice")
+              : publicPage
+                ? t("Requested by Aurora Comércio Ltda.")
+                : t("International supplier payment")}{" "}
             {t("· Created")} {date(invoice.created)}
           </p>
         </div>
-        <Badge status={invoice.status} />
+        <div className="detail-statuses">
+          {readOnly && (
+            <span className="subtle">{t("Read-only demo access")}</span>
+          )}
+          <Badge status={invoice.status} />
+        </div>
       </div>
       <div className="journey">
         {[
@@ -153,6 +170,7 @@ export function InvoiceDetail({
       </div>
       <div className="detail-grid">
         <div>
+          {publicDemo && <SyntheticDemoNotice />}
           <section className="payment-summary panel">
             <div className="row">
               <h2>{t("Payment details")}</h2>
@@ -191,6 +209,11 @@ export function InvoiceDetail({
               )}
             </dl>
           </section>
+          <InvoiceEvidencePanel
+            key={`${invoice.id}-${invoice.status}`}
+            invoiceId={invoice.id}
+            refreshKey={invoice.status}
+          />
           <AnimatePresence mode="wait">
             <motion.section
               key={invoice.status}
@@ -253,7 +276,7 @@ export function InvoiceDetail({
                   </div>
                   {invoice.status === "Pending payment" ? (
                     <button
-                      disabled={busy}
+                      disabled={busy || readOnly}
                       className="button full-button"
                       onClick={() => transition("Funded")}
                     >
@@ -265,7 +288,7 @@ export function InvoiceDetail({
                   ) : (
                     <button
                       className="button"
-                      disabled={busy}
+                      disabled={busy || readOnly}
                       onClick={() => transition("Pending payment")}
                     >
                       {busy
@@ -329,7 +352,9 @@ export function InvoiceDetail({
                           }
                         }}
                         aria-checked={route === r.id}
-                        disabled={invoice.status === "Routing" || busy}
+                        disabled={
+                          invoice.status === "Routing" || busy || readOnly
+                        }
                         className={`route-option ${route === r.id ? "chosen" : ""}`}
                         key={r.id}
                         onClick={() => setRoute(r.id)}
@@ -378,7 +403,7 @@ export function InvoiceDetail({
                   <button
                     id="settlement-action"
                     className="button full-button"
-                    disabled={busy}
+                    disabled={busy || readOnly}
                     onClick={() =>
                       invoice.status === "Funded"
                         ? transition("Routing")
@@ -551,6 +576,7 @@ export function InvoiceDetail({
             </button>
             <button
               className="button"
+              disabled={readOnly}
               onClick={() => {
                 closeConfirmation();
                 transition("Settled");

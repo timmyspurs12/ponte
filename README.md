@@ -4,7 +4,7 @@
 
 ## Run locally
 
-Requires Node.js **22.17+**, npm and PostgreSQL 18. No hosted account or paid service is required.
+Requires Node.js **24.22.1** (pinned in [`.node-version`](.node-version) and constrained by `engines.node`), npm and PostgreSQL 18. No hosted account or paid service is required. The deliberate runtime-update procedure and the tested Render production procedure are in [the Stage A Render runbook](docs/RENDER_STAGE_A_DEPLOYMENT_RUNBOOK.md).
 
 1. `npm ci`
 2. Copy `.env.example` to `.env.local`. Generate a local token with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and put it in `PONTE_DEV_TOKEN`. Do not commit this file or share the token.
@@ -14,26 +14,51 @@ Requires Node.js **22.17+**, npm and PostgreSQL 18. No hosted account or paid se
 
 The Node scripts load `.env.local`; existing environment variables take precedence. Commands do not require shell-specific environment syntax. Embedded PostgreSQL is a development convenience (a prerelease binary-distribution package), not a production database manager. Linux x64 is verified here; Windows/macOS are **not verified** in this phase. A separately installed PostgreSQL is the fallback if its binaries are unsupported.
 
+Routing evidence persistence is **disabled by default**. To exercise the local-only integration, explicitly set both commented `PONTE_LOCAL_EVIDENCE_TEST_*` values in `.env.example` to `1` and a non-zero EVM address, respectively. The guarded path requires `NODE_ENV=development` or `test`, development authentication, and a loopback database; it creates fresh `local-test-only` buffers, not a production KMS envelope or a deployed/anchored registry record. Do not enable it on a shared, preview, staging, or production system. Set this opt-in before `npm run db:fixtures`, which intentionally creates Routing examples. A default `db:reset` still restores the base local seed but skips those Routing fixtures.
+
 `npm run db:migrate` is safe to repeat. To **delete all local simulation data**, run `npm run db:reset -- --confirm-local-reset`; this requires a loopback database, refuses production, and reseeds. Never point test/reset commands at valuable data. Back up a persistent database with PostgreSQL's standard tools before changing it.
 
-### Production safety
+A distinct `npm run db:bootstrap-business -- --confirm-production --business-id "<PRIVATE_BUSINESS_UUID>" --business-name "<PRIVATE_BUSINESS_NAME>"` command is the narrowly guarded production-only initializer for one private business; it is not a seed command and refuses non-production or loopback execution. A second command, `npm run db:bootstrap-public-demo -- --confirm-production --business-id "<DEMO_BUSINESS_UUID>" --business-name "<DEMO_BUSINESS_NAME>"`, provisions the separate read-only synthetic demo tenant (six fabricated `DEMO-SYN-*` invoices, no users or memberships). Follow the full manual order, secret handling, demo enablement sequence, and first-admin procedure in [the Stage A Render runbook](docs/RENDER_STAGE_A_DEPLOYMENT_RUNBOOK.md). Do not run either command against this local database.
 
-`npm run build && npm start` validates and serves the production build, but **all financial API access returns 503 `AUTH_NOT_CONFIGURED`** and `/dev-login` is disabled. Development authentication cannot be enabled in production with a flag. A real identity/session integration and deployment security review are explicit next gates. No cloud resources were created or deployed.
+A third surface exists for the **zero-cost** deployment (Render Free web service + Neon Free PostgreSQL): `.github/workflows/manual-database-operations.yml` runs one ordered database operation per manual dispatch (`verify`, `migrate`, `business-bootstrap`, `demo-bootstrap`, `demo-verify`) because Render's free plan provides no shell and no one-off jobs. It is `workflow_dispatch`-only, restricted to `main` and to the `PONTE_DB_OPERATORS` allow-list, takes the direct Neon URL from the `PONTE_DATABASE_URL_DIRECT` secret, and never runs `db:reset`, `db:seed`, or `db:fixtures`. The runtime uses the pooled Neon endpoint with verified TLS; the administrative paths use the direct endpoint. Provider limits, the exact ordering, the charge-protection rules, and the remaining blockers are in [Part 2 of the Stage A runbook](docs/RENDER_STAGE_A_DEPLOYMENT_RUNBOOK.md#part-2--zero-cost-public-demo-path-render-free--neon-free).
+
+### Production GitHub OAuth and safety
+
+Production uses the official Auth.js v5 (`next-auth@5.0.0-beta.32`) GitHub OAuth Route Handler at `/api/auth/[...nextauth]`. It remains **fail closed** with `503 AUTH_NOT_CONFIGURED` until every server-only setting below is valid. Production never accepts `PONTE_DEV_*`, the local bearer token, or `/dev-login`; the latter always returns 404 in a production runtime. The [Auth.js v5 security review](docs/AUTHJS_V5_SECURITY_REVIEW.md) records the locked version, advisory analysis, audit findings, and regression evidence.
+
+| Variable                        |    Required | Purpose                                                                                                                                                                                     |
+| ------------------------------- | ----------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_SECRET`                   |         yes | 32–512 printable-character Auth.js/JWT secret; keep only in the deployment secret store.                                                                                                    |
+| `AUTH_GITHUB_ID`                |         yes | GitHub OAuth App client ID.                                                                                                                                                                 |
+| `AUTH_GITHUB_SECRET`            |         yes | GitHub OAuth App client secret.                                                                                                                                                             |
+| `NEXTAUTH_URL`                  |         yes | Canonical HTTPS production origin, with no path/query/fragment; this is the approved callback origin.                                                                                       |
+| `PONTE_AUTH_BUSINESS_ID`        |         yes | Existing private business UUID for configured administrators and manually provisioned members. Login never creates this business.                                                           |
+| `PONTE_AUTH_ADMIN_GITHUB_IDS`   |         yes | Unique comma-separated immutable **numeric GitHub account IDs**. These explicit bootstrap identities receive an initial active `admin` membership only when their mapping is first created. |
+| `PONTE_PUBLIC_DEMO_READ_ONLY`   |          no | Exactly `1` enables public-demo onboarding; omitted or `0` disables it. Any other value fails closed.                                                                                       |
+| `PONTE_PUBLIC_DEMO_BUSINESS_ID` | conditional | Existing UUID required when public demo is enabled; it must differ from `PONTE_AUTH_BUSINESS_ID`.                                                                                           |
+
+Set a different GitHub OAuth App and callback URL for local development versus production. Register the production callback as `https://your-canonical-host/api/auth/callback/github`; do not reuse production client secrets locally. The application does not create OAuth Apps, credentials, businesses, or hosting resources.
+
+GitHub's numeric account ID is the sole external authorization subject. Email, GitHub display name, and profile label are never used to find or authorize an internal user. A first verified GitHub callback creates one immutable `external_identities` binding and a non-routable technical `users.email` placeholder required by the legacy schema. It can create only the explicitly configured bootstrap `admin` membership or, when the public-demo flag is explicitly on, a `viewer` membership in the configured demo business. Existing mappings and memberships are never upgraded, re-enabled, or repointed by sign-in.
+
+Every protected API request re-reads the active membership from PostgreSQL. OAuth session validity therefore does not outlive a disabled/revoked membership. Sessions use Auth.js encrypted JWT cookies with `HttpOnly`, `SameSite=Lax`, and `Secure` settings in production; the browser-visible `/api/auth/session` projection contains only expiry and excludes OAuth access/refresh tokens, client secrets, session secret, internal user or mapping IDs, GitHub subject, roles, business IDs, and authorization state. GitHub explicitly retains Auth.js OAuth `pkce` and `state` checks (never `none`), and post-sign-in redirects are restricted to the configured origin.
+
+The optional public demo tenant must contain **synthetic data only**. It only grants an unprovisioned authenticated GitHub user a `viewer` membership in that one configured tenant; it never creates a business or grants mutation authority. The UI labels this access read-only and the server independently rejects every mutation.
 
 ## Explore
 
-| Route | Experience |
-|---|---|
-| `/` | Approved mineral-green/chalk-white marketing and animated SVG architecture |
-| `/dev-login` | Local-only token-to-HttpOnly-cookie access boundary |
-| `/app` | Persistent business overview and recent activity |
-| `/app/invoices` | Search, six status filters, sorting, pagination and empty state |
-| `/app/invoices/new` | Validated invoice creation; server-enforced tenant-unique reference |
+| Route                | Experience                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------- |
+| `/`                  | Approved mineral-green/chalk-white marketing and animated SVG architecture                  |
+| `/dev-login`         | Local-only token-to-HttpOnly-cookie access boundary                                         |
+| `/app`               | Persistent business overview and recent activity                                            |
+| `/app/invoices`      | Search, six status filters, sorting, pagination and empty state                             |
+| `/app/invoices/new`  | Validated invoice creation; server-enforced tenant-unique reference                         |
 | `/app/invoices/[id]` | Pix simulation, server-calculated routes, locked selection, confirmation and receipt export |
-| `/pay/[id]` | Payment presentation; **authenticated tenant access**, not a public payment capability |
-| `/developers` | Implemented boundaries and remaining integrations |
-| `/api/v1/activity` | Paginated tenant-scoped persisted business events |
-| `/api/v1/invoices…` | [Documented JSON API](docs/API.md) |
+| `/pay/[id]`          | Payment presentation; **authenticated tenant access**, not a public payment capability      |
+| `/developers`        | Implemented boundaries and remaining integrations                                           |
+| `/api/v1/activity`   | Paginated tenant-scoped persisted business events                                           |
+| `/api/v1/invoices…`  | [Documented JSON API](docs/API.md)                                                          |
 
 Create an invoice with a future due date and an illustrative address such as `0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` (**never send funds**). Confirm simulated Pix, select a route, confirm simulated settlement, export JSON, and reload/open the saved invoice URL. The database—not cookies or browser storage—owns the invoice and financial lifecycle. Another browser must authenticate to the same local tenant before opening that URL. Old `ponte-demo-v1` browser records are intentionally not imported or trusted.
 
@@ -43,7 +68,7 @@ Failed is a terminal state: it cannot return to Pending payment. The detail scre
 
 ### Workspace-restricted payment links
 
-The copy-link action is for **internal demonstrations only**. `/pay/[id]` requires an account that already has access to the relevant authenticated workspace; possession of the URL does not grant access. External supplier access is **not implemented**. Invoice/payment authority is PostgreSQL, not a browser-local demo store. An anonymous visitor can load the generic application shell but receives 401 from the financial API and cannot view invoice data. Other tenants remain excluded by authorization. Production financial access remains closed until production authentication is integrated.
+The copy-link action is for **internal demonstrations only**. `/pay/[id]` requires an account that already has access to the relevant authenticated workspace; possession of the URL does not grant access. External supplier access is **not implemented**. Invoice/payment authority is PostgreSQL, not a browser-local demo store. An anonymous visitor can load the generic application shell but receives 401 from the financial API and cannot view invoice data. Other tenants remain excluded by authorization. Production access requires valid server-only GitHub OAuth configuration and an active database membership; no OAuth App, credential, or deployment is created by this repository.
 
 ## Architecture
 
@@ -86,6 +111,6 @@ Browser coverage includes Portuguese/English, full backend lifecycle and refresh
 
 ## Boundaries
 
-Only the simulations are implemented. No market/executable quotes, real Pix, actual USDG token precision, wallet, signing, chain transactions, contracts, Stylus, KYB/AML, refunds, queue/reconciliation, production authentication, PDF or production SLA is claimed. All sample businesses and metrics are illustrative; protocol names do not imply partnerships. USD accounting cents and the illustrative two-decimal USDG scale are distinct from unknown real token base units.
+Only the simulations are implemented. No market/executable quotes, real Pix, actual USDG token precision, wallet, signing, chain transactions, contracts, Stylus, KYB/AML, refunds, queue/reconciliation, OAuth App credentials/resources, PDF or production SLA is claimed. GitHub OAuth code and membership enforcement are implemented, but the operational identity-provider/deployment review remains required. All sample businesses and metrics are illustrative; protocol names do not imply partnerships. USD accounting cents and the illustrative two-decimal USDG scale are distinct from unknown real token base units.
 
 The approved typography, custom responsive CSS, restrained Motion, bilingual interface and SVG visuals are retained. Phase 1 design research, skill sources and limitations remain in [DESIGN.md](DESIGN.md), `skills-lock.json`, [historical QA](docs/QA.md) and `docs/screenshots`. Local skill installations are not runtime dependencies or committed assets.

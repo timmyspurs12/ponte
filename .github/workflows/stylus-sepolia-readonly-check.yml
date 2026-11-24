@@ -1,0 +1,330 @@
+name: Stylus Arbitrum Sepolia read-only compatibility check
+
+# This investigation is intentionally scoped to this isolated branch. It does not deploy,
+# activate, verify, register, sign, or submit transactions, and it uses no repository secrets.
+on:
+  push:
+    branches:
+      - arena/40fa34c0-ponte
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: stylus-sepolia-readonly-check-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  readonly-compatibility-check:
+    name: Verify container candidate against Arbitrum Sepolia
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ARTIFACT_RUN_ID: '44398147388'
+      ARTIFACT_ID: '14471989038'
+      ARTIFACT_NAME: ponte-stylus-unactivated-candidate-d3dae37f6032fbdea39d1834ef053c5676fb6a43-44398147388-1
+      EXPECTED_ARCHIVE_SHA256: cea8a6656c2d92ba4357afa3e0ace23feb4af037f43ce151a33c561a87df80c2
+      CANDIDATE_RELATIVE_PATH: docker/official-container-1.wasm
+      EXPECTED_WASM_SIZE: '90731'
+      EXPECTED_WASM_SHA256: 42d8a474d8762aa37df09c9c415dcec1ff7e904e8bfcdcfa365669ad30cd93d2
+      RPC_ENDPOINT: https://sepolia-rollup.arbitrum.io/rpc
+      SDK_COMMIT: 76f8b055ec0bf421edd542b164dc2917c9e4e0bd
+      CLI_VERSION: 0.10.10
+      RUST_VERSION: 1.91.0
+    defaults:
+      run:
+        shell: bash
+        working-directory: rust/stylus-wrapper
+
+    steps:
+      - name: Initialize evidence directory
+        working-directory: .
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/ponte-sepolia-readonly-evidence"
+          artifact_dir="$RUNNER_TEMP/ponte-sepolia-readonly-artifact"
+          cli_root="$RUNNER_TEMP/ponte-cargo-stylus"
+          sdk_dir="$RUNNER_TEMP/stylus-sdk-rs"
+          mkdir -p "$evidence_dir" "$artifact_dir"
+          {
+            echo "EVIDENCE_DIR=$evidence_dir"
+            echo "ARTIFACT_DIR=$artifact_dir"
+            echo "CLI_ROOT=$cli_root"
+            echo "SDK_DIR=$sdk_dir"
+          } >> "$GITHUB_ENV"
+          printf 'workflow=%s\nrun_id=%s\nsource_sha=%s\n' \
+            "$GITHUB_WORKFLOW" "$GITHUB_RUN_ID" "$GITHUB_SHA" > "$evidence_dir/run.txt"
+
+      - name: Check out the isolated PONTE source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: 1. Retrieve the exact artifact and verify its archive hash
+        id: artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          metadata="$EVIDENCE_DIR/artifact-metadata.json"
+          headers="$RUNNER_TEMP/ponte-artifact-download-headers.txt"
+          archive="$EVIDENCE_DIR/candidate-artifact.zip"
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "$api/actions/runs/$ARTIFACT_RUN_ID/artifacts?per_page=100" \
+            -o "$metadata"
+          cat "$metadata"
+          jq -e --argjson id "$ARTIFACT_ID" --arg name "$ARTIFACT_NAME" \
+            '[.artifacts[] | select(.id == $id and .name == $name and .expired == false)] | length == 1' \
+            "$metadata" >/dev/null || {
+              echo "Artifact ID/name missing, expired, or ambiguous in run $ARTIFACT_RUN_ID" >&2
+              exit 1
+            }
+          jq -r --argjson id "$ARTIFACT_ID" \
+            '.artifacts[] | select(.id == $id) | {id, name, size_in_bytes, expired}' \
+            "$metadata" | tee "$EVIDENCE_DIR/artifact-selected.json"
+
+          # Fetch the API redirect without forwarding the token to the signed blob-storage URL.
+          status=$(curl --silent --show-error --output /dev/null --dump-header "$headers" \
+            --write-out '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "$api/actions/artifacts/$ARTIFACT_ID/zip")
+          [[ "$status" == 302 ]] || { echo "Expected artifact API redirect; received HTTP $status" >&2; exit 1; }
+          download_url=$(python3 - "$headers" <<'PY'
+          import sys
+          from urllib.parse import urlparse
+          headers = open(sys.argv[1], encoding='utf-8').read().splitlines()
+          locations = [line.split(':', 1)[1].strip() for line in headers
+                       if line.lower().startswith('location:')]
+          if len(locations) != 1:
+              raise SystemExit(f'Expected one Location header, got {len(locations)}')
+          parsed = urlparse(locations[0])
+          if parsed.scheme != 'https' or not parsed.netloc:
+              raise SystemExit('Artifact redirect was not an absolute HTTPS URL')
+          print(locations[0])
+          PY
+          )
+          curl --fail --location --silent --show-error --retry 2 "$download_url" -o "$archive"
+          actual=$(sha256sum "$archive" | awk '{print $1}')
+          printf 'expected_archive_sha256=%s\nactual_archive_sha256=%s\n' \
+            "$EXPECTED_ARCHIVE_SHA256" "$actual" | tee "$EVIDENCE_DIR/archive-sha256.txt"
+          [[ "$actual" == "$EXPECTED_ARCHIVE_SHA256" ]] || {
+            echo 'Artifact archive SHA-256 mismatch; refusing extraction.' >&2
+            exit 1
+          }
+          echo 'Archive SHA-256 verified before extraction.' | tee -a "$EVIDENCE_DIR/archive-sha256.txt"
+
+      - name: 2. Extract and verify candidate WASM size and hash
+        id: candidate
+        run: |
+          set -euo pipefail
+          archive="$EVIDENCE_DIR/candidate-artifact.zip"
+          listing="$EVIDENCE_DIR/archive-file-list.txt"
+          python3 - "$archive" "$listing" <<'PY'
+          import sys, zipfile
+          archive, listing = sys.argv[1:]
+          with zipfile.ZipFile(archive) as zf:
+              names = zf.namelist()
+              if not names or any(name.startswith('/') or '..' in name.split('/') for name in names):
+                  raise SystemExit('Archive is empty or contains an unsafe path')
+              if names.count('docker/official-container-1.wasm') != 1:
+                  raise SystemExit('Archive does not contain exactly one expected candidate path')
+              with open(listing, 'w', encoding='utf-8') as out:
+                  out.write('\n'.join(names) + '\n')
+          PY
+          cat "$listing"
+          python3 - "$archive" "$ARTIFACT_DIR" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as zf:
+              zf.extractall(sys.argv[2])
+          PY
+          wasm="$ARTIFACT_DIR/$CANDIDATE_RELATIVE_PATH"
+          [[ -f "$wasm" ]] || { echo "Verified candidate missing: $wasm" >&2; exit 1; }
+          size=$(stat -c '%s' "$wasm")
+          digest=$(sha256sum "$wasm" | awk '{print $1}')
+          {
+            printf 'candidate_path=%s\nabsolute_path=%s\n' "$CANDIDATE_RELATIVE_PATH" "$wasm"
+            printf 'expected_size=%s\nactual_size=%s\n' "$EXPECTED_WASM_SIZE" "$size"
+            printf 'expected_sha256=%s\nactual_sha256=%s\n' "$EXPECTED_WASM_SHA256" "$digest"
+          } | tee "$EVIDENCE_DIR/candidate-verification.txt"
+          [[ "$size" == "$EXPECTED_WASM_SIZE" ]] || { echo 'Candidate WASM size mismatch.' >&2; exit 1; }
+          [[ "$digest" == "$EXPECTED_WASM_SHA256" ]] || { echo 'Candidate WASM SHA-256 mismatch.' >&2; exit 1; }
+          echo "Verified candidate WASM: $wasm" | tee -a "$EVIDENCE_DIR/candidate-verification.txt"
+          echo "wasm_path=$wasm" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust 1.91.0
+        id: rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target wasm32-unknown-unknown
+          rustc "+$RUST_VERSION" --version --verbose | tee "$EVIDENCE_DIR/rustc-version.txt"
+          cargo "+$RUST_VERSION" --version --verbose | tee "$EVIDENCE_DIR/cargo-version.txt"
+
+      - name: Build cargo-stylus from the pinned SDK source revision
+        id: cli-install
+        run: |
+          set -euo pipefail
+          git init --quiet "$SDK_DIR"
+          git -C "$SDK_DIR" fetch --quiet --depth 1 https://github.com/OffchainLabs/stylus-sdk-rs "$SDK_COMMIT"
+          git -C "$SDK_DIR" checkout --quiet --detach FETCH_HEAD
+          actual_commit=$(git -C "$SDK_DIR" rev-parse HEAD)
+          printf 'expected_sdk_commit=%s\nactual_sdk_commit=%s\n' \
+            "$SDK_COMMIT" "$actual_commit" | tee "$EVIDENCE_DIR/sdk-source.txt"
+          [[ "$actual_commit" == "$SDK_COMMIT" ]] || { echo 'SDK source revision mismatch.' >&2; exit 1; }
+          cargo "+$RUST_VERSION" install --locked --path "$SDK_DIR/cargo-stylus" --root "$CLI_ROOT"
+          echo "$CLI_ROOT/bin" >> "$GITHUB_PATH"
+          sha256sum "$CLI_ROOT/bin/cargo-stylus" | tee "$EVIDENCE_DIR/cargo-stylus-binary-sha256.txt"
+
+      - name: Confirm cargo-stylus 0.10.10 version and check syntax
+        id: cli-syntax
+        run: |
+          set -euo pipefail
+          cargo stylus --version 2>&1 | tee "$EVIDENCE_DIR/cargo-stylus-version.txt"
+          grep -Eq "(^| )${CLI_VERSION//./\\.}$" "$EVIDENCE_DIR/cargo-stylus-version.txt" || {
+            echo "cargo-stylus version is not $CLI_VERSION" >&2
+            exit 1
+          }
+          cargo stylus check --help 2>&1 | tee "$EVIDENCE_DIR/cargo-stylus-check-help.txt"
+          grep -q -- '--endpoint' "$EVIDENCE_DIR/cargo-stylus-check-help.txt"
+          grep -q -- '--wasm-file' "$EVIDENCE_DIR/cargo-stylus-check-help.txt"
+          printf 'Confirmed supported command: cargo stylus check --endpoint <RPC> --wasm-file <WASM>\n' \
+            | tee "$EVIDENCE_DIR/check-command-syntax.txt"
+
+      - name: 3. Read-only RPC connectivity and Arbitrum Sepolia chain confirmation
+        id: rpc
+        run: |
+          set -euo pipefail
+          diagnostics="$EVIDENCE_DIR/rpc-diagnostics"
+          mkdir -p "$diagnostics"
+
+          rpc_call() {
+            local method="$1" params="$2" request_id="$3"
+            local dir="$diagnostics/$method" timestamp request_json status curl_exit
+            mkdir -p "$dir"
+            timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            request_json=$(jq -cn --argjson id "$request_id" --arg method "$method" \
+              --argjson params "$params" \
+              '{jsonrpc:"2.0", id:$id, method:$method, params:$params}')
+            printf '%s\n' "$request_json" > "$dir/request.json"
+            jq -n --arg timestamp "$timestamp" --arg endpoint "$RPC_ENDPOINT" \
+              --arg http_method POST --argjson request "$request_json" \
+              '{timestamp_utc:$timestamp, endpoint:$endpoint, http_method:$http_method, request:$request}' \
+              > "$dir/attempt.json"
+
+            : > "$dir/response-headers.txt"
+            : > "$dir/response-body.txt"
+            : > "$dir/curl-error.txt"
+            curl --silent --show-error --noproxy '*' --connect-timeout 15 --max-time 30 \
+              --request POST \
+              --header 'Content-Type: application/json' \
+              --header 'Accept: application/json' \
+              --user-agent 'PONTE read-only compatibility diagnostic/1.0 (+https://github.com/timmyspurs12/ponte)' \
+              --data-binary "$request_json" \
+              --dump-header "$dir/response-headers.txt" \
+              --output "$dir/response-body.txt" \
+              --write-out '%{http_code}' \
+              "$RPC_ENDPOINT" > "$dir/http-status.txt" 2> "$dir/curl-error.txt" || curl_exit=$?
+            curl_exit="${curl_exit:-0}"
+            printf '%s\n' "$curl_exit" > "$dir/curl-exit-code.txt"
+            status=$(cat "$dir/http-status.txt")
+            jq -n --arg timestamp "$timestamp" --arg endpoint "$RPC_ENDPOINT" \
+              --arg http_method POST --arg method "$method" --argjson params "$params" \
+              --arg status "$status" --argjson curl_exit "$curl_exit" \
+              '{timestamp_utc:$timestamp, endpoint:$endpoint, http_method:$http_method,
+                method:$method, params:$params, http_status:$status, curl_exit_code:$curl_exit}' \
+              > "$dir/attempt-result.json"
+
+            echo "RPC diagnostic for $method ($timestamp UTC): HTTP ${status:-unavailable}; curl exit $curl_exit"
+            echo "Response files retained at $dir/"
+            # Treat server-controlled text as data, not GitHub Actions workflow commands.
+            local command_token="PONTE_RPC_DIAGNOSTIC_END_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${request_id}"
+            echo "::stop-commands::$command_token"
+            echo '--- Response headers ---'
+            cat "$dir/response-headers.txt"
+            echo '--- Response body ---'
+            cat "$dir/response-body.txt"
+            echo '--- Curl transport error ---'
+            cat "$dir/curl-error.txt"
+            echo "::$command_token::"
+
+            if [[ "$curl_exit" != 0 ]]; then
+              echo "curl transport failed for $method (exit $curl_exit); see retained diagnostics." >&2
+              return 1
+            fi
+            if [[ ! "$status" =~ ^2[0-9][0-9]$ ]]; then
+              echo "RPC HTTP request failed for $method with status ${status:-unavailable}; see retained headers/body." >&2
+              return 1
+            fi
+            if ! jq -e --argjson id "$request_id" \
+              '.jsonrpc == "2.0" and .id == $id and has("result") and (has("error") | not)' \
+              "$dir/response-body.txt" >/dev/null; then
+              echo "Invalid or failed JSON-RPC response for $method; see retained body." >&2
+              return 1
+            fi
+
+            case "$method" in
+              eth_chainId)
+                local chain_id
+                chain_id=$(jq -r '.result' "$dir/response-body.txt")
+                [[ "$chain_id" == '0x66eee' ]] || {
+                  echo "Unexpected chain ID '$chain_id'; expected exactly 0x66eee." >&2
+                  return 1
+                }
+                echo "Confirmed Arbitrum Sepolia chain ID: $chain_id"
+                ;;
+              eth_blockNumber)
+                jq -e '.result | type == "string" and test("^0x[0-9a-fA-F]+$")' \
+                  "$dir/response-body.txt" >/dev/null || {
+                    echo 'Invalid eth_blockNumber result.' >&2
+                    return 1
+                  }
+                ;;
+              eth_getBlockByNumber)
+                jq -e '.result | type == "object" and (.hash | type == "string") and (.number | type == "string")' \
+                  "$dir/response-body.txt" >/dev/null || {
+                    echo 'Invalid eth_getBlockByNumber result.' >&2
+                    return 1
+                  }
+                ;;
+            esac
+          }
+
+          # Stop on the first failure. Later read-only probes run only after the chain ID matches.
+          rpc_call eth_chainId '[]' 1
+          rpc_call eth_blockNumber '[]' 2
+          rpc_call eth_getBlockByNumber '["latest",false]' 3
+          echo 'All read-only RPC checks passed; chain ID is Arbitrum Sepolia (0x66eee).'
+
+      - name: 4. Run the read-only Stylus compatibility check on the verified container WASM
+        id: stylus-check
+        run: |
+          set -euo pipefail
+          wasm='${{ steps.candidate.outputs.wasm_path }}'
+          [[ -n "$wasm" && "$wasm" == /* && -f "$wasm" ]] || {
+            echo 'Verified absolute candidate WASM path is unavailable.' >&2
+            exit 1
+          }
+          printf 'Command: cargo stylus check --endpoint %s --wasm-file %s\n' \
+            "$RPC_ENDPOINT" "$wasm" | tee "$EVIDENCE_DIR/stylus-check-command.txt"
+          cargo stylus check --endpoint "$RPC_ENDPOINT" --wasm-file "$wasm" \
+            2>&1 | tee "$EVIDENCE_DIR/stylus-check.log"
+          echo 'Stylus compatibility check completed successfully.' \
+            | tee "$EVIDENCE_DIR/stylus-check-result.txt"
+
+      - name: Upload logs and verification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stylus-sepolia-readonly-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ponte-sepolia-readonly-evidence/
+          if-no-files-found: warn
+          retention-days: 90

@@ -89,9 +89,68 @@ export interface BusinessActivityEvent {
   new_state: Status;
   created_at: string;
 }
+export type EvidenceOutboxSubmissionState =
+  | "pending"
+  | "submitted"
+  | "confirmed"
+  | "retryable"
+  | "failed"
+  | "reconciliation_required";
+
+export type EvidenceProvider = "local-test-only" | "gcp-cloud-kms" | "aws-kms";
+
+/** Non-secret, product-facing disclosure for persisted DEK provenance. */
+export interface EvidenceProvenance {
+  provider: EvidenceProvider;
+  category:
+    "synthetic-local-test" | "genuine-gcp-metadata" | "genuine-aws-metadata";
+  disclosure: string;
+}
+
+/** Only the public commitment and operational metadata are exposed here. */
+export interface PersistedInvoiceEvidenceStatus {
+  publicEvidenceId: string;
+  evidenceKind: number;
+  evidenceSchemaVersion: number;
+  chainId: string;
+  registryAddress: string;
+  sequence: string;
+  previousPayloadHash: string;
+  payloadHash: string;
+  provenance: EvidenceProvenance;
+  createdAt: string;
+  /** Exact persisted outbox state, not an anchoring claim. */
+  outboxSubmissionState: EvidenceOutboxSubmissionState | null;
+}
+
+export type InvoiceEvidenceStatus =
+  | {
+      state: "missing";
+      invoiceId: string;
+      evidence: null;
+    }
+  | {
+      state: "persisted";
+      invoiceId: string;
+      evidence: PersistedInvoiceEvidenceStatus;
+      /** There is no independently verified receipt and registry event today. */
+      anchoring: { verified: false; status: "not_verified" };
+    };
+
+export interface WorkspaceAuthentication {
+  authenticated: true;
+  accountLabel: string;
+  access: {
+    role: "admin" | "operator" | "viewer";
+    readOnly: boolean;
+    publicDemo: boolean;
+  } | null;
+}
+
 export interface InvoiceService {
   activity(): Promise<BusinessActivityEvent[]>;
   list(): Promise<Invoice[]>;
   create(input: InvoiceInput): Promise<Invoice>;
   transition(id: string, status: Status, route?: string): Promise<Invoice>;
+  evidence(id: string, signal?: AbortSignal): Promise<InvoiceEvidenceStatus>;
 }

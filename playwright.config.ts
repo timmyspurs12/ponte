@@ -3,6 +3,7 @@ import chromium from "@sparticuz/chromium";
 const fallback = process.env.PONTE_CHROMIUM_EXECUTABLE;
 export default defineConfig({
   testDir: "./tests",
+  testMatch: "**/*.spec.ts",
   timeout: 90000,
   workers: 1,
   use: {

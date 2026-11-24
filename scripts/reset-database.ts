@@ -12,16 +12,42 @@ async function main() {
     );
   const pool = new Pool({ connectionString: url.toString() });
   try {
-    await pool.query(
-      "TRUNCATE idempotency,payment_events,settlements,quotes,payments,invoices,rate_limits,memberships,users,businesses",
+    // Permit reset to recover a disposable database that predates the newest
+    // migration; the following seed command will apply it before adding data.
+    const hasExternalIdentities = await pool.query<{ relation: string | null }>(
+      "SELECT to_regclass('public.external_identities') AS relation",
     );
+    const tables = [
+      "idempotency",
+      "payment_events",
+      "evidence_outbox",
+      "route_decision_evidence",
+      "settlements",
+      "quotes",
+      "payments",
+      "invoices",
+      "rate_limits",
+      "memberships",
+      ...(hasExternalIdentities.rows[0].relation
+        ? ["external_identities"]
+        : []),
+      "users",
+      "businesses",
+    ];
+    await pool.query(`TRUNCATE ${tables.join(",")}`);
   } finally {
     await pool.end();
   }
-  for (const args of [
-    ["scripts/database.ts", "--seed"],
-    ["scripts/seed-fixtures.ts"],
-  ])
+  const commands = [["scripts/database.ts", "--seed"]];
+  // Routing fixtures require the same explicit local evidence opt-in as the
+  // application. A default reset still leaves a usable clean local seed.
+  if (process.env.PONTE_LOCAL_EVIDENCE_TEST_PROVIDER === "1")
+    commands.push([
+      "--import",
+      "./scripts/test-server-only-stub.mjs",
+      "scripts/seed-fixtures.ts",
+    ]);
+  for (const args of commands)
     execFileSync(process.execPath, ["--import", "tsx", ...args], {
       stdio: "inherit",
       env: process.env,

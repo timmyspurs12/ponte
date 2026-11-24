@@ -14,12 +14,17 @@ import { Invoice, BusinessActivityEvent } from "@/lib/models";
 
 import { Mark, Badge, Cta } from "./ui";
 import { InvoiceTable } from "./invoice-table";
+import { SyntheticDemoNotice } from "./synthetic-demo-notice";
 export function Overview({
   invoices,
   activity,
+  readOnly = false,
+  publicDemo = false,
 }: {
   invoices: Invoice[];
   activity: BusinessActivityEvent[];
+  readOnly?: boolean;
+  publicDemo?: boolean;
 }) {
   const { t, money, date } = useLocale();
 
@@ -34,10 +39,17 @@ export function Overview({
         <div>
           <span className="section-label">{t("Your business, connected")}</span>
           <h1>{t("A clear view of what’s moving.")}</h1>
-          <p>{t("Welcome back to Aurora Comércio.")}</p>
+          <p>
+            {t(
+              publicDemo
+                ? "Synthetic sample workspace — no real business or payment is represented."
+                : "Welcome back to Aurora Comércio.",
+            )}
+          </p>
         </div>
-        <Cta href="/app/invoices/new">{t("Create invoice")}</Cta>
+        {!readOnly && <Cta href="/app/invoices/new">{t("Create invoice")}</Cta>}
       </div>
+      {publicDemo && <SyntheticDemoNotice />}
       <div className="metrics">
         <article>
           <span>
@@ -128,7 +140,9 @@ export function Overview({
             href={
               invoices.find((i) => i.status === "Pending payment")
                 ? `/app/invoices/${invoices.find((i) => i.status === "Pending payment")!.id}`
-                : "/app/invoices/new"
+                : readOnly
+                  ? "/app/invoices"
+                  : "/app/invoices/new"
             }
           >
             {" "}

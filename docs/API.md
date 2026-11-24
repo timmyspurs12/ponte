@@ -1,12 +1,14 @@
 # PONTE Phase 2A API
 
-Base: `/api/v1`. Node runtime; JSON; all operations require a verified tenant context. **Simulation only.** Production access fails closed pending production authentication. There is no public PSP webhook, actual payment initiation or chain execution.
+Base: `/api/v1`. Node runtime; JSON; all operations require a verified tenant context. **Simulation only.** There is no public PSP webhook, actual payment initiation or chain execution.
 
-## Local authorization
+## Authorization
 
-Set up `.env.local`/seed per README, then log in at `/dev-login`. Browser uses a HttpOnly SameSite=Strict cookie. Local CLI clients may send `Authorization: Bearer <your local PONTE_DEV_TOKEN>`. Never put tokens into URLs, repository files, client bundles or documentation examples with real values. Tenant/user IDs are server configuration in local mode, not request-controlled fields.
+Production uses Auth.js GitHub OAuth at `/api/auth/[...nextauth]`; the verified GitHub **numeric account ID** is mapped through the immutable `external_identities` table to an internal user. Email and display name are not identity/authorization inputs. Every API request then reads an active PostgreSQL membership before selecting either the configured private business or, only when explicitly enabled, the configured synthetic public-demo business. The browser cannot select a user, business, or role. OAuth session data is not an authorization grant by itself.
 
-Active admin/operator: read and write. Active viewer: read only. Missing/incorrect credentials: 401. Missing/disabled membership or unauthorized role: 403. Other tenant's invoice: 404, including nested resources. Dev authentication is not a multi-user production login.
+Active admin/operator: read and write. Active viewer: read only. Missing/incorrect credentials: 401. Missing/disabled membership or unauthorized role: 403. Other tenant's invoice: 404, including nested resources. Production configuration missing/invalid: fixed 503 `AUTH_NOT_CONFIGURED`. Auth.js state/CSRF protections and strict same-origin redirect validation protect the OAuth flow; production cookies are Secure, HttpOnly, and SameSite=Lax.
+
+Local development remains separate: set up `.env.local`/seed per README, then log in at `/dev-login`. Browser uses a HttpOnly SameSite=Strict cookie. Local CLI clients may send `Authorization: Bearer <your local PONTE_DEV_TOKEN>`. Never put tokens into URLs, repository files, client bundles or documentation examples with real values. Tenant/user IDs are server configuration in local mode, not request-controlled fields. `/dev-login` and all local tokens are disabled in a production runtime.
 
 Every mutation requires `Content-Type: application/json` and an **`Idempotency-Key`** of 8–128 letters/digits/underscore/hyphen. Generate a fresh UUID for each intended operation and **reuse that same key and exact body when retrying** a lost response. Same tenant+key+method/path/body returns the original committed response; changed request under the same key returns 409. Keys are not currently automatically expired. HTTP and durable domain correlation IDs are separate.
 
@@ -24,31 +26,77 @@ Error: `{ "error": { "code": "INVALID_TRANSITION" }, "requestId": "uuid" }`. No 
 - 413 `BODY_TOO_LARGE` (16 KiB maximum JSON stream); 415 `UNSUPPORTED_MEDIA_TYPE` for non-JSON mutations.
 - 422 `VALIDATION_ERROR`, `INVALID_DUE_DATE`, `QUOTE_AND_ROUTE_REQUIRED`.
 - 429 `RATE_LIMITED`, with `Retry-After: 60`; 120 authenticated requests per tenant/user per fixed DB minute.
-- 503 `AUTH_NOT_CONFIGURED`: dev mode off/unconfigured, or **any production build**.
+- 503 `AUTH_NOT_CONFIGURED`: local development auth is off/unconfigured, or production GitHub OAuth configuration is absent, malformed, or contradictory.
 - 500 `INTERNAL_ERROR`: unexpected server failure; use requestId for server-side investigation.
 
 JSON bodies are strict; unknown fields (including caller-supplied status, receipt, amount outputs, tenant, simulated=false) are rejected. UUID path IDs and bounded fields are parsed by Zod. Native unsupported-method responses come from Next.js and may not use the JSON envelope.
 
 ## Resources
 
-| Method/path | Input | Result |
-|---|---|---|
-| GET `/activity?limit=50&offset=0&type=invoice.Funded` | limit 1–100, offset 0–100000, optional exact event type | Business-wide tenant-scoped event history, newest first |
-| POST `/invoices` | Invoice fields below | Draft invoice |
-| GET `/invoices?limit=100&offset=0&status=Funded` | limit 1–100, offset 0–100000, optional exact canonical status | Tenant invoices, created descending then UUID; next offset is offset+limit; a shorter page is the end |
-| GET `/invoices/:id` | UUID | Persisted invoice snapshot |
-| PATCH `/invoices/:id` | Full invoice fields below | Updated Draft only; not partial merge |
-| POST `/invoices/:id/transitions` | `{ "status": "Pending payment" }`, or authorized next state; routing inputs below | Updated invoice |
-| POST `/invoices/:id/payments` | `{}` | Confirm simulated funding, equivalent to transition to Funded; Pending payment only |
-| GET `/invoices/:id/payments` | — | Array, zero/one simulated provider record |
-| GET `/invoices/:id/payments/:paymentId` | UUID | Same-tenant, same-invoice payment record |
-| POST `/invoices/:id/quotes` | `{}` | Persisted server quote; Pending payment/Funded only |
-| GET `/invoices/:id/quotes` | — | Quote history including source/expiry/candidate snapshot |
-| GET `/invoices/:id/quotes/:quoteId` | UUID | Same-tenant, same-invoice quote record |
-| GET `/invoices/:id/settlements` | — | Array, zero/one locked settlement record with server-owned `simulated: true` |
-| GET `/invoices/:id/activity` | — | Append-only correlated event history |
+| Method/path                                           | Input                                                                             | Result                                                                                                 |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| GET `/activity?limit=50&offset=0&type=invoice.Funded` | limit 1–100, offset 0–100000, optional exact event type                           | Business-wide tenant-scoped event history, newest first                                                |
+| POST `/invoices`                                      | Invoice fields below                                                              | Draft invoice                                                                                          |
+| GET `/invoices?limit=100&offset=0&status=Funded`      | limit 1–100, offset 0–100000, optional exact canonical status                     | Tenant invoices, created descending then UUID; next offset is offset+limit; a shorter page is the end  |
+| GET `/invoices/:id`                                   | UUID                                                                              | Persisted invoice snapshot                                                                             |
+| PATCH `/invoices/:id`                                 | Full invoice fields below                                                         | Updated Draft only; not partial merge                                                                  |
+| POST `/invoices/:id/transitions`                      | `{ "status": "Pending payment" }`, or authorized next state; routing inputs below | Updated invoice                                                                                        |
+| POST `/invoices/:id/payments`                         | `{}`                                                                              | Confirm simulated funding, equivalent to transition to Funded; Pending payment only                    |
+| GET `/invoices/:id/payments`                          | —                                                                                 | Array, zero/one simulated provider record                                                              |
+| GET `/invoices/:id/payments/:paymentId`               | UUID                                                                              | Same-tenant, same-invoice payment record                                                               |
+| POST `/invoices/:id/quotes`                           | `{}`                                                                              | Persisted server quote; Pending payment/Funded only                                                    |
+| GET `/invoices/:id/quotes`                            | —                                                                                 | Quote history including source/expiry/candidate snapshot                                               |
+| GET `/invoices/:id/quotes/:quoteId`                   | UUID                                                                              | Same-tenant, same-invoice quote record                                                                 |
+| GET `/invoices/:id/settlements`                       | —                                                                                 | Array, zero/one locked settlement record with server-owned `simulated: true`                           |
+| GET `/invoices/:id/activity`                          | —                                                                                 | Append-only correlated event history                                                                   |
+| GET `/invoices/:id/evidence`                          | —                                                                                 | Read-only public commitment and exact persisted outbox state; never private evidence/envelope material |
 
 Invoice-scoped history endpoints return that invoice's complete history in this foundation. Pagination applies to the top-level invoice collection and business-wide activity; a production history-retention/cursor strategy remains a scaling gate. Same-timestamp event ordering is not a sequence-number guarantee.
+
+### Invoice evidence status
+
+`GET /invoices/:id/evidence` has the same active-tenant read boundary as `GET /invoices/:id`: active admin/operator and active viewer memberships may read their own business's invoice; a disabled/missing membership is 403 and another business's invoice is 404. It is read-only apart from the established authenticated rate-limit accounting. The response is `Cache-Control: no-store` and uses the normal `{ "data": ..., "requestId": ... }` envelope.
+
+When no evidence exists, `data` is exactly the empty state:
+
+```json
+{
+  "state": "missing",
+  "invoiceId": "invoice-uuid",
+  "evidence": null
+}
+```
+
+When evidence exists, the deliberate public projection is:
+
+```json
+{
+  "state": "persisted",
+  "invoiceId": "invoice-uuid",
+  "evidence": {
+    "publicEvidenceId": "0x32-byte-hex",
+    "evidenceKind": 1,
+    "evidenceSchemaVersion": 1,
+    "chainId": "421614",
+    "registryAddress": "0x20-byte-hex",
+    "sequence": "1",
+    "previousPayloadHash": "0x32-byte-hex",
+    "payloadHash": "0x32-byte-hex",
+    "provenance": {
+      "provider": "local-test-only",
+      "category": "synthetic-local-test",
+      "disclosure": "Synthetic local-test bytes were used. No real cloud KMS operation occurred."
+    },
+    "createdAt": "2026-11-19T00:00:00.000Z",
+    "outboxSubmissionState": "pending"
+  },
+  "anchoring": { "verified": false, "status": "not_verified" }
+}
+```
+
+`outboxSubmissionState` is the exact stored outbox value (`pending`, `submitted`, `confirmed`, `retryable`, `failed`, or `reconciliation_required`) or `null` if no outbox row exists. It is operational metadata, **not** an anchoring assertion. This phase persists neither an independently verified chain receipt nor a verified registry event, so the endpoint never returns a transaction hash, block number, confirmation, `submitted`, `confirmed`, or `anchored` product claim. It always reports `anchoring.verified: false` for persisted evidence.
+
+`local-test-only` visibly identifies synthetic local bytes, not a real cloud KMS operation or Arbitrum result. `gcp-cloud-kms`/`aws-kms` disclosures identify recorded genuine-provider metadata only; they do not prove a provider RPC or registry anchoring. The API never returns ciphertext, wrapped DEKs, plaintext DEKs, nonce, authentication tag, AAD/wrapping context, private payload, salts, private preimages, key references, provider errors, or raw database errors. It performs no decryption.
 
 ### Invoice fields
 

@@ -141,6 +141,13 @@ class AdvisoryGuardTests(unittest.TestCase):
             found = guard.tracked_lockfiles()
         self.assertEqual([p.relative_to(self.root).as_posix() for p in found], sorted(tracked))
 
+    def test_baseline_lockfile_label_follows_the_cargo_workspace_root(self):
+        self.assertEqual([entry[0] for entry in guard.BASELINE], ['rust/Cargo.lock', 'rust/Cargo.lock'])
+        report = guard.inspect(guard.tracked_lockfiles())
+        self.assertEqual({x['lockfile'] for x in report['findings']}, {'rust/Cargo.lock'})
+        self.assertIn('rust/Cargo.lock', report['lockfiles'])
+        self.assertNotIn('rust/stylus-wrapper/Cargo.lock', report['lockfiles'])
+
     def test_actual_baseline_and_release_gate(self):
         report = guard.inspect(guard.tracked_lockfiles())
         self.assertEqual(report['baseline_missing'], [])

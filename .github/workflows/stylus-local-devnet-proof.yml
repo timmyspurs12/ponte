@@ -1,0 +1,160 @@
+name: Stylus local Nitro devnet execution proof
+
+on:
+  push:
+    paths:
+      - 'scripts/stylus-devnet/**'
+      - 'rust/stylus-wrapper/src/**'
+      - 'rust/stylus-wrapper/abi/**'
+      - 'rust/stylus-wrapper/abi-tools/**'
+      - 'rust/optimizer/src/**'
+      - 'rust/stylus-wrapper/Cargo.toml'
+      - 'rust/optimizer/Cargo.toml'
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+      - 'scripts/phase2b/fixtures/v1/**'
+      - '.github/workflows/stylus-local-devnet-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: stylus-local-devnet-proof-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  local-execution-proof:
+    name: Exact WASM on disposable local Nitro devnet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      NITRO_IMAGE: offchainlabs/nitro-node:v3.12.2-5f02f3f
+      SDK_COMMIT: 76f8b055ec0bf421edd542b164dc2917c9e4e0bd
+      NITRO_DEVNODE_COMMIT: ebb523d4ed9c04d4183743af844a038e9843f352
+      NITRO_SOURCE_COMMIT: 5f02f3f03076343061f167e81b8e82ec5518064b
+      CARGO_STYLUS_VERSION: 0.10.10
+    steps:
+      - name: Check out PONTE
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Initialize isolated runner paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'EVIDENCE_DIR=%s\nSDK_DIR=%s\nCLI_ROOT=%s\nDEVNODE_DIR=%s\nNITRO_SOURCE_DIR=%s\nCHAIN_INFO_OUT=%s\n' \
+            "$RUNNER_TEMP/ponte-stylus-proof" \
+            "$RUNNER_TEMP/stylus-sdk-rs" \
+            "$RUNNER_TEMP/cargo-stylus" \
+            "$RUNNER_TEMP/nitro-devnode" \
+            "$RUNNER_TEMP/nitro-source" \
+            "$RUNNER_TEMP/arbos61-local-chain-info.json" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/ponte-stylus-proof"
+
+      - name: Retrieve and verify the immutable candidate artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/stylus-devnet/download_candidate.py "$EVIDENCE_DIR"
+
+      - name: Set up Node.js for the tracked ABI fixture
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+          cache-dependency-path: rust/stylus-wrapper/abi-tools/package-lock.json
+
+      - name: Install locked ABI codec
+        run: npm --prefix rust/stylus-wrapper/abi-tools ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install pinned disposable-chain client tools
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
+        with:
+          version: v1.9.0
+
+      - name: Build cargo-stylus 0.10.10 from its pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init --quiet "$SDK_DIR"
+          git -C "$SDK_DIR" remote add origin https://github.com/OffchainLabs/stylus-sdk-rs.git
+          git -C "$SDK_DIR" fetch --quiet --depth 1 origin "$SDK_COMMIT"
+          git -C "$SDK_DIR" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$SDK_DIR" rev-parse HEAD)" = "$SDK_COMMIT"
+          git -C "$SDK_DIR" ls-remote origin "refs/tags/v0.10.10" "refs/tags/v0.10.10^{}" > "$EVIDENCE_DIR/sdk-tag-refs.txt"
+          python3 scripts/phase2b6/stylus_provenance.py check-tag "$EVIDENCE_DIR/sdk-tag-refs.txt" v0.10.10 "$SDK_COMMIT"
+          rustup toolchain install 1.91.0 --profile minimal --target wasm32-unknown-unknown
+          cargo +1.91.0 install --locked --path "$SDK_DIR/cargo-stylus" --root "$CLI_ROOT"
+          rustc +1.91.0 --version --verbose > "$EVIDENCE_DIR/rustc-version.txt"
+          cargo +1.91.0 --version --verbose > "$EVIDENCE_DIR/cargo-version.txt"
+          sha256sum "$CLI_ROOT/bin/cargo-stylus" > "$EVIDENCE_DIR/cargo-stylus-binary.sha256"
+          PATH="$CLI_ROOT/bin:$PATH" cargo stylus --version | tee "$EVIDENCE_DIR/cargo-stylus-version-build.txt"
+          PATH="$CLI_ROOT/bin:$PATH" cargo stylus --version | grep -Eq '(^| )0\.10\.10$'
+
+      - name: Fetch pinned official Nitro devnode and ArbOS 61 configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init --quiet "$DEVNODE_DIR"
+          git -C "$DEVNODE_DIR" remote add origin https://github.com/OffchainLabs/nitro-devnode.git
+          git -C "$DEVNODE_DIR" fetch --quiet --depth 1 origin "$NITRO_DEVNODE_COMMIT"
+          git -C "$DEVNODE_DIR" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$DEVNODE_DIR" rev-parse HEAD)" = "$NITRO_DEVNODE_COMMIT"
+
+          git init --quiet "$NITRO_SOURCE_DIR"
+          git -C "$NITRO_SOURCE_DIR" remote add origin https://github.com/OffchainLabs/nitro.git
+          git -C "$NITRO_SOURCE_DIR" fetch --quiet --depth 1 origin refs/tags/v3.12.2
+          git -C "$NITRO_SOURCE_DIR" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$NITRO_SOURCE_DIR" rev-parse HEAD)" = "$NITRO_SOURCE_COMMIT"
+
+          cp "$NITRO_SOURCE_DIR/cmd/chaininfo/arbitrum_chain_info.json" "$EVIDENCE_DIR/nitro-v3.12.2-chain-info-source.json"
+          python3 scripts/stylus-devnet/prepare_devnode.py \
+            "$NITRO_SOURCE_DIR/cmd/chaininfo/arbitrum_chain_info.json" \
+            "$CHAIN_INFO_OUT" "$DEVNODE_DIR/run-dev-node.sh" \
+            > "$EVIDENCE_DIR/devnode-preparation.json"
+          cp "$CHAIN_INFO_OUT" "$EVIDENCE_DIR/arbos61-local-chain-info.json"
+          printf 'devnode=%s\nnitro=%s\nimage=%s\nsdk=%s\n' \
+            "$NITRO_DEVNODE_COMMIT" "$NITRO_SOURCE_COMMIT" "$NITRO_IMAGE" "$SDK_COMMIT" \
+            > "$EVIDENCE_DIR/source-pins.txt"
+
+      - name: Execute and verify PONTE on local Nitro only
+        shell: bash
+        run: |
+          set +e
+          bash scripts/stylus-devnet/run_local_proof.sh \
+            > "$EVIDENCE_DIR/local-proof.stdout.log" \
+            2> "$EVIDENCE_DIR/local-proof.stderr.log"
+          status=$?
+          cat "$EVIDENCE_DIR/local-proof.stdout.log"
+          cat "$EVIDENCE_DIR/local-proof.stderr.log" >&2
+          if [ "$status" -ne 0 ]; then
+            python3 - "$EVIDENCE_DIR" "$status" <<'PY'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          files = sorted(p for p in root.rglob("*") if p.is_file())
+          print(f"::error title=Local proof evidence files::{', '.join(str(p.relative_to(root)) for p in files) or '(none)'}")
+          for path in files:
+              if path.suffix not in (".log", ".txt"):
+                  continue
+              lines = path.read_text(errors="replace").splitlines()[-25:]
+              message = "\\n".join(lines).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=Local proof diagnostic ({path.name})::{message}")
+          for name in ("artifact.json", "devnode-preparation.json", "local-chain.json"):
+              path = root / name
+              if path.is_file():
+                  message = path.read_text(errors="replace")[:3000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print(f"::error title=Local proof state ({name})::{message}")
+          print(f"::error title=Local proof failure::exit status {sys.argv[2]}")
+          PY
+            exit "$status"
+          fi
+
+      - name: Upload proof evidence, receipts, and local execution report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ponte-stylus-local-devnet-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ponte-stylus-proof/
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0

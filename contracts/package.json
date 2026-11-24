@@ -1,0 +1,22 @@
+{
+  "name": "ponte-route-decision-evidence-registry",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned local Foundry and Solidity compiler tooling for PONTE evidence-registry tests.",
+  "scripts": {
+    "forge": "node ./tools/forge.mjs",
+    "build": "node ./tools/forge.mjs build",
+    "build:identity": "node ./tools/registry-build-identity.mjs",
+    "manifest:check": "node ./tools/registry-deployment-manifest.mjs",
+    "verify:deployment": "node ./tools/verify-registry-deployment.mjs",
+    "test": "node ./tools/forge.mjs test",
+    "test:deployment": "node --test ./tools/registry-deployment-tooling.test.mjs",
+    "fmt": "node ./tools/forge.mjs fmt",
+    "fmt:check": "node ./tools/forge.mjs fmt --check"
+  },
+  "devDependencies": {
+    "@foundry-rs/forge": "1.7.1",
+    "js-sha3": "0.8.0",
+    "solc": "0.8.28"
+  }
+}

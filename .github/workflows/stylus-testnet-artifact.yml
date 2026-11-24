@@ -1,0 +1,99 @@
+name: Stylus testnet artifact (unactivated candidate)
+
+# Manual, wallet-free build-and-packaging workflow for the existing synthetic-only PONTE Stylus
+# wrapper. It produces a LOCALLY BUILT, UNACTIVATED candidate artifact and a provenance record.
+# It never runs `cargo stylus check` against an RPC endpoint, `deploy`, `activate`, `verify` or any
+# command that submits a transaction or needs a key, and it uses no repository secrets.
+# See docs/PHASE2B6_TESTNET_ARTIFACT_READINESS.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stylus-testnet-artifact-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    name: Build unactivated candidate artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: never
+      # No __pycache__ in the checkout: the init stage requires a clean worktree before the build.
+      PYTHONDONTWRITEBYTECODE: '1'
+      TOOLCHAIN: 1.91.0
+      SDK_REPOSITORY: OffchainLabs/stylus-sdk-rs
+      SDK_RELEASE: v0.10.10
+      SDK_COMMIT: 76f8b055ec0bf421edd542b164dc2917c9e4e0bd
+      CLI_VERSION: 0.10.10
+      # Raw release WASM of main at 2049497 (run 44268381103); compared, not gating.
+      BASELINE_WASM_SHA256: 6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd
+    steps:
+      - name: Check out PONTE source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22 for the existing ABI and WASM tests
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+      - name: Test the provenance tooling
+        run: python3 -m unittest discover -s scripts/phase2b6 -p 'test_*.py' -v
+      - name: Configure evidence paths
+        run: |
+          {
+            echo "PONTE_DIR=$GITHUB_WORKSPACE"
+            echo "EVIDENCE_DIR=$RUNNER_TEMP/ponte-stylus-candidate"
+            echo "SDK_DIR=$RUNNER_TEMP/stylus-sdk-rs"
+            echo "CLI_ROOT=$RUNNER_TEMP/cargo-stylus"
+          } >> "$GITHUB_ENV"
+      - name: Record source and pin the Stylus SDK/CLI source
+        id: init
+        run: bash scripts/phase2b6/stylus-candidate.sh init
+      - name: Install Rust 1.91.0 with wasm32-unknown-unknown
+        id: toolchain
+        run: bash scripts/phase2b6/stylus-candidate.sh toolchain
+      - name: Build cargo-stylus from the pinned source with its lockfile
+        id: cli
+        run: bash scripts/phase2b6/stylus-candidate.sh cli
+      - name: Verify cargo-stylus (version and help only)
+        id: verify_cli
+        run: bash scripts/phase2b6/stylus-candidate.sh verify-cli
+      - name: Run the existing offline wrapper tests and SDK ABI check
+        id: tests
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: bash scripts/phase2b6/stylus-candidate.sh wrapper-tests
+      - name: Build the raw release WASM and run the WASM and ABI tests
+        id: wasm
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
+        run: bash scripts/phase2b6/stylus-candidate.sh release-wasm
+      - name: Exercise the offline cargo-stylus build path
+        id: cli_build
+        if: ${{ !cancelled() && steps.verify_cli.outcome == 'success' && steps.wasm.outcome == 'success' }}
+        run: bash scripts/phase2b6/stylus-candidate.sh cli-build
+      - name: Probe build-path reproducibility
+        id: repro
+        if: ${{ !cancelled() && steps.wasm.outcome == 'success' }}
+        run: bash scripts/phase2b6/stylus-candidate.sh reproducibility
+      - name: Reproducible Docker path (official base image, offline build only)
+        id: docker
+        if: ${{ !cancelled() && steps.init.outcome == 'success' }}
+        run: bash scripts/phase2b6/stylus-candidate.sh docker
+      - name: Confirm lockfiles and tracked files are unchanged
+        id: integrity
+        if: ${{ !cancelled() && steps.init.outcome == 'success' }}
+        run: bash scripts/phase2b6/stylus-candidate.sh integrity
+      - name: Assemble the provenance record
+        if: ${{ always() }}
+        run: python3 scripts/phase2b6/stylus_provenance.py assemble "$EVIDENCE_DIR"
+      - name: Upload the unactivated candidate artifact and provenance
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ponte-stylus-unactivated-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ponte-stylus-candidate/
+          if-no-files-found: error
+          retention-days: 90

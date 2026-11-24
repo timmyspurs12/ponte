@@ -4,7 +4,14 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { prepareBrowser } from './prepare-browser.mjs';
 const require=createRequire(import.meta.url);
-const env={...process.env};
+const env={
+ ...process.env,
+ // This runner alone selects an allowed local development runtime and opts its
+ // disposable browser suite into the guarded synthetic evidence provider.
+ NODE_ENV:'development',
+ PONTE_LOCAL_EVIDENCE_TEST_PROVIDER:'1',
+ PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS:process.env.PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS??'0x1111111111111111111111111111111111111111',
+};
 if(env.PONTE_BROWSER_FALLBACK==='1') {
  const browser=await prepareBrowser();
  env.PONTE_CHROMIUM_EXECUTABLE=browser.executablePath;
