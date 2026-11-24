@@ -35,15 +35,14 @@ export function resolveEvidenceChainReader(): TrustedEvidenceChainReader | null 
 /**
  * Resolves the trusted reader, or `null` when no pinned deployment exists.
  *
- * `pinnedConfig` exists so a future phase (or a test) can supply an operator-pinned
- * manifest object. In production the argument is omitted and comes from server-side
- * configuration only.
+ * Takes **no parameters**, deliberately. An earlier revision accepted a
+ * caller-supplied pinned configuration, which let any module manufacture the
+ * production reader with an address and endpoint of its choosing. Nothing outside
+ * this function may now choose the Registry address, expected bytecode hash, manifest
+ * or RPC endpoint.
  */
-export function resolveTrustedEvidenceReader(
-  pinnedConfig?: unknown,
-): TrustedEvidenceChainReader | null {
-  const resolved: TrustedReaderConfigResult =
-    resolveTrustedReaderConfig(pinnedConfig);
+export function resolveTrustedEvidenceReader(): TrustedEvidenceChainReader | null {
+  const resolved: TrustedReaderConfigResult = resolveTrustedReaderConfig();
   if (!resolved.ok) return null;
   return new TrustedEvidenceChainReader(resolved.config);
 }

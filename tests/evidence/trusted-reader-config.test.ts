@@ -1,37 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getAddress, zeroPadValue } from "ethers";
 import {
-  validateDeploymentManifest,
   assertManifestMatchesBuildIdentity,
+  validateDeploymentManifest,
 } from "../../contracts/tools/registry-deployment-manifest.mjs";
 import {
+  isBrandedReaderConfig,
   resolveTrustedReaderConfig,
-  validateTrustedReaderConfig,
+  validateTestReaderConfig,
 } from "../../src/server/evidence/trusted-reader-config";
 import {
+  evidenceChainReaderUnavailableReason,
   resolveEvidenceChainReader,
   resolveTrustedEvidenceReader,
-  evidenceChainReaderUnavailableReason,
 } from "../../src/server/evidence/chain-reader-runtime";
-import {
-  createTrustedAnchorVerification,
-  isTrustedAnchorVerification,
-  sealTrustedObservation,
-} from "../../src/server/evidence/trusted-seal";
-import {
-  hex32,
-  keccakOf,
-  quantity,
-  startMockRpcServer,
-} from "./helpers/mock-rpc-server";
-import type { ChainObservation } from "../../src/server/evidence/anchor-verification";
+import { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
+import { isTrustedAnchorVerification } from "../../src/server/evidence/trusted-authorization";
+import { hex32, keccakOf } from "./helpers/mock-rpc-server";
 
 /**
- * Configuration, runtime-resolution and pipeline-provenance tests (Phase 2C.2A).
+ * Configuration, provenance and cross-validator parity tests
+ * (Phase 2C.2A, review pass 1).
  *
- * The central assertions are negative: with no real deployment manifest the
- * production resolver must stay `null`, and a client cannot select an endpoint.
+ * Three things are asserted here:
+ *
+ * 1. the production reader stays disabled and cannot be enabled by input;
+ * 2. only a branded configuration can construct a reader;
+ * 3. the runtime validator agrees with the canonical manifest validator on every
+ *    field the canonical one checks — valid and tampered alike.
  */
 
 const REGISTRY = `0x${"11".repeat(20)}`;
@@ -39,9 +35,9 @@ const ADMIN = `0x${"22".repeat(20)}`;
 const ATTESTOR = `0x${"33".repeat(20)}`;
 const RUNTIME_CODE = "0x6080604052348015600f57600080fd5b50";
 const RUNTIME_HASH = keccakOf(RUNTIME_CODE);
+const ABI_HASH = `0x${"aa".repeat(32)}`;
 
-/** A structurally valid manifest, used only to exercise the validator. */
-function validManifest(overrides: Record<string, unknown> = {}) {
+function validManifest() {
   return {
     manifestVersion: 1,
     chainId: "421614",
@@ -61,381 +57,401 @@ function validManifest(overrides: Record<string, unknown> = {}) {
       runtimeBytecodeHashAlgorithm: "keccak256",
       runtimeBytecodeHash: RUNTIME_HASH,
     },
-    abi: { version: 1, hashAlgorithm: "sha256", hash: `0x${"aa".repeat(32)}` },
+    abi: { version: 1, hashAlgorithm: "sha256", hash: ABI_HASH },
     sourceVerification: { status: "not_submitted", url: null },
-    ...overrides,
   };
 }
 
-const BUILD_IDENTITY = {
-  contract: { name: "PonteRouteDecisionEvidenceRegistry", version: "1.0.0" },
-  runtimeBytecodeHash: RUNTIME_HASH,
-};
+function buildIdentity() {
+  return {
+    contract: { name: "PonteRouteDecisionEvidenceRegistry", version: "1.0.0" },
+    compiler: "0.8.28+commit.7893614a",
+    optimizer: { enabled: true, runs: 200 },
+    evmVersion: "prague",
+    viaIR: false,
+    runtimeBytecodeHashAlgorithm: "keccak256",
+    runtimeBytecodeHash: RUNTIME_HASH,
+    abi: { version: 1, hashAlgorithm: "sha256", hash: ABI_HASH },
+  };
+}
 
-function configInput(overrides: Record<string, unknown> = {}) {
+function input(overrides: Record<string, unknown> = {}) {
   return {
     manifest: validManifest(),
     rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
     timeoutMs: 5_000,
-    buildIdentity: BUILD_IDENTITY,
+    buildIdentity: buildIdentity(),
     ...overrides,
   };
 }
 
-// --------------------------------------------------- production resolver is off
+// ------------------------------------------------- production stays disabled
 
-test("the production reader is disabled with no pinned manifest", () => {
+test("the production reader is disabled and its resolver takes no input", () => {
   assert.equal(resolveEvidenceChainReader(), null);
   assert.equal(resolveTrustedEvidenceReader(), null);
-  assert.match(
-    evidenceChainReaderUnavailableReason(),
-    /no pinned Registry deployment manifest/,
-  );
+  const resolved = resolveTrustedReaderConfig();
+  assert.equal(resolved.ok, false);
+  // The production resolver accepts no arguments at all: calling it with one must
+  // not change its answer, and the parameter has been removed from the signature.
+  assert.equal(resolveTrustedReaderConfig.length, 0);
+  assert.match(evidenceChainReaderUnavailableReason(), /no pinned Registry deployment manifest/);
 });
 
 test("no environment variable can enable the reader", () => {
-  // Snapshot is unnecessary: the resolver takes no environment input at all.
-  const envKeys = Object.keys(process.env).filter((key) =>
-    /PONTE.*(RPC|READER|REGISTRY|MANIFEST|CHAIN)/i.test(key),
+  const before = Object.keys(process.env).filter((k) =>
+    /PONTE.*(RPC|READER|REGISTRY|MANIFEST)/i.test(k),
   );
-  assert.deepEqual(
-    envKeys,
-    [],
-    "no reader-related env var is consulted anywhere",
-  );
-  process.env.PONTE_RPC_URL = "https://example.invalid";
-  process.env.PONTE_EVIDENCE_READER = "1";
-  process.env.PONTE_REGISTRY_MANIFEST = "/tmp/manifest.json";
+  assert.deepEqual(before, [], "no reader-related env var exists");
+  process.env.PONTE_RPC_URL = "https://evil.example";
+  process.env.PONTE_REGISTRY_MANIFEST = "/tmp/m.json";
   try {
     assert.equal(resolveEvidenceChainReader(), null);
+    assert.equal(resolveTrustedEvidenceReader(), null);
   } finally {
     delete process.env.PONTE_RPC_URL;
-    delete process.env.PONTE_EVIDENCE_READER;
     delete process.env.PONTE_REGISTRY_MANIFEST;
   }
 });
 
-test("a valid pinned manifest does enable a reader, and only when supplied", () => {
-  const reader = resolveTrustedEvidenceReader(configInput());
-  assert.notEqual(reader, null);
+// ---------------------------------------------------- construction provenance
+
+test("a reader cannot be constructed from an unbranded configuration", () => {
+  // A structurally perfect object — the exact shape a request handler could build.
+  const structural = {
+    rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
+    timeoutMs: 5_000,
+    chainId: "421614",
+    registryAddress: REGISTRY,
+    runtimeBytecodeHash: RUNTIME_HASH,
+    deploymentTransactionHash: hex32("tx"),
+    deploymentBlockNumber: "1",
+    administrator: ADMIN,
+    testOnly: false,
+  };
+  assert.equal(isBrandedReaderConfig(structural), false);
+  assert.throws(
+    () => new TrustedEvidenceChainReader(structural as never),
+    /TRUSTED_READER_REQUIRES_BRANDED_CONFIG/,
+  );
 });
 
-// ------------------------------------------------------------ config validation
-
-test("a missing configuration is rejected", () => {
-  const result = validateTrustedReaderConfig(undefined);
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_MISSING");
+test("a reader cannot be constructed from a JSON round-trip of a valid config", () => {
+  const result = validateTestReaderConfig(input());
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(isBrandedReaderConfig(result.config), true);
+  const copy = JSON.parse(JSON.stringify(result.config));
+  assert.equal(isBrandedReaderConfig(copy), false);
+  assert.throws(
+    () => new TrustedEvidenceChainReader(copy as never),
+    /TRUSTED_READER_REQUIRES_BRANDED_CONFIG/,
+  );
 });
 
-test("a non-object configuration is rejected", () => {
-  for (const value of [null, "config", 42, [], true]) {
-    const result = validateTrustedReaderConfig(value);
-    assert.equal(result.ok, false);
+test("a test-scoped config branches as test-only", () => {
+  const result = validateTestReaderConfig(input());
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.config.testOnly, true);
+});
+
+test("the read-only test reader never reads as an operator config", () => {
+  const result = validateTestReaderConfig(input());
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  // No exported validator produces an operator brand, so this is the only brand a
+  // test can obtain, and it is marked testOnly.
+  assert.equal(result.config.testOnly, true);
+});
+
+// ----------------------------------------------------- input validation
+
+test("missing, non-object and unexpected-key inputs are rejected", () => {
+  for (const value of [undefined, null, "config", 42, [], true]) {
+    assert.equal(validateTestReaderConfig(value).ok, false);
   }
+  const unexpected = validateTestReaderConfig(input({ requestBody: {} }));
+  assert.equal(unexpected.ok, false);
+  if (unexpected.ok) return;
+  assert.equal(unexpected.failure, "CONFIG_UNEXPECTED_KEY");
 });
 
-test("an unexpected configuration key is rejected", () => {
-  const result = validateTrustedReaderConfig(
-    configInput({ injectedReader: { readAnchorObservation: () => {} } }),
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_UNEXPECTED_KEY");
-});
-
-test("an invalid manifest is rejected", () => {
-  const result = validateTrustedReaderConfig(
-    configInput({ manifest: validManifest({ manifestVersion: 2 }) }),
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_MANIFEST_VERSION");
-});
-
-test("a manifest for another chain is rejected", () => {
-  const result = validateTrustedReaderConfig(
-    configInput({ manifest: validManifest({ chainId: "1" }) }),
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_CHAIN_ID");
-});
-
-test("a manifest with the wrong contract name is rejected", () => {
-  const result = validateTrustedReaderConfig(
-    configInput({
-      manifest: validManifest({
-        contract: { name: "Other", version: "1.0.0" },
-      }),
-    }),
-  );
-  assert.equal(result.ok, false);
-});
-
-test("a zero Registry address is rejected", () => {
-  const manifest = validManifest();
-  const result = validateTrustedReaderConfig(
-    configInput({
-      manifest: {
-        ...manifest,
-        deployment: {
-          ...manifest.deployment,
-          registryAddress: `0x${"00".repeat(20)}`,
-        },
-      },
-    }),
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_ADDRESS");
-});
-
-test("a manifest whose build hash differs from its deployment hash is rejected", () => {
-  const manifest = validManifest();
-  const result = validateTrustedReaderConfig(
-    configInput({
-      manifest: {
-        ...manifest,
-        build: { ...manifest.build, runtimeBytecodeHash: hex32("different") },
-      },
-    }),
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_RUNTIME_HASH");
-});
-
-test("a build identity that disagrees with the manifest is rejected", () => {
-  const result = validateTrustedReaderConfig(
-    configInput({
-      buildIdentity: { ...BUILD_IDENTITY, runtimeBytecodeHash: hex32("other") },
-    }),
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_BUILD_IDENTITY_MISSING");
-});
-
-test("a missing build identity is rejected", () => {
-  const result = validateTrustedReaderConfig(
-    configInput({ buildIdentity: undefined }),
-  );
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.equal(result.failure, "CONFIG_BUILD_IDENTITY_MISSING");
-});
-
-test("an insecure or credentialed endpoint is rejected", () => {
+test("an insecure or credentialed production-style endpoint is rejected", () => {
   for (const rpcUrl of [
     "http://sepolia-rollup.arbitrum.io/rpc",
     "https://user:pass@example.com",
     "not a url",
     "ftp://example.com",
   ]) {
-    const result = validateTrustedReaderConfig(configInput({ rpcUrl }));
-    assert.equal(result.ok, false, `${rpcUrl} should be rejected`);
+    assert.equal(
+      validateTestReaderConfig(input({ rpcUrl })).ok,
+      false,
+      `${rpcUrl} must be rejected`,
+    );
   }
+});
+
+test("a loopback http endpoint is allowed only for a test-scoped config", () => {
+  const viaTest = validateTestReaderConfig(
+    input({ rpcUrl: "http://127.0.0.1:8545" }),
+  );
+  assert.equal(viaTest.ok, true);
+  // The production resolver never reaches this path, and there is no exported
+  // operator validator that accepts http.
+  const external = validateTestReaderConfig(input({ rpcUrl: "http://evil.example" }));
+  assert.equal(external.ok, false);
 });
 
 test("an out-of-range timeout is rejected", () => {
   for (const timeoutMs of [0, 99, 30_001, 1.5, Number.NaN]) {
-    const result = validateTrustedReaderConfig(configInput({ timeoutMs }));
-    assert.equal(result.ok, false, `${timeoutMs} should be rejected`);
+    assert.equal(validateTestReaderConfig(input({ timeoutMs })).ok, false);
   }
 });
 
-test("a valid configuration yields a frozen config with canonical values", () => {
-  const result = validateTrustedReaderConfig(configInput());
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(Object.isFrozen(result.config), true);
-  assert.equal(result.config.registryAddress, REGISTRY);
-  assert.equal(result.config.runtimeBytecodeHash, RUNTIME_HASH);
-  assert.equal(result.config.administrator, ADMIN);
-  assert.equal(result.config.chainId, "421614");
-});
+// ------------------------------------------------ cross-validator parity
 
-// ------------------------------- cross-check against the canonical validator
-
-test("this validator agrees with the canonical manifest validator on a valid manifest", () => {
-  const manifest = validManifest();
-  // The canonical validator is the artefact of record; it must also accept this.
-  assert.doesNotThrow(() => validateDeploymentManifest(manifest));
-  assert.doesNotThrow(() =>
-    assertManifestMatchesBuildIdentity(manifest, {
-      contract: BUILD_IDENTITY.contract,
-      compiler: "0.8.28+commit.7893614a",
-      optimizer: { enabled: true, runs: 200 },
-      evmVersion: "prague",
-      viaIR: false,
-      runtimeBytecodeHashAlgorithm: "keccak256",
-      runtimeBytecodeHash: RUNTIME_HASH,
-      abi: {
-        version: 1,
-        hashAlgorithm: "sha256",
-        hash: `0x${"aa".repeat(32)}`,
-      },
-    }),
-  );
-  // And the runtime validator must accept the same object.
-  const result = validateTrustedReaderConfig(configInput());
-  assert.equal(result.ok, true);
-});
-
-test("both validators reject a compiler mismatch", () => {
-  const manifest = validManifest();
-  const tampered = {
-    ...manifest,
-    build: { ...manifest.build, solidityCompiler: "0.7.0" },
-  };
-  assert.throws(() => validateDeploymentManifest(tampered));
-  const result = validateTrustedReaderConfig(
-    configInput({ manifest: tampered }),
-  );
-  assert.equal(result.ok, false);
-});
-
-test("both validators reject a runtime hash inconsistency", () => {
-  const manifest = validManifest();
-  const tampered = {
-    ...manifest,
-    deployment: {
-      ...manifest.deployment,
-      runtimeBytecodeHash: hex32("mismatch"),
+/**
+ * Each case is asserted against BOTH validators. The canonical validator must reject
+ * it, and so must the runtime validator — that is the parity guarantee.
+ */
+const PARITY_CASES: Array<[string, () => unknown]> = [
+  [
+    "compiler mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, build: { ...m.build, solidityCompiler: "0.7.0" } };
     },
-  };
-  assert.throws(() => validateDeploymentManifest(tampered));
-  const result = validateTrustedReaderConfig(
-    configInput({ manifest: tampered }),
-  );
-  assert.equal(result.ok, false);
-});
+  ],
+  [
+    "optimizer mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, build: { ...m.build, optimizer: { enabled: false, runs: 200 } } };
+    },
+  ],
+  [
+    "optimizer runs mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, build: { ...m.build, optimizer: { enabled: true, runs: 1 } } };
+    },
+  ],
+  [
+    "contract name mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, contract: { name: "Other", version: "1.0.0" } };
+    },
+  ],
+  [
+    "contract version mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, contract: { name: m.contract.name, version: "2.0.0" } };
+    },
+  ],
+  [
+    "runtime hash mismatch",
+    () => {
+      const m = validManifest();
+      return {
+        ...m,
+        deployment: { ...m.deployment, runtimeBytecodeHash: hex32("mismatch") },
+      };
+    },
+  ],
+  [
+    "build hash differs from deployment hash",
+    () => {
+      const m = validManifest();
+      return { ...m, build: { ...m.build, runtimeBytecodeHash: hex32("different") } };
+    },
+  ],
+  [
+    "chain id mismatch",
+    () => validManifest() && { ...validManifest(), chainId: "10" },
+  ],
+  [
+    "abi version unsupported",
+    () => {
+      const m = validManifest();
+      return { ...m, abi: { ...m.abi, version: 2 } };
+    },
+  ],
+  [
+    "abi hash algorithm mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, abi: { ...m.abi, hashAlgorithm: "keccak256" } };
+    },
+  ],
+  [
+    "abi hash not bytes32",
+    () => {
+      const m = validManifest();
+      return { ...m, abi: { ...m.abi, hash: "deadbeef" } };
+    },
+  ],
+  [
+    "abi hash zero",
+    () => {
+      const m = validManifest();
+      return { ...m, abi: { ...m.abi, hash: `0x${"00".repeat(32)}` } };
+    },
+  ],
+  [
+    "abi extra field",
+    () => {
+      const m = validManifest();
+      return { ...m, abi: { ...m.abi, extra: 1 } };
+    },
+  ],
+  [
+    "source verification status invalid",
+    () => {
+      const m = validManifest();
+      return { ...m, sourceVerification: { status: "pending", url: null } };
+    },
+  ],
+  [
+    "source verification url must be null when not_submitted",
+    () => {
+      const m = validManifest();
+      return {
+        ...m,
+        sourceVerification: {
+          status: "not_submitted",
+          url: "https://explorer.example/tx/1",
+        },
+      };
+    },
+  ],
+  [
+    "source verification url required when verified",
+    () => {
+      const m = validManifest();
+      return { ...m, sourceVerification: { status: "verified", url: null } };
+    },
+  ],
+  [
+    "source verification url must be https",
+    () => {
+      const m = validManifest();
+      return {
+        ...m,
+        sourceVerification: { status: "verified", url: "http://explorer.example/tx/1" },
+      };
+    },
+  ],
+  [
+    "source verification invalid url",
+    () => {
+      const m = validManifest();
+      return {
+        ...m,
+        sourceVerification: { status: "verified", url: "not a url" },
+      };
+    },
+  ],
+  [
+    "roles not separated",
+    () => {
+      const m = validManifest();
+      return { ...m, roles: { administrator: ADMIN, initialAttestor: ADMIN } };
+    },
+  ],
+  [
+    "zero registry address",
+    () => {
+      const m = validManifest();
+      return {
+        ...m,
+        deployment: { ...m.deployment, registryAddress: `0x${"00".repeat(20)}` },
+      };
+    },
+  ],
+  [
+    "zero deployment transaction hash",
+    () => {
+      const m = validManifest();
+      return {
+        ...m,
+        deployment: {
+          ...m.deployment,
+          transactionHash: `0x${"00".repeat(32)}`,
+        },
+      };
+    },
+  ],
+  [
+    "non-positive block number",
+    () => {
+      const m = validManifest();
+      return { ...m, deployment: { ...m.deployment, blockNumber: "0" } };
+    },
+  ],
+  [
+    "manifest version unsupported",
+    () => ({ ...validManifest(), manifestVersion: 2 }),
+  ],
+  [
+    "evm version mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, build: { ...m.build, evmVersion: "cancun" } };
+    },
+  ],
+  [
+    "viaIR mismatch",
+    () => {
+      const m = validManifest();
+      return { ...m, build: { ...m.build, viaIR: true } };
+    },
+  ],
+];
 
-test("both validators reject a chain id mismatch", () => {
-  const tampered = validManifest({ chainId: "10" });
-  assert.throws(() => validateDeploymentManifest(tampered));
-  const result = validateTrustedReaderConfig(
-    configInput({ manifest: tampered }),
-  );
-  assert.equal(result.ok, false);
-});
-
-// ------------------------------------------------------------ pipeline provenance
-
-function trustedObservation(): ChainObservation {
-  return {
-    chainId: "421614",
-    transactionHash: hex32("tx"),
-    transactionFrom: ATTESTOR,
-    transactionTo: REGISTRY,
-    receipt: null,
-    registryIdentity: "verified",
-  };
+for (const [label, makeManifest] of PARITY_CASES) {
+  test(`both validators reject: ${label}`, () => {
+    const manifest = makeManifest() as Record<string, unknown>;
+    // The canonical validator must reject it...
+    assert.throws(() => validateDeploymentManifest(manifest));
+    // ...and so must the runtime validator.
+    const result = validateTestReaderConfig(input({ manifest }));
+    assert.equal(result.ok, false, `runtime validator should reject: ${label}`);
+  });
 }
 
-test("a trusted verification cannot be constructed from an evaluation proof alone", () => {
-  // A plain object claiming to be a trusted verification is rejected.
-  assert.equal(
-    isTrustedAnchorVerification({ verified: true, status: "verified" }),
-    false,
+test("both validators accept the same valid manifest", () => {
+  const manifest = validManifest();
+  assert.doesNotThrow(() => validateDeploymentManifest(manifest));
+  assert.doesNotThrow(() =>
+    assertManifestMatchesBuildIdentity(manifest, buildIdentity()),
   );
-  assert.equal(
-    isTrustedAnchorVerification({ verified: true, proof: {}, seal: {} }),
-    false,
-  );
-  assert.equal(isTrustedAnchorVerification(null), false);
-  assert.equal(isTrustedAnchorVerification("trusted"), false);
-});
-
-test("the seal is required in addition to the proof", () => {
-  const seal = sealTrustedObservation({
-    observation: trustedObservation(),
-    finality: {
-      level: "finalized",
-      finalizedBlockNumber: "100",
-      finalizedBlockHash: hex32("finalized"),
-      receiptBlockHash: hex32("block"),
-      receiptBlockNumber: "90",
-    },
-    runtimeBytecodeHash: RUNTIME_HASH,
-    registryAddress: REGISTRY,
-    transactionHash: hex32("tx"),
-  });
-  assert.equal(
-    isTrustedAnchorVerification({ verified: true, proof: {}, seal }),
-    false,
-  );
-  // The seal itself is branded and rejects copies.
-  const copied = { ...seal };
-  const sealModule = require("node:module") as typeof import("node:module");
-  assert.ok(sealModule);
-  assert.equal(
-    isTrustedAnchorVerification({ verified: true, proof: seal, seal: copied }),
-    false,
-  );
-});
-
-test("a seal with a non-finalized level cannot be issued", () => {
-  assert.throws(
-    () =>
-      sealTrustedObservation({
-        observation: trustedObservation(),
-        finality: {
-          // Deliberately wrong level, cast through unknown to bypass the type.
-          level: "safe" as unknown as "finalized",
-          finalizedBlockNumber: "100",
-          finalizedBlockHash: hex32("finalized"),
-          receiptBlockHash: hex32("block"),
-          receiptBlockNumber: "90",
-        },
-        runtimeBytecodeHash: RUNTIME_HASH,
-        registryAddress: REGISTRY,
-        transactionHash: hex32("tx"),
-      }),
-    /TRUSTED_SEAL_REQUIRES_FINALIZED_LEVEL/,
-  );
-});
-
-test("createTrustedAnchorVerification is not a public issuance route", () => {
-  // It is exported so the pipeline can use it, but the guard inside still validates.
-  const seal = sealTrustedObservation({
-    observation: trustedObservation(),
-    finality: {
-      level: "finalized",
-      finalizedBlockNumber: "100",
-      finalizedBlockHash: hex32("finalized"),
-      receiptBlockHash: hex32("block"),
-      receiptBlockNumber: "90",
-    },
-    runtimeBytecodeHash: RUNTIME_HASH,
-    registryAddress: REGISTRY,
-    transactionHash: hex32("tx"),
-  });
-  // With a non-proof, the combined check fails even though the object was created.
-  const result = createTrustedAnchorVerification(
-    { verified: true } as never,
-    seal,
-  );
-  assert.equal(isTrustedAnchorVerification(result), false);
-});
-
-test("no client-supplied endpoint reaches the reader", async () => {
-  // The reader is constructed from a config object only. Prove that a plausible
-  // request-shaped value cannot become a URL: the validator has no such field.
-  const result = validateTrustedReaderConfig({
-    ...configInput(),
-    rpcUrl: "https://127.0.0.1:1",
-  });
-  // https to loopback is *accepted* by the validator (it cannot know topology),
-  // which is precisely why the config object must come from server-side state and
-  // never from a request. The reader is then the only thing that uses it.
+  const result = validateTestReaderConfig(input());
   assert.equal(result.ok, true);
+});
 
-  const rejected = validateTrustedReaderConfig({
-    ...configInput(),
-    requestBody: { rpcUrl: "https://evil.example" },
-  });
-  assert.equal(rejected.ok, false);
+test("a build identity that disagrees with the manifest is rejected", () => {
+  const mismatch = { ...buildIdentity(), runtimeBytecodeHash: hex32("other") };
+  const result = validateTestReaderConfig(input({ buildIdentity: mismatch }));
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.failure, "CONFIG_BUILD_IDENTITY_MISSING");
+});
+
+test("a missing build identity is rejected", () => {
+  const result = validateTestReaderConfig(input({ buildIdentity: undefined }));
+  assert.equal(result.ok, false);
+});
+
+test("a build identity with a mismatched ABI hash is rejected", () => {
+  const identity = {
+    ...buildIdentity(),
+    abi: { version: 1, hashAlgorithm: "sha256", hash: hex32("other-abi") },
+  };
+  const result = validateTestReaderConfig(input({ buildIdentity: identity }));
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.failure, "CONFIG_ABI_INVALID");
 });

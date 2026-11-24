@@ -8,8 +8,7 @@ import {
   type ChainObservation,
   type ExpectedAnchorCommitment,
 } from "../../src/server/evidence/anchor-verification";
-import { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
-import type { TrustedReaderConfig } from "../../src/server/evidence/trusted-reader-config";
+import { createTestReader } from "./helpers/test-reader-factory";
 import {
   hex32,
   keccakOf,
@@ -51,16 +50,18 @@ const EXPECTED: ExpectedAnchorCommitment = {
   previousPayloadHash: PREVIOUS_HASH,
 };
 
-const CONFIG: TrustedReaderConfig = {
+/**
+ * Reader construction options. The production constructor accepts only a branded
+ * configuration, so tests build a **test-scoped** one through the sanctioned
+ * harness; the reader under test is still the production class.
+ */
+const CONFIG = {
   rpcUrl: "http://127.0.0.1:1", // replaced per-test with the mock's URL
   timeoutMs: 5_000,
-  chainId: String(CHAIN_ID),
   registryAddress: REGISTRY,
   runtimeBytecodeHash: RUNTIME_HASH,
-  deploymentTransactionHash: hex32("deployment"),
-  deploymentBlockNumber: "12000000",
   administrator: ADMIN,
-};
+} as const;
 
 function anchorLog(
   overrides: {
@@ -146,7 +147,7 @@ function readerFor(world: Record<string, unknown>, url = server.url) {
   server.setHandler(handler(world));
   server.setRawResponder(null);
   server.calls.length = 0;
-  return new TrustedEvidenceChainReader({ ...CONFIG, rpcUrl: url });
+  return createTestReader({ ...CONFIG, rpcUrl: url });
 }
 
 async function read(world: Record<string, unknown>) {
@@ -577,7 +578,7 @@ test("a hanging endpoint times out rather than hanging the request", async () =>
   server.setRawResponder(() => {
     // Never respond.
   });
-  const slow = new TrustedEvidenceChainReader({
+  const slow = createTestReader({
     ...CONFIG,
     rpcUrl: server.url,
     timeoutMs: 150,
@@ -616,7 +617,7 @@ test("a fabricated observation cannot mint a confirmation-authorizing result", a
   assert.equal(isAnchorEvaluationProof(evaluated), true);
 
   const { isTrustedAnchorVerification } =
-    await import("../../src/server/evidence/trusted-seal");
+    await import("../../src/server/evidence/trusted-authorization");
   // But it is not, and cannot be turned into, a trusted verification.
   assert.equal(isTrustedAnchorVerification(evaluated), false);
   assert.equal(isTrustedAnchorVerification({ verified: true }), false);
@@ -624,7 +625,7 @@ test("a fabricated observation cannot mint a confirmation-authorizing result", a
 });
 
 test("the seal cannot be forged from outside the pipeline", async () => {
-  const sealModule = await import("../../src/server/evidence/trusted-seal");
+  const sealModule = await import("../../src/server/evidence/trusted-authorization");
   assert.equal(sealModule.isTrustedObservedAnchor({}), false);
   assert.equal(sealModule.isTrustedObservedAnchor(null), false);
   assert.equal(
@@ -639,34 +640,83 @@ test("the seal cannot be forged from outside the pipeline", async () => {
   );
 });
 
-test("the seal refuses an observation whose identity was not verified", async () => {
-  const { sealTrustedObservation } =
-    await import("../../src/server/evidence/trusted-seal");
-  const observation: ChainObservation = {
+test("the seal and authorization factories are not exported at runtime", async () => {
+  // Review pass 1: `sealTrustedObservation` and `createTrustedAnchorVerification`
+  // were importable by any module, which let a caller manufacture authority from
+  // fabricated input. Assert directly on the module namespace that they are gone —
+  // this attacks the runtime export table, not the TypeScript types.
+  const mod = await import("../../src/server/evidence/trusted-authorization");
+  const exported = Object.keys(mod);
+  for (const forbidden of [
+    "sealTrustedObservation",
+    "createTrustedAnchorVerification",
+    "TrustedObservationSeal",
+    "issueSeal",
+    "issueTrustedVerification",
+  ]) {
+    assert.equal(
+      (mod as Record<string, unknown>)[forbidden],
+      undefined,
+      `${forbidden} must not be exported`,
+    );
+    assert.ok(
+      !exported.includes(forbidden),
+      `${forbidden} must not appear in the module namespace`,
+    );
+  }
+  // The only exported issuance entry point is the pipeline runner.
+  assert.equal(typeof mod.runTrustedVerification, "function");
+});
+
+test("a fabricated observation with a verified identity cannot mint a seal", async () => {
+  const mod = await import("../../src/server/evidence/trusted-authorization");
+  // The most convincing forgery: every field is well-typed and the identity flag
+  // claims to be verified.
+  const fabricated = {
     chainId: String(CHAIN_ID),
     transactionHash: TX_HASH,
     transactionFrom: ATTESTOR,
     transactionTo: REGISTRY,
-    receipt: null,
-    registryIdentity: "unverified",
+    registryIdentity: "verified" as const,
+    receipt: {
+      transactionHash: TX_HASH,
+      status: "success" as const,
+      from: ATTESTOR,
+      to: REGISTRY,
+      blockNumber: "9876543",
+      blockHash: BLOCK_HASH,
+      logs: [],
+    },
   };
-  assert.throws(
-    () =>
-      sealTrustedObservation({
-        observation,
-        finality: {
-          level: "finalized",
-          finalizedBlockNumber: "1",
-          finalizedBlockHash: BLOCK_HASH,
-          receiptBlockHash: BLOCK_HASH,
-          receiptBlockNumber: "1",
-        },
-        runtimeBytecodeHash: RUNTIME_HASH,
-        registryAddress: REGISTRY,
-        transactionHash: TX_HASH,
-      }),
-    /TRUSTED_SEAL_REQUIRES_VERIFIED_REGISTRY_IDENTITY/,
+  // There is no exported function that accepts such an object, so the only thing a
+  // caller can do is hand it a look-alike of the seal — which is not recognised.
+  assert.equal(mod.isTrustedObservedAnchor(fabricated), false);
+  assert.equal(mod.isTrustedAnchorVerification(fabricated), false);
+  assert.equal(
+    mod.isTrustedObservedAnchor({ ...fabricated, finality: {}, binding: {} }),
+    false,
   );
+});
+
+test("a fabricated finalized finality object cannot mint a seal", async () => {
+  const mod = await import("../../src/server/evidence/trusted-authorization");
+  const forged = {
+    observation: {},
+    finality: {
+      level: "finalized" as const,
+      finalizedBlockNumber: "100",
+      finalizedBlockHash: BLOCK_HASH,
+      receiptBlockHash: BLOCK_HASH,
+      receiptBlockNumber: "90",
+    },
+    runtimeBytecodeHash: RUNTIME_HASH,
+    registryAddress: REGISTRY,
+    transactionHash: TX_HASH,
+    binding: {},
+  };
+  assert.equal(mod.isTrustedObservedAnchor(forged), false);
+  assert.equal(mod.isTrustedAnchorVerification(forged), false);
+  assert.equal(mod.isTrustedAnchorVerification({ verified: true, ...forged }), false);
 });
 
 // ------------------------------------------------------ event evaluation

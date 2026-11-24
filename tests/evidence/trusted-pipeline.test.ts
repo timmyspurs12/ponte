@@ -7,13 +7,13 @@ import {
   isAnchorEvaluationProof,
   type ExpectedAnchorCommitment,
 } from "../../src/server/evidence/anchor-verification";
+import { runTrustedVerification } from "../../src/server/evidence/trusted-authorization";
 import {
-  runTrustedVerification,
+  isTrustedAnchorVerification,
   type TrustedPipelineOutcome,
-} from "../../src/server/evidence/trusted-pipeline";
-import { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
-import type { TrustedReaderConfig } from "../../src/server/evidence/trusted-reader-config";
-import { isTrustedAnchorVerification } from "../../src/server/evidence/trusted-seal";
+} from "../../src/server/evidence/trusted-authorization";
+import type { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
+import { createTestReader } from "./helpers/test-reader-factory";
 import { isAnchorConfirmationFailure } from "./helpers/failure-guard";
 import {
   hex32,
@@ -56,16 +56,13 @@ const EXPECTED: ExpectedAnchorCommitment = {
   previousPayloadHash: PREVIOUS_HASH,
 };
 
-const CONFIG: TrustedReaderConfig = {
+const CONFIG = {
   rpcUrl: "http://127.0.0.1:1",
   timeoutMs: 5_000,
-  chainId: String(CHAIN_ID),
   registryAddress: REGISTRY,
   runtimeBytecodeHash: RUNTIME_HASH,
-  deploymentTransactionHash: hex32("deployment"),
-  deploymentBlockNumber: "12000000",
   administrator: ADMIN,
-};
+} as const;
 
 function log() {
   return {
@@ -125,7 +122,7 @@ function readerWith(w: Record<string, unknown>) {
     return entry;
   });
   server.setRawResponder(null);
-  return new TrustedEvidenceChainReader({ ...CONFIG, rpcUrl: server.url });
+  return createTestReader({ ...CONFIG, rpcUrl: server.url });
 }
 
 function trusted(outcome: TrustedPipelineOutcome) {

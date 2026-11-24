@@ -24,7 +24,7 @@ import type {
   ChainObservation,
   EvidenceChainReader,
 } from "../src/server/evidence/anchor-verification";
-import { isTrustedAnchorVerification } from "../src/server/evidence/trusted-seal";
+import { isTrustedAnchorVerification } from "../src/server/evidence/trusted-authorization";
 import {
   startAnchorWorld,
   type AnchorWorld,
@@ -336,6 +336,39 @@ test("a trusted verification produced by the real pipeline does confirm", async 
       (await stateOf(seeded.outboxId)).submission_state,
       "confirmed",
     );
+  } finally {
+    await world.close();
+  }
+});
+
+test("the confirmation boundary rejects a result whose binding was altered", async () => {
+  const seeded = await seedOutbox();
+  await markSubmitted(seeded.outboxId);
+  const world = await worldFor(seeded);
+  try {
+    const { row, trusted } = await world.confirmable(pool as never, seeded.outboxId);
+    assert.equal(isTrustedAnchorVerification(trusted), true);
+
+    // Any attempt to alter a bound field must fail: the result and its binding are
+    // deeply frozen, so the boundary can never see a mutated one.
+    assert.throws(() => {
+      (trusted.binding as { payloadHash: string }).payloadHash = `0x${"ff".repeat(32)}`;
+    }, /read only|Cannot assign/i);
+    assert.throws(() => {
+      (trusted.seal.observation.receipt as { blockHash: string }).blockHash =
+        `0x${"ee".repeat(32)}`;
+    }, /read only|Cannot assign/i);
+
+    // A hand-built result carrying a genuine proof and seal but a stale binding is not
+    // an issued result, so gate 1 refuses it.
+    const forged = { ...trusted } as never;
+    const rejected = await confirmVerifiedAnchor(pool as never, row, forged, new Date());
+    assert.deepEqual(rejected, {
+      confirmed: false,
+      failure: "TRUSTED_PROVENANCE_REQUIRED",
+    });
+
+    assert.equal((await stateOf(seeded.outboxId)).submission_state, "submitted");
   } finally {
     await world.close();
   }

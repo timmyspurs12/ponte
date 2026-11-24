@@ -46,10 +46,35 @@ import {
   ReadOnlyRpcClient,
   RpcTransportError,
 } from "./rpc-read-only-transport";
-import type { TrustedReaderConfig } from "./trusted-reader-config";
+import {
+  isBrandedReaderConfig,
+  type OperatorTrustedReaderConfig,
+} from "./trusted-reader-config";
 import type { FinalityEvidence } from "./trusted-observation";
 
 /** `admin()` — the public address getter on the Registry. */
+/**
+ * Private channel mapping a test-scoped configuration to its transport stand-in.
+ *
+ * Nothing in `src/` writes to this map. The only writer is
+ * `tests/evidence/helpers/test-reader-factory.ts`, which uses the exported-but-
+ * test-named `registerTestTransport` below. Production configurations are never in
+ * this map, so a production reader always uses the global `fetch`.
+ */
+const TEST_TRANSPORTS = new WeakMap<object, typeof fetch>();
+
+/** @testonly Registers a transport for a *test-scoped* configuration. */
+export function registerTestTransport(
+  config: OperatorTrustedReaderConfig,
+  fetchImpl: typeof fetch,
+): void {
+  if (!isBrandedReaderConfig(config))
+    throw new Error("TRUSTED_READER_REQUIRES_BRANDED_CONFIG");
+  if (!config.testOnly)
+    throw new Error("TEST_TRANSPORT_REQUIRES_TEST_CONFIG");
+  TEST_TRANSPORTS.set(config, fetchImpl);
+}
+
 const ADMIN_SELECTOR = "0xf851a440";
 /** EIP-7702 delegation designator prefix: 0xef0100 || address. */
 const EIP7702_PREFIX = "0xef0100";
@@ -162,19 +187,37 @@ async function readFinalizedHead(
  * constructor path that accepts a URL, address or hash from a request.
  */
 export class TrustedEvidenceChainReader {
-  readonly #config: TrustedReaderConfig;
+  readonly #config: OperatorTrustedReaderConfig;
   readonly #rpc: ReadOnlyRpcClient;
-  /** Injected in tests to reach the mock server; production uses global fetch. */
-  readonly #fetchImpl: typeof fetch | undefined;
 
-  constructor(config: TrustedReaderConfig, fetchImpl?: typeof fetch) {
+  /**
+   * The constructor refuses anything that is not a configuration this codebase
+   * branded, so a structurally valid object built by a request handler, a service or
+   * a test cannot become a production reader. There is no second argument: an earlier
+   * revision accepted an injectable `fetchImpl`, which let any caller redirect the
+   * transport. Test fetch injection goes through `createTestReader` below.
+   */
+  constructor(config: OperatorTrustedReaderConfig) {
+    if (!isBrandedReaderConfig(config))
+      throw new Error("TRUSTED_READER_REQUIRES_BRANDED_CONFIG");
     this.#config = config;
-    this.#fetchImpl = fetchImpl;
     this.#rpc = new ReadOnlyRpcClient({
       url: config.rpcUrl,
       timeoutMs: config.timeoutMs,
-      fetchImpl,
+      // A test-scoped configuration is the only thing that may carry a fetch stand-in,
+      // and it is supplied through the private channel set by `createTestReader`.
+      fetchImpl: TEST_TRANSPORTS.get(config),
     });
+  }
+
+  /** The pinned Registry address, for binding. Never taken from an observation. */
+  get pinnedRegistryAddress(): string {
+    return this.#config.registryAddress;
+  }
+
+  /** True when this reader was built from a test-scoped configuration. */
+  get testScoped(): boolean {
+    return this.#config.testOnly;
   }
 
   /**

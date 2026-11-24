@@ -17,12 +17,12 @@ import {
   EVIDENCE_ANCHORED_TOPIC,
   type ExpectedAnchorCommitment,
 } from "../../src/server/evidence/anchor-verification";
-import { runTrustedVerification } from "../../src/server/evidence/trusted-pipeline";
+import { runTrustedVerification } from "../../src/server/evidence/trusted-authorization";
 import { readConfirmableOutboxRow } from "../../src/server/evidence/anchor-confirmation";
 import { TrustedEvidenceChainReader } from "../../src/server/evidence/trusted-reader";
-import type { TrustedReaderConfig } from "../../src/server/evidence/trusted-reader-config";
-import type { TrustedAnchorVerification } from "../../src/server/evidence/trusted-seal";
-import type { TrustedPipelineOutcome } from "../../src/server/evidence/trusted-pipeline";
+import { createTestReader } from "../../tests/evidence/helpers/test-reader-factory";
+import type { TrustedAnchorVerification } from "../../src/server/evidence/trusted-authorization";
+import type { TrustedPipelineOutcome } from "../../src/server/evidence/trusted-authorization";
 import {
   hex32,
   keccakOf,
@@ -49,7 +49,7 @@ export interface WorldOptions {
 }
 
 export interface AnchorWorld {
-  readonly config: TrustedReaderConfig;
+  readonly reader: TrustedEvidenceChainReader;
   readonly options: WorldOptions;
   readonly server: MockRpcServer;
   /** Override one RPC method for a single test. */
@@ -141,21 +141,15 @@ export async function startAnchorWorld(
     return entry;
   });
 
-  const config: TrustedReaderConfig = {
+  const reader = createTestReader({
     rpcUrl: server.url,
-    timeoutMs: 5_000,
-    chainId: "421614",
     registryAddress: options.registry,
     runtimeBytecodeHash: runtimeHash,
-    deploymentTransactionHash: hex32("backend-deployment"),
-    deploymentBlockNumber: "1000000",
     administrator: options.administrator,
-  };
-
-  const reader = new TrustedEvidenceChainReader(config);
+  });
 
   return {
-    config,
+    reader,
     options,
     server,
     setOverride(method, value) {

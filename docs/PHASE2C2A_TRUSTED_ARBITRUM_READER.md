@@ -46,6 +46,63 @@ object is `TrustedAnchorVerification`, and only the pipeline can issue it.
 
 ## 2. Runtime-enforced branding (not types alone)
 
+> **Revised after security review pass 1.** An earlier revision exported
+> `sealTrustedObservation(fields)` and `createTrustedAnchorVerification(proof, seal)`.
+> Any module could import them, and neither cross-checked that the proof and the seal
+> described the same acquisition. Both exports have been removed; §2a explains the
+> closed boundary that replaced them.
+
+### 2a. The closed authorization boundary
+
+All issuance machinery is **module-private** to `trusted-authorization.ts`:
+
+| Name                        | Status                    |
+| --------------------------- | ------------------------- |
+| `SEALED`, `TRUSTED_RESULTS` | module-private `WeakSet`s |
+| `TrustedObservationSeal`    | unexported class          |
+| `issueSeal`                 | unexported function       |
+| `issueTrustedVerification`  | unexported function       |
+
+A non-exported binding in an ES module is unreachable from other modules, which is the
+strongest closure a single Node process offers, and it is a runtime property rather
+than a naming convention. The test suite asserts directly on the module namespace
+that all five names are absent (`typeof mod.sealTrustedObservation === "undefined"`).
+
+The one exported entry point is `runTrustedVerification(reader, commitment, hash)`.
+
+### 2b. What a trusted result is bound to
+
+Issuance derives a `TrustedBinding` from the evaluation proof **and** the seal's own
+observation, and refuses if any corresponding field disagrees:
+
+```
+transactionHash, chainId, registryAddress, evidenceId, payloadHash,
+evidenceKind, sequence, previousPayloadHash, receiptBlockNumber,
+receiptBlockHash, attestor, finalizedBlockNumber, finalizedBlockHash,
+runtimeBytecodeHash
+```
+
+The binding is checked twice:
+
+1. **at issuance**, inside `runTrustedVerification`, so a result is never created
+   unless proof and acquisition agree;
+2. **at the confirmation boundary**, via `rebindTrustedResult`, which re-derives the
+   binding from the proof and the seal and compares it with the stored one. It does
+   _not_ trust the stored `binding` on the strength of `isTrustedAnchorVerification`
+   alone, so a mutated nested observation is caught. A mismatch returns
+   `PROVENANCE_BINDING_MISMATCH`.
+
+### 2c. Deep freezing and defensive copying
+
+The seal holds a **deeply frozen copy** of the observation, not the object the reader
+returned, so a caller that kept a reference to the observation cannot mutate what the
+seal represents afterwards. Every nested value — the receipt, the `logs` array, each
+log object and each `topics` array — is copied and frozen. Shallow freezing the outer
+field bag was insufficient, as the review noted. Tests assert `Object.isFrozen` at
+every level and that mutation attempts throw.
+
+## 2d. Runtime-enforced branding (not types alone)
+
 Two independent brands, both enforced at runtime:
 
 **The evaluation brand.** `AnchorEvaluationProof` carries an ECMAScript private field
@@ -137,6 +194,35 @@ which is not answering as our Registry (for example, code replaced at the same a
 in a way that preserves the hash is impossible, but a self-destructed or
 not-yet-deployed account returning empty data is not).
 
+### Configuration provenance, not configuration shape
+
+Validating an object proves only that it _looks_ like configuration. Any request
+handler could build a structurally valid object with an attacker-chosen Registry
+address and RPC endpoint, and a plain validator would bless it.
+
+So a validated configuration is returned as a **branded** object: an unexported class,
+registered in a module-private `WeakSet`, carrying a private field. The reader
+constructor accepts nothing else and throws
+`TRUSTED_READER_REQUIRES_BRANDED_CONFIG` otherwise. A JSON round-trip of a valid config
+is therefore rejected — asserted in the suite.
+
+Three further restrictions were applied in review pass 1:
+
+- **The production resolver takes no parameters.** `resolveTrustedEvidenceReader()` and
+  `resolveTrustedReaderConfig()` accept no input at all; an earlier revision accepted a
+  caller-supplied pinned configuration, which let any module manufacture the production
+  reader.
+- **No injectable transport in production.** The constructor has no second argument. A
+  fetch stand-in can only be registered against a _test-scoped_ brand, and
+  `registerTestTransport` throws for an operator brand.
+- **Test configuration is a separate brand** (`testOnly: true`), produced only by
+  `validateTestReaderConfig`, which additionally allows a loopback `http:` endpoint.
+  Production configuration requires `https:` unconditionally.
+
+No API handler, request body, header, query parameter or ordinary service can reach any
+of this: `resolveTrustedReaderConfig()` returns a `CONFIG_MISSING` failure regardless of
+input, and nothing outside `chain-reader-runtime.ts` calls it.
+
 ### Manifest handling: a deliberate, documented duplication
 
 `contracts/tools/registry-deployment-manifest.mjs` is the authoritative manifest
@@ -160,6 +246,31 @@ tampered ones (compiler mismatch, runtime-hash inconsistency, chain mismatch).
 
 This is a duplication of assertions, not of format, and it is the only acceptable
 option short of refactoring the build tooling — which would exceed this phase's scope.
+
+### Parity status: complete for every consumed field
+
+Review pass 1 found that the runtime validator skipped the nested `abi` and
+`sourceVerification` blocks entirely, so a manifest with an unsupported ABI version or an
+invalid source-verification status was accepted at runtime while the canonical validator
+rejected it. Both blocks are now validated in full:
+
+| Field                       | Runtime rule (matches canonical)             |
+| --------------------------- | -------------------------------------------- |
+| `abi.version`               | must equal `REGISTRY_ABI_VERSION`            |
+| `abi.hashAlgorithm`         | must equal `ABI_HASH_ALGORITHM`              |
+| `abi.hash`                  | `0x` + 64 hex, and not all zeroes            |
+| `sourceVerification.status` | one of `not_submitted`, `verified`, `failed` |
+| `sourceVerification.url`    | `null` iff `not_submitted`; HTTPS otherwise  |
+
+The build-identity cross-check was likewise narrowened to compare the ABI block, the
+compiler, optimizer, EVM version, viaIR and both runtime hashes against the manifest,
+mirroring `assertManifestMatchesBuildIdentity`.
+
+**Parity is enforced by tests, not by intent**: `trusted-reader-config.test.ts` runs 25
+tampered manifests through **both** validators and requires both to reject every one, and
+requires both to accept the same valid manifest. That matrix is what caught the ABI and
+source-verification gaps: they were invisible until a test asserted the canonical
+validator's behaviour alongside the runtime one.
 
 ---
 
@@ -251,10 +362,30 @@ methods. The rejection is by exact lookup in a frozen object, so `__proto__` and
 `id` echo equality, absence of an `error` member, and presence of `result`. A mismatched
 id is an error, never a silent accept.
 
-**Other properties** — bounded `AbortSignal` timeout (100 ms–30 s, validated at
-construction), `redirect: "error"` so a 3xx cannot forward the request elsewhere,
-`credentials: "omit"` so ambient cookies are never attached, and URL validation that
-rejects non-HTTP(S) schemes and embedded credentials.
+**Other properties** — `redirect: "error"` so a 3xx cannot forward the request
+elsewhere, `credentials: "omit"` so ambient cookies are never attached, and URL
+validation that rejects non-HTTP(S) schemes and embedded credentials.
+
+### The deadline covers the whole operation
+
+An earlier revision cleared the `AbortController` timer once `fetch()` returned
+headers, leaving body transfer and parsing unbounded. The timer now covers the wait for
+headers, the transfer of the body and the parse of the JSON, and is cleared only after
+the body has been consumed. An endpoint that sends headers promptly and then stalls the
+body is timed out (`RPC_TIMEOUT`). Tests cover: no headers at all, headers-then-stall,
+abort mid-body, and valid responses after each failure.
+
+### Response size is bounded
+
+`MAX_RPC_RESPONSE_BYTES` is **2 MiB**. It is far above any legitimate response for the
+six read methods — the largest is a contract's runtime bytecode, typically well under
+30 KiB — and small enough to bound process memory.
+
+The cap is enforced twice: from `Content-Length` when the endpoint declares an honest
+one (rejected before a byte is buffered), and **while streaming** otherwise, so an
+endpoint that omits or understates the length still cannot exhaust memory. Crossing the
+limit cancels the reader and returns `RPC_RESPONSE_TOO_LARGE`. The body reader is
+released on every path.
 
 ---
 
@@ -358,9 +489,14 @@ from the trusted pipeline.
    invalidate a confirmation silently.
 3. **The database provenance gap is open** (§9). A direct writer can forge `confirmed`.
 4. **The runtime re-implements manifest assertions** rather than importing the canonical
-   validator (§4), kept honest by a cross-check test but still a second implementation.
-5. **No production reader.** Nothing can produce a live anchoring claim.
-6. **`registryIdentity` is derived by the reader**, but the reader itself is only as
+   validator (§4), kept honest by a 25-case cross-check matrix but still a second
+   implementation that must be maintained in step.
+5. **The authorization closure is a module-privacy property**, not a process boundary.
+   It prevents any _module_ in this codebase from minting authority, which is what the
+   review asked for. It does not defend against arbitrary code execution inside the
+   server process — a compromised dependency could still reach module internals.
+6. **No production reader.** Nothing can produce a live anchoring claim.
+7. **`registryIdentity` is derived by the reader**, but the reader itself is only as
    trustworthy as its endpoint and its pinned manifest.
-7. **No key rotation story** for a future manifest update: rotating the pinned bytecode
+8. **No key rotation story** for a future manifest update: rotating the pinned bytecode
    hash requires a reviewed artefact and a code change.

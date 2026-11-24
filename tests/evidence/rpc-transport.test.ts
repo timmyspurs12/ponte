@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import {
+  MAX_RPC_RESPONSE_BYTES,
   ReadOnlyRpcClient,
   READ_ONLY_RPC_METHODS,
   RpcTransportError,
@@ -231,4 +232,103 @@ test("the outbound request never carries credentials", async () => {
   assert.equal(headers.get("content-type"), "application/json");
   assert.equal(headers.get("authorization"), null);
   assert.equal(headers.get("cookie"), null);
+});
+
+
+// ---------------------------------------------------------------------------
+// Timeout and response-size handling (review pass 1, finding 3)
+// ---------------------------------------------------------------------------
+
+test("the deadline covers a body that stalls after headers arrive", async () => {
+  // Headers are sent immediately, then the body never completes. Under the previous
+  // implementation the timer was cleared once headers arrived, so this hung until the
+  // test runner's own timeout.
+  server.setRawResponder((_body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.write('{"jsonrpc":"2.0",');
+    // Never finish the body.
+  });
+  const rpc = client({ timeoutMs: 150 });
+  const started = Date.now();
+  await assert.rejects(() => rpc.call("eth_chainId", []), /RPC_TIMEOUT/);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 3_000, `should time out promptly, took ${elapsed}ms`);
+});
+
+test("an endpoint that never sends headers times out", async () => {
+  server.setRawResponder(() => {
+    // Never respond at all.
+  });
+  const rpc = client({ timeoutMs: 150 });
+  await assert.rejects(() => rpc.call("eth_chainId", []), /RPC_TIMEOUT/);
+});
+
+test("an oversized declared body is rejected without buffering it", async () => {
+  const huge = "x".repeat(MAX_RPC_RESPONSE_BYTES + 1_000);
+  server.setRawResponder((body, res) => {
+    const { id } = body as { id: unknown };
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": String(huge.length),
+    });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id, result: huge }));
+  });
+  const rpc = client();
+  await assert.rejects(() => rpc.call("eth_chainId", []), /RPC_RESPONSE_TOO_LARGE/);
+});
+
+test("an oversized streamed body is rejected even without a content-length", async () => {
+  // No Content-Length (chunked transfer), so the cap must be enforced while reading.
+  server.setRawResponder((body, res) => {
+    const { id } = body as { id: unknown };
+    res.writeHead(200, { "content-type": "application/json" });
+    res.write('{"jsonrpc":"2.0","id":');
+    res.write(String(id));
+    res.write(',"result":"');
+    const chunk = "y".repeat(256 * 1024);
+    // Write well past the ceiling.
+    for (let written = 0; written < MAX_RPC_RESPONSE_BYTES + 512 * 1024; written += chunk.length)
+      res.write(chunk);
+    res.end('"}');
+  });
+  const rpc = client({ timeoutMs: 5_000 });
+  await assert.rejects(() => rpc.call("eth_chainId", []), /RPC_RESPONSE_TOO_LARGE/);
+});
+
+test("a body aborted mid-stream surfaces as a transport failure, not a hang", async () => {
+  server.setRawResponder((_body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.write('{"jsonrpc":"2.0","id":1,');
+    // Destroy the socket mid-body.
+    setTimeout(() => res.destroy(), 10);
+  });
+  const rpc = client({ timeoutMs: 2_000 });
+  await assert.rejects(
+    () => rpc.call("eth_chainId", []),
+    (error: unknown) =>
+      error instanceof RpcTransportError &&
+      ["RPC_HTTP_STATUS", "RPC_INVALID_JSON", "RPC_TIMEOUT"].includes(
+        (error as RpcTransportError).failure,
+      ),
+  );
+});
+
+test("a valid response still works after all the failure cases", async () => {
+  server.setRawResponder(null);
+  server.setHandler((call) => (call.method === "eth_chainId" ? "0x66eee" : "0x1"));
+  const rpc = client();
+  assert.equal(await rpc.call("eth_chainId", []), "0x66eee");
+});
+
+test("a response at exactly the size ceiling is accepted", async () => {
+  // The limit is exclusive; a body of exactly the ceiling must not be rejected.
+  const padding = "z".repeat(64 * 1024);
+  server.setRawResponder((body, res) => {
+    const { id } = body as { id: unknown };
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id, result: padding }));
+  });
+  const rpc = client();
+  const result = await rpc.call("eth_chainId", []);
+  assert.equal(result, padding);
 });

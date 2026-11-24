@@ -16,8 +16,9 @@ import type {
 } from "./anchor-verification";
 import {
   isTrustedAnchorVerification,
+  rebindTrustedResult,
   type TrustedAnchorVerification,
-} from "./trusted-seal";
+} from "./trusted-authorization";
 
 /**
  * The confirmed-state boundary for `evidence_outbox`.
@@ -44,6 +45,11 @@ export type AnchorConfirmationFailure =
    * longer does.
    */
   | "TRUSTED_PROVENANCE_REQUIRED"
+  /**
+   * The trusted result's proof and seal no longer describe the same acquisition, or
+   * a bound field was altered after issuance.
+   */
+  | "PROVENANCE_BINDING_MISMATCH"
   | AnchorVerificationFailure
   | "CHAIN_READ_FAILED"
   | "OUTBOX_NOT_CONFIRMABLE"
@@ -204,18 +210,51 @@ export async function confirmVerifiedAnchor(
   trusted: TrustedAnchorVerification,
   now: Date,
 ): Promise<AnchorConfirmationOutcome> {
-  // Two independent gates. The first asks "is this a result this codebase issued?";
-  // the second asks "did the trusted reader pipeline produce it?". A Phase 2C.1
-  // evaluation proof — however genuinely minted — fails the second gate, because
-  // nothing vouches for where its observation came from.
+  // Gate 1: is this a result the authorization module actually issued?
   if (!isTrustedAnchorVerification(trusted))
     return { confirmed: false, failure: "TRUSTED_PROVENANCE_REQUIRED" };
 
   const proof = trusted.proof;
+  // Gate 2: is the proof itself genuinely minted by the evaluator?
   if (!isAnchorEvaluationProof(proof))
     return { confirmed: false, failure: "PROOF_REQUIRED" };
 
+  // Gate 3: re-derive the binding from the proof and the seal's own observation and
+  // require it to equal what was recorded at issuance. This does not trust the
+  // stored binding, so a mutated nested observation or finality value is caught
+  // here even if the result object itself passed gate 1.
+  const binding = rebindTrustedResult(trusted);
+  if (!binding)
+    return { confirmed: false, failure: "PROVENANCE_BINDING_MISMATCH" };
+
   const facts = proof.facts;
+
+  // Gate 4: compare the re-derived binding against the proof's facts and the seal's
+  // own evidence directly, rather than trusting that gate 3 covered it. This is the
+  // check the review asked for explicitly: the boundary independently verifies that
+  // the seal describes the same transaction, chain, Registry, evidence record, block,
+  // attestor and measured bytecode as the proof.
+  const seal = trusted.seal;
+  if (
+    binding.transactionHash !== facts.transactionHash ||
+    binding.chainId !== facts.chainId ||
+    binding.registryAddress !== facts.registryAddress ||
+    binding.evidenceId !== facts.commitment.evidenceId ||
+    binding.payloadHash !== facts.commitment.payloadHash ||
+    binding.evidenceKind !== facts.commitment.evidenceKind ||
+    binding.sequence !== facts.commitment.sequence ||
+    binding.previousPayloadHash !== facts.commitment.previousPayloadHash ||
+    binding.receiptBlockNumber !== facts.blockNumber ||
+    binding.receiptBlockHash !== facts.blockHash ||
+    binding.attestor !== facts.attestor ||
+    binding.runtimeBytecodeHash !== seal.runtimeBytecodeHash ||
+    binding.registryAddress !== seal.registryAddress ||
+    binding.transactionHash !== seal.transactionHash ||
+    seal.finality.level !== "finalized" ||
+    binding.finalizedBlockNumber !== seal.finality.finalizedBlockNumber ||
+    binding.finalizedBlockHash !== seal.finality.finalizedBlockHash
+  )
+    return { confirmed: false, failure: "PROVENANCE_BINDING_MISMATCH" };
   const committed = facts.commitment;
 
   // Compare the proof's OWN commitment — captured inside the verification
