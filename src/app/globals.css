@@ -1497,7 +1497,8 @@ select {
   gap: 9px;
   flex: 1;
   position: relative;
-  color: #6b7a70;
+  /* Inactive steps: #6b7a70 is only ~4.2:1 on chalk; --slate is ~5.0:1. */
+  color: var(--slate);
 }
 .journey > div:after {
   content: "";
@@ -3062,8 +3063,19 @@ dialog .form-actions {
     gap: 0;
     margin-bottom: 23px;
   }
+  /* Five equal columns instead of a min-width pre-scroll track. The old rule set
+     min-width on each step and `overflow: auto`, so the track was wider than the
+     viewport and the last label ("Receipt generated") was clipped at the edge.
+     Equal columns plus a wrapping label keep all five readable with no
+     horizontal scrolling. */
+  .journey {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    overflow: visible;
+  }
   .journey > div {
-    min-width: 73px;
+    min-width: 0;
     flex-direction: column;
     gap: 6px;
     align-items: flex-start;
@@ -3075,14 +3087,16 @@ dialog .form-actions {
     top: 10px;
     margin: 0;
   }
-  .journey small {
-    font-size: 7px;
+  .journey > div > small {
+    font-size: 9px;
     white-space: normal;
-    max-width: 60px;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+    max-width: none;
     position: relative;
   }
   .journey > div:last-child {
-    min-width: 57px;
+    min-width: 0;
   }
   .detail-grid {
     gap: 0;
@@ -3223,11 +3237,8 @@ dialog .form-actions {
   .metrics article > strong {
     font-size: 19px;
   }
-  .journey > div {
-    min-width: 66px;
-  }
-  .journey small {
-    font-size: 6.8px;
+  .journey > div > small {
+    font-size: 8.5px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

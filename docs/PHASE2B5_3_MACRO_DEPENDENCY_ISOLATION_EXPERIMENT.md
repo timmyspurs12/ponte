@@ -98,7 +98,7 @@ The existing Phase 2B.5.1 script `scripts/phase2b/dependency-evidence.sh` is reu
 
 1. Check out the head commit with full history, then run the harness unit tests.
 2. **Freeze the harness:** copy `scripts/phase2b/macro-isolation` to `$RUNNER_TEMP/harness`, so both sides run the identical harness from the head commit. Then record the design: base is an ancestor of head, and the list of changed files under `rust/` determines the mode (`control` if there are none, `experiment` otherwise).
-3. Install Node 22, Rust 1.91.0 with `wasm32-unknown-unknown`, and optionally wabt from the Ubuntu archive for `wasm2wat`. The wabt step does not gate the result.
+3. Install Node (currently pinned to **24.22.1**; this experiment was run on Node 22), Rust 1.91.0 with `wasm32-unknown-unknown`, and optionally wabt from the Ubuntu archive for `wasm2wat`. The wabt step does not gate the result.
 4. **Baseline:** `git checkout --detach fe6e928…`, then run `capture.sh baseline`.
 5. **Experiment:** `git checkout --detach <head>`, then run `capture.sh experiment`. Both sides use the same runner, checkout path, toolchain, environment and commands. `rm -rf rust/stylus-wrapper/target` runs before each side, so nothing is reused across sides.
 6. Compare the two sides, publish notices and the step summary, run RustSec, and upload the artifact even on failure.

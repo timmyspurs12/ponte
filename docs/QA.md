@@ -1,5 +1,11 @@
 # Phase 1.1 QA handoff
 
+> Historical Phase 1.1 visual baseline. Current screenshots are listed in [HACKATHON_DEMO_EVIDENCE.md](HACKATHON_DEMO_EVIDENCE.md).
+>
+> **Node versions named below are historical, not current requirements.** The
+> project now pins Node **24.22.1** ([`.node-version`](../.node-version)); the
+> workflow description below records what Phase 1.1 ran on at the time.
+
 Validated on 16 November 2026. The live Arena preview serves the production frontend build on port 3000. No public deployment, payment integration or Phase 2 implementation was initiated. Phase 1 screenshots remain as baselines; new Portuguese screenshots have the `phase1.1-pt-` prefix.
 
 ## Results

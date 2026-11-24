@@ -232,7 +232,7 @@ export function InvoiceDetail({
                       : invoice.status === "Routing"
                         ? t("Ready for settlement")
                         : invoice.status === "Funded"
-                          ? t("Compare liquidity routes")
+                          ? t("Compare illustrative routes")
                           : t("Pix demo payment")}
                 </h2>
                 {invoice.status === "Settled" ? (
@@ -528,7 +528,7 @@ export function InvoiceDetail({
               <p>
                 {" "}
                 {t(
-                  "All payment confirmations, liquidity routes and settlements are simulated. Never transfer real funds to this prototype.",
+                  "All payment confirmations, illustrative routes and settlements are simulated. Never transfer real funds to this prototype.",
                 )}{" "}
               </p>
             </div>
