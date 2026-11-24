@@ -611,7 +611,7 @@ In **Settings → Secrets and variables → Actions**:
 | Name | Example placeholder | Purpose |
 | --- | --- | --- |
 | `PONTE_DB_OPERATORS` | `octocat,release-manager` | Comma-separated GitHub logins allowed to dispatch |
-| `PONTE_AUTH_BUSINESS_ID` | `<private-business-uuid>` | The private administrator tenant. `business-bootstrap` must name exactly this UUID. |
+| `PONTE_AUTH_BUSINESS_ID` | `<private-business-uuid>` (**may start unset**) | The private administrator tenant. `business-bootstrap` must name exactly this UUID once it is set. |
 | `PONTE_PUBLIC_DEMO_BUSINESS_ID` | `<demo-business-uuid>` | The synthetic demo tenant. Both demo operations must name exactly this UUID when it is set. Optional before the demo exists. |
 | `PONTE_PUBLIC_DEMO_READ_ONLY` | `0` (leave unset until §21) | **A mirror, not a source of truth.** GitHub cannot read Render's environment. Set it to the same value the service runs with, and change it at the same time you change the service; a drift is refused with `DEMO_CONFIG_MISMATCH`/`DEMO_ALREADY_ENABLED` rather than silently ignored. |
 
@@ -624,6 +624,40 @@ In **Settings → Secrets and variables → Actions**:
 `PONTE_DB_OPERATORS` is the authorization boundary. A login not on the list
 fails the first workflow step, and the same check runs again inside the CLI.
 Keep it to the smallest set of people who may change production data.
+
+### 17a. Unset variables arrive as empty strings
+
+GitHub Actions cannot express "this repository variable does not exist". When a
+workflow maps one with `${{ vars.NAME }}` and the variable has never been
+created, the expression resolves to **the empty string**, so the step receives
+`NAME=""` — not a missing variable. The application therefore treats `""`
+exactly like an absent value, and only that:
+
+| Value the step receives | Meaning | Treated as |
+| --- | --- | --- |
+| absent (`undefined`) | never configured | unset |
+| `""` | unset repository variable | unset |
+| `"0"` / `"1"` (demo flag only) | explicitly disabled / enabled | disabled / enabled |
+| `"   "`, `"\t"` | a typo, not an omission | **refused** |
+| any other non-empty text | malformed configuration | **refused** |
+
+The distinction matters in both directions. Treating every blank-looking value
+as "unset" would let a stray space silently switch off a check the operator
+believes is active. Treating `""` as "configured but wrong" — the behaviour
+before Phase 1.3.9.2 — makes the first documented dispatch fail for a reason the
+operator never typed. `scripts/optional-environment.ts` holds the rule once;
+the workflow guard, the demo preflight and both CLI entry points all use it.
+
+| State | `PONTE_AUTH_BUSINESS_ID` | `PONTE_PUBLIC_DEMO_BUSINESS_ID` | `PONTE_PUBLIC_DEMO_READ_ONLY` |
+| --- | --- | --- | --- |
+| Before the first bootstrap | unset or `""` → allowed, prints a note | unset or `""` → no demo tenant configured yet | unset, `""` or `0` → disabled |
+| Configured | must be a UUID; `business-bootstrap` must use exactly it | must be a UUID; both demo operations must use exactly it | `1` blocks `demo-bootstrap`, allows `demo-verify` |
+| Wrong | `ADMIN_BUSINESS_INVALID` (malformed) or `BUSINESS_ID_DOES_NOT_MATCH_ADMIN` | `DEMO_BUSINESS_ID_MISMATCH` | `DEMO_CONFIG_MISMATCH` |
+
+**Set before demo provisioning:** `PONTE_AUTH_BUSINESS_ID` (the demo's UUID must
+be provably different from it, so the demo preflight refuses without it) and,
+once chosen, `PONTE_PUBLIC_DEMO_BUSINESS_ID`. Leave `PONTE_PUBLIC_DEMO_READ_ONLY`
+unset or `0` until §21; never set it inside the workflow.
 
 `PONTE_AUTH_BUSINESS_ID` is a *requirement*, not a hint: `business-bootstrap`
 refuses any UUID that differs from it, so the tenant the service authenticates
@@ -692,6 +726,32 @@ Notes:
 - If `DATABASE_URL` violates the transport policy, the service starts, and
   `/api/health/ready` returns `503` with no diagnostic detail. The reason code
   appears once in the service log at pool creation.
+
+### 19a. Why the workflow pins its actions
+
+Both external actions in `.github/workflows/manual-database-operations.yml` are
+referenced by full 40-character commit SHA, with the release named in a comment:
+
+| Action | Pinned commit | Release |
+| --- | --- | --- |
+| `actions/checkout` | `fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09` | v5.1.0 |
+| `actions/setup-node` | `a0853c24544627f65ddf259abe73b1d18a591444` | v5.0.0 |
+
+A tag such as `@v5` is a mutable pointer: it can be moved to different code
+after review, and the workflow would execute the new code without a diff. A
+commit SHA cannot be moved. Each SHA was resolved from the official repository
+(`actions/checkout`, `actions/setup-node`) and confirmed to be the commit the
+intended release tag points at; the same two commits are already pinned by this
+repository's `stylus-testnet-artifact.yml`, which is an independent check
+against a transcription error.
+
+To move to a newer release, resolve its SHA the same way, change both the SHA
+and the comment, and re-review — do not substitute a tag for convenience.
+
+No workflow-dependency lockfile is used. GitHub does not provide one for
+`uses:` references, and the repository has no `dependabot.yml`; adding a bot to
+manage two pins would be more machinery than the problem needs. `package-lock.json`
+already covers the Node dependencies and is unchanged by this phase.
 
 ## 20. Step 6 — Seed order: verify, migrate, verify, private business, demo, demo-verify
 

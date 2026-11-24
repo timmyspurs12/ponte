@@ -115,9 +115,15 @@ jobs:
           fi
           echo "Dispatch accepted for $ACTOR on main."
 
-      - uses: actions/checkout@v5
+      # Pinned to an immutable commit, not a mutable tag: a tag can be moved to
+      # different code after review. Both SHAs were resolved from the official
+      # repositories and match the pins already used by this repository's
+      # stylus-testnet-artifact workflow.
+      # actions/checkout v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
-      - uses: actions/setup-node@v5
+      # actions/setup-node v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version-file: .node-version
           cache: npm
@@ -155,13 +161,17 @@ jobs:
           # preflights (NODE_ENV, non-loopback URL, no local-only settings)
           # run under the same conditions as the deployed service.
           NODE_ENV: production
+          # An unset repository variable resolves to the EMPTY STRING, not to
+          # `undefined`. All three values below are therefore optional and are
+          # normalised by scripts/optional-environment.ts: absent and "" mean
+          # "not configured", whitespace-only or malformed non-empty values are
+          # refused, and only "0"/"1" describe the demo flag.
           PONTE_AUTH_BUSINESS_ID: ${{ vars.PONTE_AUTH_BUSINESS_ID }}
           PONTE_PUBLIC_DEMO_BUSINESS_ID: ${{ vars.PONTE_PUBLIC_DEMO_BUSINESS_ID }}
-          # Deliberately pinned to the disabled state. Provisioning happens
-          # before the demo is enabled; `demo-verify` accepts either value.
-          # Enabling the demo is a manual change on the host, never a workflow
-          # side effect. GitHub cannot read Render's environment, so this
-          # variable is an operator mirror that must be kept consistent with it.
+          # A mirror of the host's flag, not a source of truth: GitHub cannot
+          # read Render's environment. Leave it unset (or `0`) while the demo is
+          # being provisioned; `demo-verify` accepts either value. Enabling the
+          # demo is a manual change on the host, never a workflow side effect.
           PONTE_PUBLIC_DEMO_READ_ONLY: ${{ vars.PONTE_PUBLIC_DEMO_READ_ONLY }}
           PONTE_DB_OPS_EVENT_NAME: ${{ github.event_name }}
           PONTE_DB_OPS_REF: ${{ github.ref }}

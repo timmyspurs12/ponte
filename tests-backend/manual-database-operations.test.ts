@@ -795,3 +795,152 @@ test("verify never queries a table it has not proved exists", async () => {
   );
   assert.match(result.lines.join(" "), /not applicable yet/);
 });
+
+/* -------------------------------------------------------------------------- *
+ * The demo flag, as the workflow passes it
+ *
+ * `PONTE_PUBLIC_DEMO_READ_ONLY` arrives from a repository variable, so an unset
+ * one is `""`. The CLI's preflight is not the only caller of the runner, so the
+ * runner repeats the rule rather than trusting it.
+ * -------------------------------------------------------------------------- */
+
+const demoFlagPool = () =>
+  fakePool((sql) =>
+    // The tenant operations gate on the core tables before writing; the flag
+    // rule is checked before that, but a "disabled" case must reach the
+    // bootstrap, so the schema has to look migrated.
+    sql.includes("to_regclass")
+      ? { rows: [{ present: true }] }
+      : sql.includes("demo_memberships")
+        ? {
+            rows: [
+              {
+                demo_memberships: "0",
+                business_rows: "1",
+                chain_hashes: "0",
+                evidence_records: "0",
+                outbox_records: "0",
+                transaction_hashes: "0",
+              },
+            ],
+          }
+        : { rows: [] },
+  );
+
+test("demo-bootstrap refuses while the demo is enabled, for every spelling of enabled", async () => {
+  const { pool } = demoFlagPool();
+  // "1" is the only enabled value; the rest must not be mistaken for "off".
+  for (const setting of ["1"]) {
+    let called = false;
+    const result = await runDatabaseOperation(
+      pool,
+      {
+        operation: "demo-bootstrap",
+        ...demoBusiness,
+        demoReadOnlySetting: setting,
+      },
+      {
+        verifyMigrations: async () => ({
+          recorded: ["001_foundation"],
+          pending: [],
+          ledgerPresent: true,
+        }),
+        bootstrapDemo: async () => {
+          called = true;
+          return demoResult;
+        },
+      },
+    );
+    assert.equal(result.ok, false, setting);
+    assert.match(result.lines[0], /PONTE_PUBLIC_DEMO_READ_ONLY=1/);
+    assert.equal(called, false, "nothing may be provisioned while enabled");
+  }
+});
+
+test("demo-bootstrap treats unset, empty and 0 as disabled", async () => {
+  for (const setting of [undefined, "", "0"]) {
+    const { pool } = demoFlagPool();
+    let called = false;
+    const result = await runDatabaseOperation(
+      pool,
+      {
+        operation: "demo-bootstrap",
+        ...demoBusiness,
+        demoReadOnlySetting: setting,
+      },
+      {
+        verifyMigrations: async () => ({
+          recorded: ["001_foundation"],
+          pending: [],
+          ledgerPresent: true,
+        }),
+        bootstrapDemo: async () => {
+          called = true;
+          return demoResult;
+        },
+      },
+    );
+    assert.equal(result.ok, true, JSON.stringify(setting));
+    assert.equal(called, true, JSON.stringify(setting));
+  }
+});
+
+test("an unrecognised demo flag is refused, never read as off", async () => {
+  for (const setting of ["2", "true", " 1", "1 ", "yes"]) {
+    const { pool } = demoFlagPool();
+    let called = false;
+    const result = await runDatabaseOperation(
+      pool,
+      {
+        operation: "demo-bootstrap",
+        ...demoBusiness,
+        demoReadOnlySetting: setting,
+      },
+      {
+        verifyMigrations: async () => ({
+          recorded: ["001_foundation"],
+          pending: [],
+          ledgerPresent: true,
+        }),
+        bootstrapDemo: async () => {
+          called = true;
+          return demoResult;
+        },
+      },
+    );
+    assert.equal(result.ok, false, JSON.stringify(setting));
+    assert.match(result.lines[0], /neither unset, 0 nor 1/);
+    assert.equal(called, false, JSON.stringify(setting));
+  }
+});
+
+test("demo-verify works with the flag enabled, disabled, or unset", async () => {
+  for (const setting of ["1", "0", "", undefined]) {
+    const { pool } = demoFlagPool();
+    const result = await runDatabaseOperation(
+      pool,
+      {
+        operation: "demo-verify",
+        ...demoBusiness,
+        demoReadOnlySetting: setting,
+      },
+      {
+        verifyMigrations: async () => ({
+          recorded: ["001_foundation"],
+          pending: [],
+          ledgerPresent: true,
+        }),
+        bootstrapDemo: async (_pool, _input, options) => {
+          assert.equal(options.verifyOnly, true);
+          return demoResult;
+        },
+      },
+    );
+    assert.equal(result.ok, true, JSON.stringify(setting));
+    // The flag is read, never written.
+    assert.match(
+      result.lines.join(" "),
+      /did not change PONTE_PUBLIC_DEMO_READ_ONLY/,
+    );
+  }
+});

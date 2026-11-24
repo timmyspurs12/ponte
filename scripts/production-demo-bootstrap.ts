@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Pool, PoolClient } from "pg";
+import { readDemoFlag, readOptionalUuid } from "./optional-environment";
 import {
   PUBLIC_DEMO_INVOICES,
   hasSimulatedSettlement,
@@ -157,24 +158,25 @@ export function assertPublicDemoBootstrapEnvironment(
     return stop("LOCAL_DATABASE");
   }
 
-  const administratorBusinessId = environment.PONTE_AUTH_BUSINESS_ID;
-  if (
-    !administratorBusinessId ||
-    !z.uuid().safeParse(administratorBusinessId).success
-  )
+  /*
+   * All three optional values arrive from a GitHub Actions job environment,
+   * where an unset repository variable is the empty string rather than absent.
+   * `optional-environment.ts` owns the distinction: absent and `""` are unset,
+   * whitespace-only is malformed, and anything non-empty must validate.
+   */
+  const administrator = readOptionalUuid(environment.PONTE_AUTH_BUSINESS_ID);
+  if (administrator.state !== "configured")
     return stop("ADMIN_BUSINESS_UNCONFIGURED");
+  const administratorBusinessId = administrator.value;
 
-  const configuredDemoBusinessId = environment.PONTE_PUBLIC_DEMO_BUSINESS_ID;
-  if (
-    configuredDemoBusinessId !== undefined &&
-    !z.uuid().safeParse(configuredDemoBusinessId).success
-  )
-    return stop("DEMO_CONFIG_MISMATCH");
+  const configuredDemo = readOptionalUuid(
+    environment.PONTE_PUBLIC_DEMO_BUSINESS_ID,
+  );
+  if (configuredDemo.state === "invalid") return stop("DEMO_CONFIG_MISMATCH");
 
-  const demoSetting = environment.PONTE_PUBLIC_DEMO_READ_ONLY;
-  if (demoSetting !== undefined && demoSetting !== "0" && demoSetting !== "1")
-    return stop("DEMO_CONFIG_MISMATCH");
-  if (demoSetting === "1" && !options.verifyOnly)
+  const demoSetting = readDemoFlag(environment.PONTE_PUBLIC_DEMO_READ_ONLY);
+  if (demoSetting.state === "invalid") return stop("DEMO_CONFIG_MISMATCH");
+  if (demoSetting.state === "enabled" && !options.verifyOnly)
     return stop("DEMO_ALREADY_ENABLED");
 
   return { connectionString, administratorBusinessId };
@@ -198,10 +200,13 @@ export function readPublicDemoBootstrapCommand(
     assertPublicDemoBootstrapEnvironment(environment, { verifyOnly });
   if (input.businessId === administratorBusinessId)
     return stop("ADMIN_BUSINESS_MISMATCH");
-  const configuredDemoBusinessId = environment.PONTE_PUBLIC_DEMO_BUSINESS_ID;
+  const configuredDemo = readOptionalUuid(
+    environment.PONTE_PUBLIC_DEMO_BUSINESS_ID,
+  );
+  if (configuredDemo.state === "invalid") return stop("DEMO_CONFIG_MISMATCH");
   if (
-    configuredDemoBusinessId !== undefined &&
-    configuredDemoBusinessId !== input.businessId
+    configuredDemo.state === "configured" &&
+    configuredDemo.value !== input.businessId.trim().toLowerCase()
   )
     return stop("DEMO_CONFIG_MISMATCH");
   return { input, verifyOnly, connectionString };

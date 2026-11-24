@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Pool, PoolClient } from "pg";
+import { readOptionalUuid } from "./optional-environment";
 
 const businessBootstrapInput = z.object({
   businessId: z.uuid(),
@@ -51,6 +52,23 @@ function refused(
 
 function failed(): never {
   throw new ProductionBusinessBootstrapError("FAILED");
+}
+
+/**
+ * `PONTE_AUTH_BUSINESS_ID` exactly as the deployed runtime will read it.
+ *
+ * Exported because the GitHub Actions CLI re-checks the private-UUID rule
+ * itself: a dispatch there can carry an empty string (an unset repository
+ * variable), and "unset" must be told apart from "malformed" before any pool
+ * exists. Returns `undefined` when the value is absent or exactly empty, and
+ * throws `REFUSED` when it is present but is not a UUID.
+ */
+export function readConfiguredAdministratorBusinessId(
+  environment: Record<string, string | undefined>,
+): string | undefined {
+  const parsed = readOptionalUuid(environment.PONTE_AUTH_BUSINESS_ID);
+  if (parsed.state === "invalid") return refused();
+  return parsed.state === "configured" ? parsed.value : undefined;
 }
 
 export function parseProductionBusinessBootstrapInput(

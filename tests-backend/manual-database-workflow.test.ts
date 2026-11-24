@@ -685,3 +685,138 @@ test("the workflow never enables the public demo and never edits env on Render",
   assert.equal(/render\.com\/v1\/services/.test(workflowSource), false);
   assert.equal(/curl\s/.test(workflowSource), false);
 });
+
+/* -------------------------------------------------------------------------- *
+ * Supply chain: every `uses:` is an immutable commit, from the official repo
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Verified at review time by resolving each tag through the GitHub API
+ * (`repos/<owner>/<repo>/git/ref/tags/<tag>` -> `.object.sha`) and confirming the
+ * commit exists in the same repository. A tag is mutable; a commit is not, so a
+ * reviewed workflow must not execute whatever a tag points at later.
+ */
+const PINNED_ACTIONS: Record<
+  string,
+  { sha: string; release: string; repository: string }
+> = {
+  "actions/checkout": {
+    sha: "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+    release: "v5.1.0",
+    repository: "https://github.com/actions/checkout",
+  },
+  "actions/setup-node": {
+    sha: "a0853c24544627f65ddf259abe73b1d18a591444",
+    release: "v5.0.0",
+    repository: "https://github.com/actions/setup-node",
+  },
+};
+
+test("every external action is pinned to a full commit SHA", () => {
+  const used = workflowSource.match(/uses:\s*\S+/g) ?? [];
+  assert.ok(
+    used.length >= 2,
+    "the workflow must use at least checkout and setup-node",
+  );
+  for (const statement of used) {
+    const reference = statement.replace(/uses:\s*/, "").trim();
+    // owner/repo@<40 hex characters>; a tag, branch, or short SHA fails this.
+    assert.match(
+      reference,
+      /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/,
+      `${reference} must be pinned to a full commit SHA`,
+    );
+  }
+});
+
+test("each pin is the intended release of the official action", () => {
+  for (const [action, pin] of Object.entries(PINNED_ACTIONS)) {
+    assert.ok(
+      workflowSource.includes(`uses: ${action}@${pin.sha}`),
+      `${action} must be pinned to ${pin.sha}`,
+    );
+    // A nearby comment names the release, so the pin is reviewable.
+    assert.ok(
+      workflowSource.includes(`${action} ${pin.release}`),
+      `${action} must carry a "// ${pin.release}" style comment`,
+    );
+    // The repository must be the upstream one, never a fork.
+    assert.match(pin.repository, /^https:\/\/github\.com\/actions\//);
+  }
+  // No floating tag may survive anywhere in the file.
+  assert.equal(/uses:\s*\S+@v\d/.test(workflowSource), false);
+  assert.equal(/uses:\s*\S+@(?:main|master)\b/.test(workflowSource), false);
+});
+
+test("the pinned SHAs match the pins already used elsewhere in this repo", () => {
+  // Independent corroboration: these workflows predate this phase and pin the
+  // same commits, so a transcription error here would be visible immediately.
+  const testnet = readFileSync(
+    ".github/workflows/stylus-testnet-artifact.yml",
+    "utf8",
+  );
+  for (const pin of Object.values(PINNED_ACTIONS)) {
+    assert.ok(
+      testnet.includes(pin.sha),
+      `${pin.sha} should also appear in stylus-testnet-artifact.yml`,
+    );
+  }
+});
+
+test("pinning changed neither the inputs nor the privileges", () => {
+  const job = workflow.jobs.operate;
+  const checkout = job.steps.find((step) =>
+    step.uses?.startsWith("actions/checkout@"),
+  );
+  const setup = job.steps.find((step) =>
+    step.uses?.startsWith("actions/setup-node@"),
+  );
+  assert.ok(checkout && setup);
+  // `checkout` still takes no inputs beyond its defaults; `setup-node` still
+  // takes exactly the two it took before.
+  assert.equal(checkout.with, undefined);
+  assert.deepEqual(setup.with, {
+    "node-version-file": ".node-version",
+    cache: "npm",
+  });
+  assert.deepEqual(workflow.permissions, { contents: "read" });
+});
+
+test("the secret is out of scope for checkout, install and validation", () => {
+  const job = workflow.jobs.operate;
+  const secret = "secrets.PONTE_DATABASE_URL_DIRECT";
+  const operateIndex = job.steps.findIndex((step) =>
+    step.run?.includes("db:ops:run"),
+  );
+  const validateIndex = job.steps.findIndex((step) =>
+    step.run?.includes("db:ops:validate"),
+  );
+  assert.ok(operateIndex > 0 && validateIndex > 0);
+  assert.ok(validateIndex < operateIndex);
+
+  // The secret is referenced exactly once in the entire file...
+  assert.equal((workflowSource.match(new RegExp(secret, "g")) ?? []).length, 1);
+  // ...and every step before the operating step is free of it, both in its
+  // `env:` block and anywhere in the raw YAML text of that step.
+  for (const step of job.steps.slice(0, operateIndex)) {
+    const rendered = JSON.stringify(step);
+    assert.equal(
+      rendered.includes(secret),
+      false,
+      `${step.name ?? step.uses} must not see the secret`,
+    );
+  }
+  // Checkout and setup-node take no secrets at all.
+  for (const step of job.steps.filter((step) => step.uses)) {
+    assert.equal(JSON.stringify(step).includes("secrets."), false, step.uses);
+  }
+  // The install and validation steps are the last two before the operation and
+  // neither receives a connection string.
+  const install = job.steps[operateIndex - 2];
+  assert.match(install.run ?? "", /npm ci/);
+  assert.equal(install.env, undefined);
+  const validate = job.steps[operateIndex - 1];
+  assert.match(validate.run ?? "", /db:ops:validate/);
+  assert.equal((validate.env ?? {}).DATABASE_URL, undefined);
+  assert.equal(JSON.stringify(validate).includes(secret), false);
+});

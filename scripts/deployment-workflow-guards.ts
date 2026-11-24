@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readOptionalUuid } from "./optional-environment";
 
 /**
  * Input validation and dispatch policy for the manual database workflow
@@ -159,12 +160,18 @@ export type GuardInput = {
   businessId: string;
   businessName: string;
   confirmation: string;
-  /** `PONTE_AUTH_BUSINESS_ID` from repository configuration. */
+  /**
+   * `PONTE_AUTH_BUSINESS_ID` from repository configuration. `undefined` and the
+   * exact empty string both mean "not configured" — GitHub resolves an unset
+   * `vars.*` to `""`, so a guard that only tested `undefined` would refuse every
+   * real dispatch.
+   */
   administratorBusinessId: string | undefined;
   /**
    * `PONTE_PUBLIC_DEMO_BUSINESS_ID` from repository configuration. Optional:
    * before the demo is enabled there is nothing to read, and the operator's
-   * input is then the only source of the demo UUID.
+   * input is then the only source of the demo UUID. `undefined` and `""` mean
+   * unset; any other non-empty value must be a UUID.
    */
   demoBusinessId?: string | undefined;
 };
@@ -295,10 +302,12 @@ function guardPrivateBootstrap(
   businessId: string,
   readOnly: boolean,
 ): GuardResult {
-  const administratorBusinessId = normalizeUuid(input.administratorBusinessId);
-  if (input.administratorBusinessId !== undefined && !administratorBusinessId) {
-    return { ok: false, failure: "ADMIN_BUSINESS_INVALID" };
-  }
+  const administrator = optionalConfiguredUuid(
+    input.administratorBusinessId,
+    "ADMIN_BUSINESS_INVALID",
+  );
+  if (!administrator.ok) return administrator;
+  const administratorBusinessId = administrator.value;
   if (administratorBusinessId) {
     if (businessId !== administratorBusinessId) {
       return { ok: false, failure: "BUSINESS_ID_DOES_NOT_MATCH_ADMIN" };
@@ -340,18 +349,22 @@ function guardDemoOperation(
   businessId: string,
   readOnly: boolean,
 ): GuardResult {
-  const administratorBusinessId = normalizeUuid(input.administratorBusinessId);
-  if (input.administratorBusinessId !== undefined && !administratorBusinessId) {
-    return { ok: false, failure: "ADMIN_BUSINESS_INVALID" };
-  }
+  const administrator = optionalConfiguredUuid(
+    input.administratorBusinessId,
+    "ADMIN_BUSINESS_INVALID",
+  );
+  if (!administrator.ok) return administrator;
+  const administratorBusinessId = administrator.value;
   if (administratorBusinessId && businessId === administratorBusinessId) {
     return { ok: false, failure: "BUSINESS_ID_MATCHES_ADMIN" };
   }
 
-  const configuredDemoBusinessId = normalizeUuid(input.demoBusinessId);
-  if (input.demoBusinessId !== undefined && !configuredDemoBusinessId) {
-    return { ok: false, failure: "DEMO_BUSINESS_ID_MISMATCH" };
-  }
+  const configuredDemo = optionalConfiguredUuid(
+    input.demoBusinessId,
+    "DEMO_BUSINESS_ID_MISMATCH",
+  );
+  if (!configuredDemo.ok) return configuredDemo;
+  const configuredDemoBusinessId = configuredDemo.value;
   if (configuredDemoBusinessId && businessId !== configuredDemoBusinessId) {
     return { ok: false, failure: "DEMO_BUSINESS_ID_MISMATCH" };
   }
@@ -368,11 +381,25 @@ function guardDemoOperation(
   };
 }
 
-/** Lower-cased UUID text, or `undefined` when the value is absent or invalid. */
-function normalizeUuid(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const normalized = value.trim().toLowerCase();
-  return z.uuid().safeParse(normalized).success ? normalized : undefined;
+/**
+ * Normalises one optional repository variable.
+ *
+ * `readOptionalUuid` is the shared rule: `undefined` and `""` are unset,
+ * whitespace-only is malformed, and anything else must parse. Guard failures
+ * are returned rather than thrown so the dispatch policy keeps one return shape.
+ */
+function optionalConfiguredUuid(
+  value: string | undefined,
+  failure: GuardFailure,
+):
+  | { ok: true; value: string | undefined }
+  | { ok: false; failure: GuardFailure } {
+  const parsed = readOptionalUuid(value);
+  if (parsed.state === "invalid") return { ok: false, failure };
+  return {
+    ok: true,
+    value: parsed.state === "configured" ? parsed.value : undefined,
+  };
 }
 
 /** One sentence per failure, safe to print in a workflow log. */

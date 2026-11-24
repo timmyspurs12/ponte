@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { DatabaseOperation } from "./deployment-workflow-guards";
+import { readDemoFlag } from "./optional-environment";
 
 /**
  * Executes exactly one approved database operation against a schema that has
@@ -116,6 +117,14 @@ export type RunOperationInput = {
    * the operation's `businessId` before any query runs.
    */
   configuredDemoBusinessId?: string;
+  /**
+   * `PONTE_PUBLIC_DEMO_READ_ONLY` as seen by the caller.
+   *
+   * The workflow CLI applies this rule in its preflight, but the runner repeats
+   * it so the invariant holds for every caller: a demo that is already enabled
+   * is never re-provisioned. `demo-verify` is read-only and is always allowed.
+   */
+  demoReadOnlySetting?: string;
 };
 
 /**
@@ -148,6 +157,44 @@ export async function runDatabaseOperation(
   }
 
   const verification = await dependencies.verifyMigrations(pool);
+
+  /*
+   * The demo flag is checked here, before any schema or write work, for both
+   * demo operations:
+   *
+   * - `demo-bootstrap` must never re-provision a demo that is already enabled;
+   * - `demo-verify` may run in either state, so for it the flag is only
+   *   validated.
+   *
+   * `"1"` is the sole enabled value. An absent value, `""` and `"0"` all mean
+   * disabled; anything else is a configuration error and is reported as such
+   * rather than quietly read as "off".
+   */
+  if (
+    operation.operation === "demo-bootstrap" ||
+    operation.operation === "demo-verify"
+  ) {
+    const demoFlag = readDemoFlag(operation.demoReadOnlySetting);
+    if (demoFlag.state === "invalid") {
+      return {
+        ok: false,
+        lines: [
+          "Refused: PONTE_PUBLIC_DEMO_READ_ONLY is neither unset, 0 nor 1. Fix the repository variable and the host environment together. Nothing was written.",
+        ],
+      };
+    }
+    if (
+      demoFlag.state === "enabled" &&
+      operation.operation === "demo-bootstrap"
+    ) {
+      return {
+        ok: false,
+        lines: [
+          "Refused: PONTE_PUBLIC_DEMO_READ_ONLY=1. Provision the synthetic demo before enabling it, then use demo-verify.",
+        ],
+      };
+    }
+  }
 
   if (operation.operation === "verify") {
     /*
@@ -272,7 +319,6 @@ export async function runDatabaseOperation(
     };
   }
 
-  // demo-bootstrap
   const bootstrapDemo = dependencies.bootstrapDemo ?? defaultBootstrapDemo;
   const result = await bootstrapDemo(
     pool,
@@ -325,9 +371,11 @@ async function runDemoVerify(
   }
 
   // The configured demo identifier is authoritative when present. Re-check it
-  // here so the rule holds even if a caller bypassed the dispatch guard.
+  // here so the rule holds even if a caller bypassed the dispatch guard. Both
+  // sides are compared case-insensitively: a UUID pasted in upper case names
+  // the same tenant, and refusing it would be a usability bug, not a safety one.
   const configured = operation.configuredDemoBusinessId?.trim().toLowerCase();
-  if (configured && configured !== operation.businessId.toLowerCase()) {
+  if (configured && configured !== operation.businessId.trim().toLowerCase()) {
     return {
       ok: false,
       lines: [

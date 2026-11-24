@@ -5,6 +5,8 @@ import {
 } from "../src/server/admin-database";
 import { verifyMigrations } from "./migrate";
 import { runDatabaseOperation } from "./database-operation-runner";
+import { readOptionalUuid } from "./optional-environment";
+import { readConfiguredAdministratorBusinessId } from "./production-business-bootstrap";
 import {
   guardFailureText,
   guardOperation,
@@ -39,6 +41,14 @@ import {
  * still runs, so a test cannot silently skip the rules the hosted path needs.
  */
 
+/**
+ * Reads the job environment into guard input.
+ *
+ * The three optional values are passed through untouched on purpose: the guard
+ * applies the shared normalisation, so a unit test that calls `guardOperation`
+ * directly exercises the same rule as a dispatch. A workflow maps an unset
+ * `vars.*` to `""`, and that is exactly what arrives here.
+ */
 function readInputs(environment: Record<string, string | undefined>) {
   return {
     eventName: environment.PONTE_DB_OPS_EVENT_NAME ?? "",
@@ -192,6 +202,32 @@ async function main(): Promise<void> {
       "Note: PONTE_PUBLIC_DEMO_BUSINESS_ID is not set; the tenant named on the dispatch is the only source of the demo UUID.",
     );
 
+  /*
+   * The guard can only check `business-bootstrap` against a private UUID that is
+   * configured. This repeats the rule with the typed reader so the "unset",
+   * "malformed" and "matching" cases are decided in one place — still before any
+   * pool exists.
+   */
+  if (operation.operation === "business-bootstrap") {
+    let configured: string | undefined;
+    try {
+      configured = readConfiguredAdministratorBusinessId(process.env);
+    } catch {
+      console.error(
+        "Refused: PONTE_AUTH_BUSINESS_ID is set but is not a UUID; fix the repository variable before dispatching.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (configured && configured !== operation.businessId) {
+      console.error(
+        "Refused: business-bootstrap must use exactly PONTE_AUTH_BUSINESS_ID; otherwise the deployed service would point at a tenant that was never created. Use demo-bootstrap for the synthetic demo tenant.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const preflightFailure = await preflight(operation, process.env, forcedLocal);
   if (preflightFailure) {
     process.exitCode = 1;
@@ -207,13 +243,20 @@ async function main(): Promise<void> {
 
   const pool = new Pool(transport.transport);
   try {
+    const configuredDemo = readOptionalUuid(
+      process.env.PONTE_PUBLIC_DEMO_BUSINESS_ID,
+    );
     const result = await runDatabaseOperation(
       pool,
       {
         operation: operation.operation,
         businessId: operation.businessId,
         businessName: operation.businessName,
-        configuredDemoBusinessId: process.env.PONTE_PUBLIC_DEMO_BUSINESS_ID,
+        configuredDemoBusinessId:
+          configuredDemo.state === "configured"
+            ? configuredDemo.value
+            : undefined,
+        demoReadOnlySetting: process.env.PONTE_PUBLIC_DEMO_READ_ONLY,
       },
       { verifyMigrations },
     );

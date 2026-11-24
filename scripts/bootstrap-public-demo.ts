@@ -38,6 +38,9 @@ const failureText: Record<string, string> = {
 async function main(): Promise<void> {
   let pool: Pool | undefined;
   try {
+    // `readPublicDemoBootstrapCommand` already applies the typed readers to
+    // every optional value, so `PONTE_PUBLIC_DEMO_READ_ONLY=""` from an unset
+    // Actions variable is understood as "disabled" instead of a config error.
     const { input, verifyOnly, connectionString } =
       readPublicDemoBootstrapCommand(process.argv.slice(2), process.env);
     // Phase 1.3.9: synthetic-demo provisioning is administrative, so it uses
