@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Pool, PoolClient } from "pg";
+import { OWNER_ROLE } from "../src/server/database-provisioning";
 import { readOptionalUuid } from "./optional-environment";
 
 const businessBootstrapInput = z.object({
@@ -177,6 +178,13 @@ export async function bootstrapProductionBusiness(
     database = await pool.connect();
     await database.query("BEGIN");
     transactionOpen = true;
+    /**
+     * Operator provisioning is administrative work, not a request handler.
+     * `businesses` is SELECT-only for the application identity, so this CLI
+     * elevates for the duration of its own transaction. `SET LOCAL` reverts at
+     * COMMIT/ROLLBACK, so the pooled connection is never returned elevated.
+     */
+    await database.query(`SET LOCAL ROLE ${OWNER_ROLE}`);
 
     const inserted = await database.query<{ id: string; name: string }>(
       "INSERT INTO businesses(id,name) VALUES($1,$2) ON CONFLICT (id) DO NOTHING RETURNING id,name",

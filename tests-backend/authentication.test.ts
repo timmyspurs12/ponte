@@ -27,6 +27,7 @@ import {
   githubOAuthChecks,
   safeAuthRedirect,
 } from "../src/auth";
+import { fixtures } from "./helpers/fixtures";
 
 let githubSequence = BigInt(Date.now());
 const githubId = (_suffix: string) => `9${(githubSequence++).toString()}`;
@@ -140,7 +141,7 @@ const apiError = (code: string) => (error: unknown) =>
 
 async function business(name: string): Promise<string> {
   const id = randomUUID();
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [id, name]);
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [id, name]);
   return id;
 }
 
@@ -252,19 +253,19 @@ test("duplicate provider subjects and identity remapping are rejected by Postgre
     policy,
   );
   const otherUser = randomUUID();
-  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
     otherUser,
     `${otherUser}@identity.invalid`,
   ]);
   await assert.rejects(
-    pool.query(
+    fixtures(
       "INSERT INTO external_identities(provider,subject,user_id,display_name) VALUES('github',$1,$2,'other-account')",
       [subject, otherUser],
     ),
     (error) => (error as { code?: string }).code === "23505",
   );
   await assert.rejects(
-    pool.query(
+    fixtures(
       "UPDATE external_identities SET user_id=$1 WHERE provider='github' AND subject=$2",
       [otherUser, mapped.subject],
     ),
@@ -351,7 +352,7 @@ test("unknown GitHub users and disabled memberships do not outlive their authori
     { subject: adminSubject, login: "configured-admin" },
     policy,
   );
-  await pool.query(
+  await fixtures(
     "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
     [privateBusiness, administrator.userId],
   );
@@ -490,7 +491,7 @@ test("Auth.js rechecks active PostgreSQL membership after session issuance", asy
       const beforeDisable = await invoicesResponse(cookie);
       assert.equal(beforeDisable.status, 200);
 
-      await pool.query(
+      await fixtures(
         "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
         [privateBusiness, identity.userId],
       );

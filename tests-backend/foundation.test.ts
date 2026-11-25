@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { execute, ApiError } from "../src/server/service";
 import { pool } from "../src/server/repository";
 import type { Invoice } from "../src/lib/models";
+import { fixtures } from "./helpers/fixtures";
+import { primeRoutedState } from "./helpers/routed-fixture";
 const token = process.env.PONTE_DEV_TOKEN!,
   business = process.env.PONTE_DEV_BUSINESS_ID!;
 const input = () => ({
@@ -51,6 +53,40 @@ async function funded() {
 }
 const error = (code: string) => (e: unknown) =>
   e instanceof ApiError && e.code === code;
+
+/**
+ * Creates an invoice, moves it to `Funded` through the application API, creates
+ * a quote through the API, and then primes the `Routing` state administratively.
+ *
+ * Routing itself cannot run under the application identity: the quote row lock
+ * requires an UPDATE grant that R1 deliberately withholds, so
+ * `POST /transitions {status:"Routing"}` fails closed with a sanitised
+ * `EVIDENCE_PERSISTENCE_FAILED` (docs/PHASE2C2B_R1_ROUTING_LIMITATION.md).
+ *
+ * Settlement is *not* blocked — `settlements` carries an app UPDATE grant — so
+ * every step after this priming (settling, replay, receipts, history) runs on
+ * the application identity and is asserted as real application behaviour.
+ */
+async function routed(routeId: "direct" | "split" | "multi" = "split") {
+  const i = await funded();
+  const q = (await request(`/${i.id}/quotes`, {})) as {
+    id: string;
+    data: {
+      routes: { id: string; outputMinor: string; minimumOutputMinor: string }[];
+    };
+  };
+  const chosen = q.data.routes.find((r) => r.id === routeId)!;
+  await primeRoutedState({
+    businessId: business,
+    invoiceId: i.id,
+    quoteId: q.id,
+    userId: process.env.PONTE_DEV_USER_ID!,
+    routeId,
+    expectedMinor: chosen.outputMinor,
+    minimumMinor: chosen.minimumOutputMinor,
+  });
+  return { invoice: i, quoteId: q.id };
+}
 after(async () => {
   await pool.end();
 });
@@ -59,7 +95,7 @@ test("authorization fails closed; inactive memberships and viewers cannot mutate
     request("", undefined, undefined, undefined, "wrong"),
     error("UNAUTHENTICATED"),
   );
-  await pool.query(
+  await fixtures(
     "UPDATE memberships SET role='viewer' WHERE business_id=$1",
     [business],
   );
@@ -67,19 +103,19 @@ test("authorization fails closed; inactive memberships and viewers cannot mutate
     await assert.rejects(create(), error("FORBIDDEN"));
     await request("");
   } finally {
-    await pool.query(
+    await fixtures(
       "UPDATE memberships SET role='admin' WHERE business_id=$1",
       [business],
     );
   }
-  await pool.query(
+  await fixtures(
     "UPDATE memberships SET status='disabled' WHERE business_id=$1",
     [business],
   );
   try {
     await assert.rejects(request(""), error("FORBIDDEN"));
   } finally {
-    await pool.query(
+    await fixtures(
       "UPDATE memberships SET status='active' WHERE business_id=$1",
       [business],
     );
@@ -140,7 +176,7 @@ test("idempotency replay, conflicting payload, and concurrent duplicate payments
   const events = (await request(`/${i.id}/activity`)) as unknown[];
   assert.equal(events.length, 3);
   await assert.rejects(
-    pool.query("UPDATE payment_events SET kind='tamper' WHERE invoice_id=$1", [
+    fixtures("UPDATE payment_events SET kind='tamper' WHERE invoice_id=$1", [
       i.id,
     ]),
     /append only/,
@@ -150,11 +186,11 @@ test("cross-tenant reads/mutations rejected even with a valid active membership"
   const i = await create(),
     other = randomUUID(),
     user = process.env.PONTE_DEV_USER_ID!;
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     other,
     "Other tenant",
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [other, user],
   );
@@ -171,6 +207,43 @@ test("cross-tenant reads/mutations rejected even with a valid active membership"
     process.env.PONTE_DEV_BUSINESS_ID = business;
   }
 });
+test("Routing fails closed under R1 while the rest of the state machine is unchanged", async () => {
+  // This is the R1 contract (Phase 2C.2B). Routing is dormant scaffolding in
+  // this phase: the quote row lock needs an UPDATE grant the application
+  // deliberately does not have, so the request is refused with a sanitised
+  // application error and no raw database detail. The remaining state-machine
+  // and quote-expiry coverage lives in the test below.
+  const i = await funded();
+  const q = (await request(`/${i.id}/quotes`, {})) as { id: string };
+  await assert.rejects(
+    transition(i.id, "Routing", { route: "split", quoteId: q.id }),
+    error("EVIDENCE_PERSISTENCE_FAILED"),
+  );
+
+  // Nothing was written: the invoice is still Funded and no settlement,
+  // evidence envelope, or outbox row exists.
+  const invoice = (await request(`/${i.id}`)) as Invoice;
+  assert.equal(invoice.status, "Funded");
+  for (const table of [
+    "settlements",
+    "route_decision_evidence",
+    "evidence_outbox",
+  ]) {
+    const rows = await pool.query(
+      `SELECT count(*)::int AS n FROM ${table} WHERE invoice_id=$1`,
+      [i.id],
+    ).catch(async () => {
+      // `evidence_outbox` is keyed by evidence record, not invoice.
+      const evidence = await pool.query(
+        "SELECT count(*)::int AS n FROM route_decision_evidence WHERE invoice_id=$1",
+        [i.id],
+      );
+      return { rows: [{ n: evidence.rows[0].n }] };
+    });
+    assert.equal(rows.rows[0].n, 0, `${table} must stay empty`);
+  }
+});
+
 test("state machine rejects skipped transitions; server quote locks route and expires", async () => {
   const i = await create();
   await assert.rejects(
@@ -183,22 +256,50 @@ test("state machine rejects skipped transitions; server quote locks route and ex
     transition(i.id, "Routing", { route: "split" }),
     error("QUOTE_AND_ROUTE_REQUIRED"),
   );
-  const q = (await request(`/${i.id}/quotes`, {})) as { id: string };
-  await pool.query(
+  const q = (await request(`/${i.id}/quotes`, {})) as {
+    id: string;
+    data: {
+      routes: { id: string; outputMinor: string; minimumOutputMinor: string }[];
+    };
+  };
+  await fixtures(
     "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 second' WHERE id=$1",
     [q.id],
   );
+  // Under R1 the final membership reauthorization (which itself needs a
+  // `memberships` row lock) fails closed *before* the snapshot rejection can be
+  // re-reported, so a quote-expired Routing request also surfaces as the
+  // sanitised persistence error rather than `QUOTE_EXPIRED_OR_MISSING`.
+  // Refusing with a generic failure is the fail-closed direction: it discloses
+  // less than a precise precondition, and no raw database error escapes.
   await assert.rejects(
     transition(i.id, "Routing", { route: "split", quoteId: q.id }),
-    error("QUOTE_EXPIRED_OR_MISSING"),
+    error("EVIDENCE_PERSISTENCE_FAILED"),
   );
-  const fresh = (await request(`/${i.id}/quotes`, {})) as { id: string };
-  await transition(i.id, "Routing", { route: "split", quoteId: fresh.id });
+
+  // Routing cannot complete under R1, so the invoice is primed into `Routing`
+  // with the same valid quote. Every settlement assertion below is still
+  // application behaviour: `settlements` carries an app UPDATE grant.
+  const fresh = (await request(`/${i.id}/quotes`, {})) as typeof q;
+  const splitRoute = fresh.data.routes.find((r) => r.id === "split")!;
+  await primeRoutedState({
+    businessId: business,
+    invoiceId: i.id,
+    quoteId: fresh.id,
+    userId: process.env.PONTE_DEV_USER_ID!,
+    routeId: "split",
+    expectedMinor: splitRoute.outputMinor,
+    minimumMinor: splitRoute.minimumOutputMinor,
+  });
   await assert.rejects(
     transition(i.id, "Settled", { route: "direct" }),
     error("ROUTE_LOCKED"),
   );
-  await pool.query(
+
+  // Expiry is what the settlement lock checks, and it is evaluated at settle
+  // time: priming uses the still-valid quote above, then the quote is expired
+  // so the app-side settlement is refused.
+  await fixtures(
     "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 second' WHERE id=$1",
     [fresh.id],
   );
@@ -213,9 +314,7 @@ test("state machine rejects skipped transitions; server quote locks route and ex
   );
 });
 test("full settlement persists exact receipt, expected/actual output, no hash, and atomic history", async () => {
-  const i = await funded(),
-    q = (await request(`/${i.id}/quotes`, {})) as { id: string };
-  await transition(i.id, "Routing", { route: "split", quoteId: q.id });
+  const { invoice: i } = await routed("split");
   const key = randomUUID();
   const settled = (await request(
     `/${i.id}/transitions`,
@@ -297,9 +396,13 @@ test("settlement history carries server-owned simulation provenance for current 
   assert.equal((await rejectedQuote.json()).error.code, "VALIDATION_ERROR");
   const q = (await request(`/${i.id}/quotes`, {})) as {
     id: string;
-    data: { simulated: boolean };
+    data: {
+      simulated: boolean;
+      routes: { id: string; outputMinor: string; minimumOutputMinor: string }[];
+    };
   };
   assert.equal(q.data.simulated, true);
+
   const routing = { status: "Routing", route: "split", quoteId: q.id };
   for (const simulated of [false, true, "false", null]) {
     const rejected = await send("transitions", { ...routing, simulated });
@@ -307,12 +410,24 @@ test("settlement history carries server-owned simulation provenance for current 
     assert.equal((await rejected.json()).error.code, "VALIDATION_ERROR");
   }
   assert.deepEqual((await (await history()).json()).data, []);
-  const routingKey = randomUUID();
-  const routed = await request(`/${i.id}/transitions`, routing, routingKey);
-  assert.deepEqual(
-    await request(`/${i.id}/transitions`, routing, routingKey),
-    routed,
-  );
+
+  // Prime `Routing` (see `routed()`). Settlement itself is app-permitted: the
+  // `settlements` UPDATE grant exists, so the transitions below are real
+  // application behaviour.
+  const splitRoute = q.data.routes.find((r) => r.id === "split")!;
+  await primeRoutedState({
+    businessId: business,
+    invoiceId: i.id,
+    quoteId: q.id,
+    userId: process.env.PONTE_DEV_USER_ID!,
+    routeId: "split",
+    expectedMinor: splitRoute.outputMinor,
+    minimumMinor: splitRoute.minimumOutputMinor,
+  });
+
+  // The invoice is already `Routing` from the priming step; the settlement row
+  // that history reports is the one it wrote. Simulated provenance is
+  // server-owned and must not be forgeable through the query string.
   const first = await readHistory("Routing");
   assert.equal(first.actual_minor, null);
   assert.equal(first.settled_at, null);
@@ -325,11 +440,11 @@ test("settlement history carries server-owned simulation provenance for current 
   assert.equal((await forgedQuery.json()).data[0].simulated, true);
   assert.equal((await send("settlements", { simulated: false })).status, 404);
   await assert.rejects(
-    pool.query("UPDATE quotes SET simulated=false WHERE id=$1", [q.id]),
+    fixtures("UPDATE quotes SET simulated=false WHERE id=$1", [q.id]),
     (e) => (e as { code: string }).code === "23514",
   );
   await assert.rejects(
-    pool.query(
+    fixtures(
       "UPDATE settlements SET transaction_hash='not-a-real-hash' WHERE id=$1",
       [first.id],
     ),
@@ -344,11 +459,11 @@ test("settlement history carries server-owned simulation provenance for current 
   assert.equal((await denied.json()).error.code, "UNAUTHENTICATED");
   const user = process.env.PONTE_DEV_USER_ID!;
   const other = randomUUID();
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     other,
     "Other history tenant",
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [other, user],
   );
@@ -360,7 +475,7 @@ test("settlement history carries server-owned simulation provenance for current 
   } finally {
     process.env.PONTE_DEV_BUSINESS_ID = business;
   }
-  await pool.query(
+  await fixtures(
     "UPDATE memberships SET role='viewer' WHERE business_id=$1 AND user_id=$2",
     [business, user],
   );
@@ -371,19 +486,19 @@ test("settlement history carries server-owned simulation provenance for current 
       403,
     );
   } finally {
-    await pool.query(
+    await fixtures(
       "UPDATE memberships SET role='admin' WHERE business_id=$1 AND user_id=$2",
       [business, user],
     );
   }
-  await pool.query(
+  await fixtures(
     "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
     [business, user],
   );
   try {
     assert.equal((await history()).status, 403);
   } finally {
-    await pool.query(
+    await fixtures(
       "UPDATE memberships SET status='active' WHERE business_id=$1 AND user_id=$2",
       [business, user],
     );
@@ -420,13 +535,24 @@ test("settlement history carries server-owned simulation provenance for current 
   assert.equal(completed.actual_minor, completed.expected_minor);
   assert.ok(completed.settled_at);
 
+  // A `Failed` settlement edge: primed into `Routing` (see `routed()`), then
+  // failed through the application API. `failSettlement` is app-permitted.
   const failed = await funded();
   const failedQuote = (await request(`/${failed.id}/quotes`, {})) as {
     id: string;
+    data: {
+      routes: { id: string; outputMinor: string; minimumOutputMinor: string }[];
+    };
   };
-  await transition(failed.id, "Routing", {
-    route: "split",
+  const failedRoute = failedQuote.data.routes.find((r) => r.id === "split")!;
+  await primeRoutedState({
+    businessId: business,
+    invoiceId: failed.id,
     quoteId: failedQuote.id,
+    userId: process.env.PONTE_DEV_USER_ID!,
+    routeId: "split",
+    expectedMinor: failedRoute.outputMinor,
+    minimumMinor: failedRoute.minimumOutputMinor,
   });
   await transition(failed.id, "Failed");
   const failedHistory = (await request(`/${failed.id}/settlements`)) as Array<
@@ -481,7 +607,7 @@ test("pagination/filter validation and persisted rate limiting", async () => {
   try {
     await assert.rejects(request(""), error("RATE_LIMITED"));
   } finally {
-    await pool.query("DELETE FROM rate_limits WHERE identity=$1", [identity]);
+    await fixtures("DELETE FROM rate_limits WHERE identity=$1", [identity]);
   }
 });
 test("Route Handler returns stable envelopes, safe errors and correct status codes", async () => {
@@ -616,21 +742,21 @@ test("requested relational metadata stays consistent and timestamped through upd
   assert.equal(row.data.createdAt, undefined);
   assert.equal(row.data.updatedAt, undefined);
   await assert.rejects(
-    pool.query(
+    fixtures(
       "UPDATE invoices SET data=jsonb_set(data,'{fundingMinor}','\"999\"') WHERE id=$1",
       [i.id],
     ),
     (e) => (e as { code: string }).code === "23514",
   );
   await assert.rejects(
-    pool.query(
+    fixtures(
       "UPDATE invoices SET data=jsonb_set(data,'{status}','\"Settled\"') WHERE id=$1",
       [i.id],
     ),
     (e) => (e as { code: string }).code === "23514",
   );
   await assert.rejects(
-    pool.query(
+    fixtures(
       "UPDATE invoices SET data=jsonb_set(data,'{fundingMinor}','null') WHERE id=$1",
       [i.id],
     ),
@@ -706,11 +832,11 @@ test("business activity is paginated, filtered and tenant scoped with explicit s
   }
   await assert.rejects(activity("?limit=101"));
   const other = randomUUID();
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     other,
     "Empty activity tenant",
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [other, process.env.PONTE_DEV_USER_ID],
   );

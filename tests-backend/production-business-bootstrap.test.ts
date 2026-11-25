@@ -2,6 +2,14 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { pool } from "../src/server/repository";
+import { operatorPool } from "./helpers/operator-pool";
+
+/**
+ * The operator CLIs run administrative provisioning: they elevate with
+ * `SET LOCAL ROLE ponte_owner` because `businesses` is SELECT-only for the
+ * application identity. They therefore take the operator pool, not the
+ * application pool the tests use for assertions.
+ */
 import {
   ProductionBusinessBootstrapError,
   bootstrapProductionBusiness,
@@ -29,7 +37,7 @@ test("production business bootstrap creates exactly one private business record"
     "SELECT (SELECT count(*) FROM users) AS users,(SELECT count(*) FROM memberships) AS memberships,(SELECT count(*) FROM external_identities) AS external_identities,(SELECT count(*) FROM invoices) AS invoices,(SELECT count(*) FROM route_decision_evidence) AS evidence",
   );
   const businessId = randomUUID();
-  const result = await bootstrapProductionBusiness(pool, {
+  const result = await bootstrapProductionBusiness(operatorPool(), {
     businessId,
     businessName: "Bootstrap-only private business",
   });
@@ -68,10 +76,10 @@ test("production business bootstrap is idempotent for matching normalized detail
     businessName: "Repeatable private business",
   };
 
-  assert.deepEqual(await bootstrapProductionBusiness(pool, input), {
+  assert.deepEqual(await bootstrapProductionBusiness(operatorPool(), input), {
     created: true,
   });
-  assert.deepEqual(await bootstrapProductionBusiness(pool, input), {
+  assert.deepEqual(await bootstrapProductionBusiness(operatorPool(), input), {
     created: false,
   });
   assert.deepEqual(
@@ -91,13 +99,13 @@ test("production business bootstrap is idempotent for matching normalized detail
 
 test("production business bootstrap rejects a reused UUID with conflicting details", async () => {
   const businessId = randomUUID();
-  await bootstrapProductionBusiness(pool, {
+  await bootstrapProductionBusiness(operatorPool(), {
     businessId,
     businessName: "Original private business",
   });
 
   await assert.rejects(
-    bootstrapProductionBusiness(pool, {
+    bootstrapProductionBusiness(operatorPool(), {
       businessId,
       businessName: "Conflicting private business",
     }),

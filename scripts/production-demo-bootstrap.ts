@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Pool, PoolClient } from "pg";
+import { OWNER_ROLE } from "../src/server/database-provisioning";
 import { readDemoFlag, readOptionalUuid } from "./optional-environment";
 import {
   PUBLIC_DEMO_INVOICES,
@@ -394,6 +395,12 @@ export async function bootstrapPublicDemo(
     database = await pool.connect();
     await database.query(verifyOnly ? "BEGIN READ ONLY" : "BEGIN");
     transactionOpen = true;
+    /**
+     * Synthetic demo provisioning is administrative too: it writes `businesses`,
+     * which the application identity may only read. Transaction-local elevation
+     * keeps the pooled connection unchanged on release.
+     */
+    await database.query(`SET LOCAL ROLE ${OWNER_ROLE}`);
 
     if (verifyOnly) {
       const result = await verifyPublicDemoContent(database, input);

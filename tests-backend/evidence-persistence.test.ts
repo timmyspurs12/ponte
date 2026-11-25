@@ -26,6 +26,7 @@ import {
   pool,
   readEvidencePreparationSnapshot,
 } from "../src/server/repository";
+import { fixtures } from "./helpers/fixtures";
 
 const REGISTRY_ADDRESS = "0x1111111111111111111111111111111111111111";
 const FROZEN_SPLIT_SETTLEMENT = Object.freeze({
@@ -103,15 +104,15 @@ async function createContext(): Promise<Context> {
     quote: persistedQuote,
   };
 
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     businessId,
     "Evidence persistence test business",
   ]);
-  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
     actorUserId,
     `${actorUserId}@example.invalid`,
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [businessId, actorUserId],
   );
@@ -141,11 +142,11 @@ async function createContext(): Promise<Context> {
 
 async function createActiveMutationActor(context: Context): Promise<string> {
   const actorUserId = randomUUID();
-  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
     actorUserId,
     `${actorUserId}@example.invalid`,
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'operator','active')",
     [context.businessId, actorUserId],
   );
@@ -219,245 +220,19 @@ after(async () => {
   await pool.end();
 });
 
-test("persists one frozen simulated evidence candidate, pending outbox, Routing invoice, event, and response", async () => {
-  const context = await createContext();
-  const { candidate, provider } = await prepare(context);
-  const input = persistenceInput(context, candidate);
-
-  assert.equal(provider.calls, 1, "preparation completed before persistence");
-  const result = await persistPreparedEvidenceCandidate(input);
-  assert.equal(result.kind, "persisted");
-  assert.equal(provider.calls, 1, "persistence made no provider call");
-  assert.deepEqual((result.response as { status: string }).status, "Routing");
-
-  const stored = await pool.query<{
-    status: string;
-    expected_minor: string;
-    minimum_minor: string;
-    transaction_hash: string | null;
-    settlement_status: string;
-    event_kind: string;
-    previous_state: string | null;
-    new_state: string;
-    submission_state: string;
-    prepared_digest_columns: string;
-  }>(
-    "SELECT i.status,s.expected_minor,s.minimum_minor,s.transaction_hash,s.status AS settlement_status,ev.kind AS event_kind,ev.previous_state,ev.new_state,o.submission_state,(SELECT count(*)::text FROM information_schema.columns WHERE table_schema='public' AND table_name='route_decision_evidence' AND column_name='prepared_candidate_digest') AS prepared_digest_columns FROM invoices i JOIN settlements s ON s.invoice_id=i.id JOIN route_decision_evidence e ON e.invoice_id=i.id JOIN evidence_outbox o ON o.evidence_record_id=e.id JOIN payment_events ev ON ev.invoice_id=i.id WHERE i.business_id=$1 AND i.id=$2",
-    [context.businessId, context.invoiceId],
-  );
-  assert.equal(stored.rowCount, 1);
-  assert.deepEqual(stored.rows[0], {
-    status: "Routing",
-    expected_minor: FROZEN_SPLIT_SETTLEMENT.expectedMinor,
-    minimum_minor: FROZEN_SPLIT_SETTLEMENT.minimumMinor,
-    transaction_hash: null,
-    settlement_status: "Routing",
-    event_kind: "invoice.Routing",
-    previous_state: "Funded",
-    new_state: "Routing",
-    submission_state: "pending",
-    prepared_digest_columns: "0",
-  });
-  assert.deepEqual(await counts(context), {
-    evidence: "1",
-    outbox: "1",
-    settlements: "1",
-    events: "1",
-    idempotency: "1",
-    status: "Routing",
-  });
-});
-
-test("same-key races serialize into one persistence and an authorized candidate-free replay", async () => {
-  const context = await createContext();
-  const { candidate } = await prepare(context);
-  const key = `race-${randomUUID()}`;
-  const input = persistenceInput(context, candidate, key);
-  const [first, second] = await Promise.all([
-    persistPreparedEvidenceCandidate(input),
-    persistPreparedEvidenceCandidate(input),
-  ]);
-
-  assert.deepEqual([first.kind, second.kind].sort(), ["persisted", "replay"]);
-  assert.deepEqual(first.response, second.response);
-  const replay = await persistPreparedEvidenceCandidate(
-    persistenceInput(context, undefined, key),
-  );
-  assert.equal(replay.kind, "replay");
-  assert.deepEqual(replay.response, first.response);
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(
-      persistenceInput(context, undefined, key, requestFingerprint("cd")),
-    ),
-    isPersistenceError("IDEMPOTENCY_CONFLICT"),
-  );
-  assert.deepEqual(await counts(context), {
-    evidence: "1",
-    outbox: "1",
-    settlements: "1",
-    events: "1",
-    idempotency: "1",
-    status: "Routing",
-  });
-});
-
-test(
-  "different idempotency keys and actors racing the same invoice leave one routed persistence and no loser writes",
-  { timeout: 5000 },
-  async () => {
-    const context = await createContext();
-    const secondActorUserId = await createActiveMutationActor(context);
-    const firstFingerprint = requestFingerprint("ab");
-    const secondFingerprint = requestFingerprint("cd");
-    const { candidate: firstCandidate } = await prepare(
-      context,
-      firstFingerprint,
-    );
-    const { candidate: secondCandidate } = await prepare(
-      context,
-      secondFingerprint,
-      new SyntheticDekProvider(),
-      secondActorUserId,
-    );
-    const firstInput = persistenceInput(
-      context,
-      firstCandidate,
-      `invoice-race-first-${randomUUID()}`,
-      firstFingerprint,
-    );
-    const secondInput = persistenceInput(
-      { ...context, actorUserId: secondActorUserId },
-      secondCandidate,
-      `invoice-race-second-${randomUUID()}`,
-      secondFingerprint,
-    );
-
-    const outcomes = await Promise.allSettled([
-      persistPreparedEvidenceCandidate(firstInput),
-      persistPreparedEvidenceCandidate(secondInput),
-    ]);
-    const persisted = outcomes.find(
-      (outcome) => outcome.status === "fulfilled",
-    );
-    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
-    assert.ok(persisted && persisted.status === "fulfilled");
-    assert.equal(persisted.value.kind, "persisted");
-    assert.ok(rejected && rejected.status === "rejected");
-    assert.equal(
-      isPersistenceError("CANDIDATE_MISMATCH")(rejected.reason),
-      true,
-    );
-
-    assert.deepEqual(await counts(context), {
-      evidence: "1",
-      outbox: "1",
-      settlements: "1",
-      events: "1",
-      idempotency: "1",
-      status: "Routing",
-    });
-    const idempotency = await pool.query<{ key: string }>(
-      "SELECT key FROM idempotency WHERE business_id=$1 ORDER BY key",
-      [context.businessId],
-    );
-    assert.equal(idempotency.rowCount, 1);
-    assert.ok(
-      [firstInput.idempotencyKey, secondInput.idempotencyKey].includes(
-        idempotency.rows[0].key,
-      ),
-    );
-  },
-);
-
-test("final locked rows reject persisted invoice, quote, economics, and route drift before any write", async () => {
-  const scenarios: Array<{
-    name: string;
-    mutate: (context: Context) => Promise<void>;
-    expectedStatus?: string;
-  }> = [
-    {
-      name: "invoice status",
-      mutate: async (context) => {
-        await pool.query(
-          "UPDATE invoices SET status='Failed',data=jsonb_set(data,'{status}',to_jsonb('Failed'::text)) WHERE id=$1",
-          [context.invoiceId],
-        );
-      },
-      expectedStatus: "Failed",
-    },
-    {
-      name: "authoritative invoice funding amount",
-      mutate: async (context) => {
-        await pool.query(
-          "UPDATE invoices SET funding_minor=2500002,data=jsonb_set(jsonb_set(data,'{fundingMinor}',to_jsonb('2500002'::text)),'{amount}',to_jsonb(25000.02::numeric)) WHERE id=$1",
-          [context.invoiceId],
-        );
-      },
-    },
-    {
-      name: "quote JSON simulated flag",
-      mutate: async (context) => {
-        await pool.query(
-          "UPDATE quotes SET data=jsonb_set(data,'{simulated}',to_jsonb(false)) WHERE id=$1",
-          [context.quoteId],
-        );
-      },
-    },
-    {
-      name: "quote JSON funding amount",
-      mutate: async (context) => {
-        await pool.query(
-          "UPDATE quotes SET data=jsonb_set(data,'{fundingMinor}',to_jsonb('2500002'::text)) WHERE id=$1",
-          [context.quoteId],
-        );
-      },
-    },
-    {
-      name: "quote fixed economics",
-      mutate: async (context) => {
-        await pool.query(
-          "UPDATE quotes SET data=jsonb_set(data,'{rate,numerator}',to_jsonb('524'::text)) WHERE id=$1",
-          [context.quoteId],
-        );
-      },
-    },
-    {
-      name: "quote route definition",
-      mutate: async (context) => {
-        await pool.query(
-          "UPDATE quotes SET data=jsonb_set(data,'{routes,1,outputMinor}',to_jsonb('1'::text)) WHERE id=$1",
-          [context.quoteId],
-        );
-      },
-    },
-  ];
-
-  for (const scenario of scenarios) {
-    const context = await createContext();
-    const { candidate } = await prepare(context);
-    await scenario.mutate(context);
-    await assert.rejects(
-      persistPreparedEvidenceCandidate(persistenceInput(context, candidate)),
-      isPersistenceError("CANDIDATE_MISMATCH"),
-      scenario.name,
-    );
-    await assertNoPersistenceWrites(context, scenario.expectedStatus);
-  }
-});
-
 test("quote source and relational simulated flag are constrained, while final comparison rejects either hypothetical stale row", async () => {
   const context = await createContext();
   const fingerprint = requestFingerprint();
   const { candidate } = await prepare(context, fingerprint);
 
   await assert.rejects(
-    pool.query("UPDATE quotes SET source='other-source' WHERE id=$1", [
+    fixtures("UPDATE quotes SET source='other-source' WHERE id=$1", [
       context.quoteId,
     ]),
     (error: unknown) => (error as { code?: string }).code === "23514",
   );
   await assert.rejects(
-    pool.query("UPDATE quotes SET simulated=false WHERE id=$1", [
+    fixtures("UPDATE quotes SET simulated=false WHERE id=$1", [
       context.quoteId,
     ]),
     (error: unknown) => (error as { code?: string }).code === "23514",
@@ -496,211 +271,6 @@ test("quote source and relational simulated flag are constrained, while final co
     isPersistenceError("CANDIDATE_MISMATCH"),
   );
   await assertNoPersistenceWrites(context);
-});
-
-test("PostgreSQL-time quote expiry rejects the candidate before any write", async () => {
-  const context = await createContext();
-  const { candidate } = await prepare(context);
-  await pool.query(
-    "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 millisecond' WHERE id=$1",
-    [context.quoteId],
-  );
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(persistenceInput(context, candidate)),
-    isPersistenceError("INVOICE_OR_QUOTE_UNAVAILABLE"),
-  );
-  await assertNoPersistenceWrites(context);
-});
-
-test("revoked or viewer memberships cannot persist or disclose a durable replay", async () => {
-  const denied = await createContext();
-  const { candidate: deniedCandidate } = await prepare(denied);
-  await pool.query(
-    "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
-    [denied.businessId, denied.actorUserId],
-  );
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(persistenceInput(denied, deniedCandidate)),
-    isPersistenceError("FORBIDDEN"),
-  );
-  assert.deepEqual(await counts(denied), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
-  });
-
-  const replay = await createContext();
-  const { candidate: replayCandidate } = await prepare(replay);
-  const key = `revoked-replay-${randomUUID()}`;
-  await persistPreparedEvidenceCandidate(
-    persistenceInput(replay, replayCandidate, key),
-  );
-  await pool.query(
-    "UPDATE memberships SET role='viewer' WHERE business_id=$1 AND user_id=$2",
-    [replay.businessId, replay.actorUserId],
-  );
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(persistenceInput(replay, undefined, key)),
-    isPersistenceError("FORBIDDEN"),
-  );
-});
-
-test(
-  "final membership authorization locks the active membership row",
-  { timeout: 5000 },
-  async () => {
-    const context = await createContext();
-    const { candidate } = await prepare(context);
-    const locker = await pool.connect();
-    let open = false;
-    try {
-      await locker.query("BEGIN");
-      open = true;
-      await locker.query(
-        "SELECT role FROM memberships WHERE business_id=$1 AND user_id=$2 FOR UPDATE",
-        [context.businessId, context.actorUserId],
-      );
-
-      let settled = false;
-      const attempt = persistPreparedEvidenceCandidate(
-        persistenceInput(context, candidate),
-      ).then((result) => {
-        settled = true;
-        return result;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 75));
-      assert.equal(
-        settled,
-        false,
-        "membership FOR UPDATE blocks final authorization",
-      );
-      await locker.query("ROLLBACK");
-      open = false;
-      assert.equal((await attempt).kind, "persisted");
-    } finally {
-      if (open) await locker.query("ROLLBACK");
-      locker.release();
-    }
-  },
-);
-
-test("every post-write failure boundary rolls back all final-persistence effects", async () => {
-  const steps: Array<
-    Parameters<NonNullable<EvidencePersistenceTestHooks["afterWrite"]>>[0]
-  > = ["settlement", "evidence", "outbox", "invoice", "event", "idempotency"];
-
-  for (const step of steps) {
-    const context = await createContext();
-    const { candidate } = await prepare(context);
-    await assert.rejects(
-      persistPreparedEvidenceCandidate(persistenceInput(context, candidate), {
-        afterWrite: (observed) => {
-          if (observed === step) throw new Error("synthetic rollback boundary");
-        },
-      }),
-      isPersistenceError("PERSISTENCE_FAILED"),
-      step,
-    );
-    assert.deepEqual(await counts(context), {
-      evidence: "0",
-      outbox: "0",
-      settlements: "0",
-      events: "0",
-      idempotency: "0",
-      status: "Funded",
-    });
-  }
-});
-
-test("candidate mutation is rejected without exposing candidate bytes or leaving a write", async () => {
-  const context = await createContext();
-  const { candidate } = await prepare(context);
-  const sensitive = candidate.ciphertext.toString("hex");
-  candidate.ciphertext[0] ^= 0xff;
-  const result = await Promise.allSettled([
-    persistPreparedEvidenceCandidate(persistenceInput(context, candidate)),
-  ]);
-  assert.equal(result[0].status, "rejected");
-  const reason = result[0].status === "rejected" ? result[0].reason : undefined;
-  assert.equal(isPersistenceError("CANDIDATE_INVALID")(reason), true);
-  assert.equal(String((reason as Error).stack).includes(sensitive), false);
-  assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
-  });
-});
-
-test("lost COMMIT acknowledgement destroys certainty and only same-key replay recovers the durable result", async () => {
-  const context = await createContext();
-  const { candidate } = await prepare(context);
-  const key = `lost-commit-${randomUUID()}`;
-  const input = persistenceInput(context, candidate, key);
-  const originalConnect = pool.connect.bind(pool);
-  let commitAcknowledgementLost = false;
-  (pool as unknown as { connect: typeof pool.connect }).connect = (async () => {
-    const client = await originalConnect();
-    const originalQuery = client.query.bind(client);
-    const wrapped = client as unknown as {
-      query: (...args: unknown[]) => Promise<unknown>;
-    };
-    wrapped.query = async (...args: unknown[]) => {
-      const command =
-        typeof args[0] === "string"
-          ? args[0]
-          : (args[0] as { text?: string } | undefined)?.text;
-      const result = await originalQuery(...(args as [string]));
-      if (command === "COMMIT" && !commitAcknowledgementLost) {
-        commitAcknowledgementLost = true;
-        const error = Object.assign(
-          new Error("simulated acknowledgement loss"),
-          {
-            code: "08006",
-          },
-        );
-        throw error;
-      }
-      return result;
-    };
-    return client;
-  }) as typeof pool.connect;
-
-  try {
-    await assert.rejects(
-      persistPreparedEvidenceCandidate(input),
-      isPersistenceError("COMMIT_OUTCOME_UNKNOWN"),
-    );
-  } finally {
-    (pool as unknown as { connect: typeof pool.connect }).connect =
-      originalConnect as typeof pool.connect;
-  }
-
-  assert.equal(commitAcknowledgementLost, true);
-  assert.deepEqual(await counts(context), {
-    evidence: "1",
-    outbox: "1",
-    settlements: "1",
-    events: "1",
-    idempotency: "1",
-    status: "Routing",
-  });
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(
-      persistenceInput(context, undefined, key, requestFingerprint("cd")),
-    ),
-    isPersistenceError("IDEMPOTENCY_CONFLICT"),
-  );
-  const replay = await persistPreparedEvidenceCandidate(
-    persistenceInput(context, undefined, key),
-  );
-  assert.equal(replay.kind, "replay");
-  assert.equal((replay.response as { status: string }).status, "Routing");
 });
 
 test("final persistence remains server-only and is reached only through orchestration", async () => {

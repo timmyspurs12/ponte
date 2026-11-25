@@ -46,7 +46,18 @@ async function main(): Promise<void> {
     // Phase 1.3.9: synthetic-demo provisioning is administrative, so it uses
     // the direct endpoint with verified TLS. `max: 1` keeps the operator's
     // footprint to a single slot on the smallest Neon compute.
-    const transport = adminDatabaseTransport(connectionString);
+    /**
+     * Administrative credential, not the application's.
+     *
+     * The provisioning work below elevates with `SET LOCAL ROLE ponte_owner`,
+     * which only `ponte_migrator` (LOGIN NOINHERIT, granted `SET TRUE`) can do.
+     * An application-identity URL would be refused at that statement, so the
+     * operator credential is read explicitly and never falls back to
+     * `DATABASE_URL`.
+     */
+    const transport = adminDatabaseTransport(
+      process.env.PONTE_OPERATOR_DATABASE_URL,
+    );
     if (!transport.ok) {
       console.error(
         `Synthetic public demo provisioning refused: ${adminDatabaseFailureText[transport.failure]}`,

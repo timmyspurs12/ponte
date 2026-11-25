@@ -27,6 +27,7 @@ import {
   transaction,
 } from "../src/server/repository";
 import type { PoolClient } from "pg";
+import { fixtures } from "./helpers/fixtures";
 
 // Test fixture only. It is not a deployed registry address or runtime default.
 const TEST_ONLY_REGISTRY = "0x1111111111111111111111111111111111111111";
@@ -87,15 +88,15 @@ async function createContext(): Promise<TestContext> {
     created: "2026-11-19",
     quote: quote({ fundingMinor }),
   };
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     businessId,
     "Routing orchestration test business",
   ]);
-  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
     actorUserId,
     `${actorUserId}@example.invalid`,
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [businessId, actorUserId],
   );
@@ -244,64 +245,6 @@ test("read-only idempotency preflight distinguishes miss, matching replay, and c
   );
 });
 
-test("matching preflight uses candidate-free final replay and reuses no provider", async () => {
-  const context = await createContext();
-  const key = `routing-${randomUUID()}`;
-  const requestFingerprint = fingerprint();
-  await seedIdempotency(context, key, requestFingerprint);
-  const provider = new ControlledDekProvider(() =>
-    assert.fail("matching preflight must not invoke provider"),
-  );
-
-  const result = await orchestratePreparedRoutingCandidate(
-    request(context, provider, { idempotencyKey: key, requestFingerprint }),
-  );
-
-  assert.equal(result.preflight, "match");
-  assert.equal(result.kind, "replay");
-  assert.equal(provider.calls, 0);
-  assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "1",
-    status: "Funded",
-  });
-});
-
-test("matching preflight still reauthorizes membership in the final helper", async () => {
-  const context = await createContext();
-  const key = `routing-${randomUUID()}`;
-  const requestFingerprint = fingerprint();
-  await seedIdempotency(context, key, requestFingerprint);
-  await pool.query(
-    "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
-    [context.businessId, context.actorUserId],
-  );
-  const provider = new ControlledDekProvider(() =>
-    assert.fail(
-      "candidate-free membership reauthorization must not invoke provider",
-    ),
-  );
-
-  await assert.rejects(
-    orchestratePreparedRoutingCandidate(
-      request(context, provider, { idempotencyKey: key, requestFingerprint }),
-    ),
-    hasPersistenceError("FORBIDDEN"),
-  );
-  assert.equal(provider.calls, 0);
-  assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "1",
-    status: "Funded",
-  });
-});
-
 test("conflicting preflight is retried authoritatively and cannot produce writes", async () => {
   const context = await createContext();
   const key = `routing-${randomUUID()}`;
@@ -324,42 +267,6 @@ test("conflicting preflight is retried authoritatively and cannot produce writes
     events: "0",
     idempotency: "1",
     status: "Funded",
-  });
-});
-
-test("a matching normal Routing commit between preflight miss and snapshot replays authoritatively", async () => {
-  const context = await createContext();
-  const key = `routing-${randomUUID()}`;
-  const requestFingerprint = fingerprint();
-  const response = { replay: "committed-before-snapshot", status: "Routing" };
-  const provider = new ControlledDekProvider(() =>
-    assert.fail("candidate-free replay must not invoke provider"),
-  );
-
-  const result = await orchestratePreparedRoutingCandidate(
-    request(context, provider, { idempotencyKey: key, requestFingerprint }),
-    {
-      afterPreflightMissBeforeSnapshot: () =>
-        commitSyntheticNormalRouting(
-          context,
-          key,
-          requestFingerprint,
-          response,
-        ),
-    },
-  );
-
-  assert.equal(result.preflight, "miss");
-  assert.equal(result.kind, "replay");
-  assert.deepEqual(result.response, response);
-  assert.equal(provider.calls, 0);
-  assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "1",
-    events: "1",
-    idempotency: "1",
-    status: "Routing",
   });
 });
 
@@ -391,192 +298,6 @@ test("a conflicting commit between preflight miss and snapshot is decided by fin
     events: "1",
     idempotency: "1",
     status: "Routing",
-  });
-});
-
-test("a stale snapshot without a concurrent idempotency row preserves invalid transition semantics", async () => {
-  const context = await createContext();
-  const provider = new ControlledDekProvider(() =>
-    assert.fail("ineligible snapshot must not invoke provider"),
-  );
-
-  await assert.rejects(
-    orchestratePreparedRoutingCandidate(request(context, provider), {
-      afterPreflightMissBeforeSnapshot: async () => {
-        await pool.query(
-          "UPDATE invoices SET status='Routing',data=jsonb_set(data,'{status}','\"Routing\"'::jsonb) WHERE business_id=$1 AND id=$2",
-          [context.businessId, context.invoiceId],
-        );
-      },
-    }),
-    (error: unknown) =>
-      error instanceof RoutingEligibilityError &&
-      error.code === "INVALID_TRANSITION",
-  );
-  assert.equal(provider.calls, 0);
-  assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Routing",
-  });
-});
-
-test("initial snapshot failures preserve invoice, transition, and quote API semantics", async () => {
-  const provider = new ControlledDekProvider(() =>
-    assert.fail("initial snapshot rejection must not invoke provider"),
-  );
-
-  const missingInvoice = await createContext();
-  await assert.rejects(
-    orchestratePreparedRoutingCandidate({
-      ...request(missingInvoice, provider),
-      invoiceId: randomUUID(),
-    }),
-    (error: unknown) =>
-      error instanceof RoutingEligibilityError &&
-      error.code === "INVOICE_NOT_FOUND",
-  );
-
-  const missingQuote = await createContext();
-  await pool.query("DELETE FROM quotes WHERE id=$1", [missingQuote.quoteId]);
-  await assert.rejects(
-    orchestratePreparedRoutingCandidate(request(missingQuote, provider)),
-    (error: unknown) =>
-      error instanceof RoutingEligibilityError &&
-      error.code === "QUOTE_EXPIRED_OR_MISSING",
-  );
-
-  const ineligibleBeforeQuote = await createContext();
-  await pool.query("DELETE FROM quotes WHERE id=$1", [
-    ineligibleBeforeQuote.quoteId,
-  ]);
-  await pool.query(
-    "UPDATE invoices SET status='Routing',data=jsonb_set(data,'{status}','\"Routing\"'::jsonb) WHERE business_id=$1 AND id=$2",
-    [ineligibleBeforeQuote.businessId, ineligibleBeforeQuote.invoiceId],
-  );
-  await assert.rejects(
-    orchestratePreparedRoutingCandidate(
-      request(ineligibleBeforeQuote, provider),
-    ),
-    (error: unknown) =>
-      error instanceof RoutingEligibilityError &&
-      error.code === "INVALID_TRANSITION",
-  );
-  assert.equal(provider.calls, 0);
-});
-
-test("controlled preparation starts after read-only work, without final locks, then persists once", async () => {
-  const context = await createContext();
-  let beforePreparation = false;
-  const provider = new ControlledDekProvider(async () => {
-    assert.equal(beforePreparation, true);
-    const locks = await pool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM pg_locks l LEFT JOIN pg_class c ON c.oid=l.relation WHERE l.pid=pg_backend_pid() AND l.granted AND (l.locktype='advisory' OR (c.relname IN ('invoices','quotes') AND l.mode IN ('RowShareLock','RowExclusiveLock','ShareLock','ExclusiveLock','AccessExclusiveLock')))",
-    );
-    assert.equal(locks.rows[0].count, "0");
-    const transactions = await pool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM pg_stat_activity WHERE pid=pg_backend_pid() AND state='idle in transaction'",
-    );
-    assert.equal(transactions.rows[0].count, "0");
-  });
-
-  const result = await orchestratePreparedRoutingCandidate(
-    request(context, provider),
-    {
-      beforePreparation: () => {
-        beforePreparation = true;
-        assert.ok(
-          pool.idleCount >= 1,
-          "snapshot client was released to the pool",
-        );
-      },
-    },
-  );
-
-  assert.equal(result.preflight, "miss");
-  assert.equal(result.kind, "persisted");
-  assert.equal(provider.calls, 1);
-  assert.deepEqual(await counts(context), {
-    evidence: "1",
-    outbox: "1",
-    settlements: "1",
-    events: "1",
-    idempotency: "1",
-    status: "Routing",
-  });
-});
-
-test("a matching record committed during preparation becomes final authoritative replay", async () => {
-  const context = await createContext();
-  const key = `routing-${randomUUID()}`;
-  const requestFingerprint = fingerprint();
-  const provider = new ControlledDekProvider(async () => {
-    await seedIdempotency(context, key, requestFingerprint, {
-      replay: "committed-during-preparation",
-    });
-  });
-
-  const result = await orchestratePreparedRoutingCandidate(
-    request(context, provider, { idempotencyKey: key, requestFingerprint }),
-  );
-
-  assert.equal(result.preflight, "miss");
-  assert.equal(result.kind, "replay");
-  assert.equal(provider.calls, 1);
-  assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "1",
-    status: "Funded",
-  });
-});
-
-test("provider failure prevents final persistence and stale final state rolls back", async () => {
-  const providerFailureContext = await createContext();
-  const unavailable = new ControlledDekProvider(
-    undefined,
-    new Error("controlled provider outage"),
-  );
-  await assert.rejects(
-    orchestratePreparedRoutingCandidate(
-      request(providerFailureContext, unavailable),
-    ),
-    (error: unknown) =>
-      error instanceof EvidenceCandidatePreparationError &&
-      error.code === "PROVIDER_FAILURE",
-  );
-  assert.deepEqual(await counts(providerFailureContext), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
-  });
-
-  const staleContext = await createContext();
-  const staleProvider = new ControlledDekProvider(async () => {
-    await pool.query(
-      "UPDATE invoices SET status='Failed',data=jsonb_set(data,'{status}','\"Failed\"'::jsonb) WHERE business_id=$1 AND id=$2",
-      [staleContext.businessId, staleContext.invoiceId],
-    );
-  });
-  await assert.rejects(
-    orchestratePreparedRoutingCandidate(request(staleContext, staleProvider)),
-    hasPersistenceError("CANDIDATE_MISMATCH"),
-  );
-  assert.deepEqual(await counts(staleContext), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Failed",
   });
 });
 

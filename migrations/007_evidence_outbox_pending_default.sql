@@ -1,0 +1,29 @@
+-- Phase 2C.2B: the outbox row created with an evidence record starts in
+-- `pending`, and the *database* is the thing that says so.
+--
+-- Before this migration the application had to name the value explicitly:
+--
+--   INSERT INTO evidence_outbox(id,evidence_record_id,submission_state)
+--   VALUES($1,$2,'pending')
+--
+-- That works, but it means the application holds INSERT privilege on
+-- `submission_state`. A column-level INSERT grant cannot restrict *which value*
+-- is written, so the same grant that permits 'pending' also permits
+-- 'submitted' and 'confirmed' — states that only a confirmer is allowed to
+-- produce. The narrow grant is only meaningful if the application never has to
+-- name the column at all.
+--
+-- With this default the application inserts exactly two columns:
+--
+--   INSERT INTO evidence_outbox(id,evidence_record_id) VALUES($1,$2)
+--
+-- and `submission_state` cannot be named in the INSERT column list because it
+-- is not granted. 'submitted' / 'confirmed' become unreachable for the
+-- application identity by privilege, not by discipline.
+--
+-- The CHECK constraint is unchanged: this adds a default, it does not widen
+-- the permitted set of states. `ALTER COLUMN ... SET DEFAULT` is a catalog-only
+-- change; it does not rewrite the table or take a long lock, and existing rows
+-- are untouched.
+ALTER TABLE evidence_outbox
+  ALTER COLUMN submission_state SET DEFAULT 'pending';

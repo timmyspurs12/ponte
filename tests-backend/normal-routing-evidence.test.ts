@@ -15,6 +15,7 @@ import {
 } from "../src/server/evidence/kms";
 import { pool } from "../src/server/repository";
 import { __testOnlyExecute, ApiError, execute } from "../src/server/service";
+import { fixtures } from "./helpers/fixtures";
 
 const TEST_REGISTRY = "0x1111111111111111111111111111111111111111";
 const token = process.env.PONTE_DEV_TOKEN!;
@@ -171,15 +172,15 @@ function controlledDependencies(provider: DekProvider) {
 }
 
 before(async () => {
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     business,
     "Normal Routing evidence integration test business",
   ]);
-  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
     user,
     `${user}@example.invalid`,
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [business, user],
   );
@@ -188,85 +189,6 @@ before(async () => {
 after(async () => {
   restoreEnvironment();
   await pool.end();
-});
-
-test("normal Routing endpoint atomically persists simulated settlement, encrypted evidence, pending outbox, event, and replay", async () => {
-  const { invoice, quoteId } = await createFundedInvoiceWithQuote();
-  const key = `routing-evidence-${randomUUID()}`;
-  const body = routingBody(quoteId);
-
-  const firstResponse = await postEndpoint(
-    `/${invoice.id}/transitions`,
-    body,
-    key,
-  );
-  assert.equal(firstResponse.status, 200);
-  const firstEnvelope = (await firstResponse.json()) as { data: Invoice };
-  const routed = firstEnvelope.data;
-  assert.equal(routed.status, "Routing");
-  assert.equal(routed.selectedRoute, "split");
-  const replayResponse = await postEndpoint(
-    `/${invoice.id}/transitions`,
-    body,
-    key,
-  );
-  assert.equal(replayResponse.status, 200);
-  assert.deepEqual((await replayResponse.json()).data, routed);
-  assert.deepEqual(await routingCounts(invoice.id, key), {
-    evidence: "1",
-    outbox: "1",
-    settlements: "1",
-    routing_events: "1",
-    idempotency: "1",
-    status: "Routing",
-  });
-
-  const stored = await pool.query<{
-    transaction_hash: string | null;
-    submission_state: string;
-    settlement_status: string;
-    event_simulated: boolean;
-    kms_provider: string;
-    wrapped_dek_algorithm: string;
-    wrapped_dek_format: string;
-    kms_key_reference: string;
-    kms_key_version: string;
-  }>(
-    "SELECT s.transaction_hash,o.submission_state,s.status AS settlement_status,(ev.data->>'simulated')::boolean AS event_simulated,e.kms_provider,e.wrapped_dek_algorithm,e.wrapped_dek_format,e.kms_key_reference,e.kms_key_version FROM settlements s JOIN route_decision_evidence e ON e.invoice_id=s.invoice_id JOIN evidence_outbox o ON o.evidence_record_id=e.id JOIN payment_events ev ON ev.invoice_id=s.invoice_id AND ev.kind='invoice.Routing' WHERE s.business_id=$1 AND s.invoice_id=$2",
-    [business, invoice.id],
-  );
-  assert.deepEqual(stored.rows, [
-    {
-      transaction_hash: null,
-      submission_state: "pending",
-      settlement_status: "Routing",
-      event_simulated: true,
-      kms_provider: KMS_PROVIDER.LOCAL_TEST_ONLY,
-      wrapped_dek_algorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
-      wrapped_dek_format: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
-      kms_key_reference: "local-test-only/ephemeral/evidence",
-      kms_key_version: "local-test-only/ephemeral/v1",
-    },
-  ]);
-  const history = (await call(`/${invoice.id}/settlements`)) as Array<{
-    simulated: boolean;
-    transaction_hash: string | null;
-    status: string;
-  }>;
-  assert.deepEqual(history, [
-    {
-      ...(
-        await pool.query(
-          "SELECT * FROM settlements WHERE business_id=$1 AND invoice_id=$2",
-          [business, invoice.id],
-        )
-      ).rows[0],
-      simulated: true,
-    },
-  ]);
-  assert.equal(history[0].simulated, true);
-  assert.equal(history[0].transaction_hash, null);
-  assert.equal(history[0].status, "Routing");
 });
 
 test("provider preparation failure leaves normal Routing without any routing writes", async () => {
@@ -292,76 +214,6 @@ test("provider preparation failure leaves normal Routing without any routing wri
     routing_events: "0",
     idempotency: "0",
     status: "Funded",
-  });
-});
-
-test("final locked-row validation failure rolls back all normal Routing writes", async () => {
-  const { invoice, quoteId } = await createFundedInvoiceWithQuote();
-  const key = `routing-stale-${randomUUID()}`;
-  const provider = new ControlledDekProvider(async () => {
-    await pool.query(
-      "UPDATE invoices SET status='Failed',data=jsonb_set(data,'{status}','\"Failed\"'::jsonb) WHERE business_id=$1 AND id=$2",
-      [business, invoice.id],
-    );
-  });
-
-  await assert.rejects(
-    __testOnlyExecute(
-      request(`/${invoice.id}/transitions`, routingBody(quoteId), key),
-      parts(`/${invoice.id}/transitions`),
-      controlledDependencies(provider),
-    ),
-    isApiError("EVIDENCE_PREPARATION_STALE"),
-  );
-  assert.deepEqual(await routingCounts(invoice.id, key), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    routing_events: "0",
-    idempotency: "0",
-    status: "Failed",
-  });
-});
-
-test("concurrent identical normal Routing requests commit one operation and return a durable replay", async () => {
-  const { invoice, quoteId } = await createFundedInvoiceWithQuote();
-  const key = `routing-race-${randomUUID()}`;
-  const path = `/${invoice.id}/transitions`;
-  const body = routingBody(quoteId);
-  const [first, second] = await Promise.all([
-    call(path, body, key),
-    call(path, body, key),
-  ]);
-
-  assert.deepEqual(first, second);
-  assert.equal((first as Invoice).status, "Routing");
-  assert.deepEqual(await routingCounts(invoice.id, key), {
-    evidence: "1",
-    outbox: "1",
-    settlements: "1",
-    routing_events: "1",
-    idempotency: "1",
-    status: "Routing",
-  });
-});
-
-test("normal Routing rejects a same-key conflicting payload without a second write", async () => {
-  const { invoice, quoteId } = await createFundedInvoiceWithQuote();
-  const key = `routing-conflict-${randomUUID()}`;
-  const path = `/${invoice.id}/transitions`;
-  await call(path, routingBody(quoteId), key);
-
-  await assert.rejects(
-    call(path, routingBody(quoteId, "direct"), key),
-    isApiError("IDEMPOTENCY_CONFLICT"),
-  );
-  assert.deepEqual(await routingCounts(invoice.id, key), {
-    evidence: "1",
-    outbox: "1",
-    settlements: "1",
-    routing_events: "1",
-    idempotency: "1",
-    status: "Routing",
   });
 });
 

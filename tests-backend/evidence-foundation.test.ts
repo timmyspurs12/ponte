@@ -16,9 +16,15 @@ import {
   WRAPPED_DEK_ALGORITHM,
   WRAPPED_DEK_FORMAT,
 } from "../src/server/evidence/kms";
+import { fixtures, fixturesRead } from "./helpers/fixtures";
 
 function bytes(length: number, value: number) {
   return Buffer.alloc(length, value);
+}
+
+/** SQLSTATE of a direct database denial; keeps assertions off message text. */
+function sqlstateOf(error: unknown): string | undefined {
+  return (error as { code?: string } | undefined)?.code;
 }
 
 function testOnlyEvidenceId() {
@@ -49,15 +55,15 @@ async function createContext() {
     quote: quote({ fundingMinor: "2500001" }),
   };
 
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     businessId,
     "Evidence repository test business",
   ]);
-  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
     userId,
     `${userId}@example.invalid`,
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [businessId, userId],
   );
@@ -145,6 +151,35 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
   const outboxId = randomUUID();
   const publicEvidenceId = testOnlyEvidenceId();
 
+  // R1 (Phase 2C.2B): the application identity holds SELECT+INSERT on `quotes`
+  // and no UPDATE, and PostgreSQL requires UPDATE on a table for *every* row-lock
+  // mode. `lockValidQuoteForEvidence` therefore fails closed with 42501. Evidence
+  // persistence is dormant scaffolding in this phase; Routing stays unavailable
+  // under the application identity until a separately reviewed lock-only design
+  // exists. See docs/PHASE2C2B_R1_ROUTING_LIMITATION.md.
+  await assert.rejects(
+    transaction(async (db) => {
+      await lockValidQuoteForEvidence(
+        db,
+        context.businessId,
+        context.invoiceId,
+        context.quoteId,
+      );
+    }),
+    (error) => sqlstateOf(error) === "42501",
+  );
+
+  // The quote lock is the first statement in the transaction, so the denial
+  // leaves no partial write behind: nothing from that attempt can be visible.
+  const afterDenial = await pool.query(
+    "SELECT count(*)::int AS n FROM route_decision_evidence WHERE id=$1",
+    [evidenceId],
+  );
+  assert.equal(afterDenial.rows[0].n, 0);
+
+  // What remains reachable for the application is the invoice lock (invoices has
+  // a scoped UPDATE grant), and the two writes it is allowed to make: the full
+  // 29-column evidence envelope and the pending-only outbox row.
   await transaction(async (db) => {
     const lockedInvoice = await lockInvoiceForEvidence(
       db,
@@ -159,23 +194,6 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
       funding_minor: "2500001",
       funding_currency: "BRL",
       data: context.invoice,
-    });
-
-    const locked = await lockValidQuoteForEvidence(
-      db,
-      context.businessId,
-      context.invoiceId,
-      context.quoteId,
-    );
-    assert.equal(locked.rowCount, 1);
-    assert.deepEqual(locked.rows[0], {
-      id: context.quoteId,
-      business_id: context.businessId,
-      invoice_id: context.invoiceId,
-      source: "simulation-fixed-525",
-      simulated: true,
-      expires_at: new Date("2027-12-20T00:00:00.123Z"),
-      data: context.quote,
     });
 
     await insertRouteDecisionEvidence(db, {
@@ -213,44 +231,60 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
       id: outboxId,
       evidenceRecordId: evidenceId,
     });
-
-    const stored = await db.query(
-      "SELECT e.public_evidence_id,e.wrapped_dek,e.kms_provider,e.wrapped_dek_algorithm,e.wrapped_dek_format,e.kms_key_reference,e.kms_key_version,o.submission_state,o.attempt_count FROM route_decision_evidence e JOIN evidence_outbox o ON o.evidence_record_id=e.id WHERE e.id=$1",
-      [evidenceId],
-    );
-    assert.equal(stored.rowCount, 1);
-    assert.deepEqual(stored.rows[0].public_evidence_id, publicEvidenceId);
-    assert.deepEqual(stored.rows[0].wrapped_dek, bytes(48, 8));
-    assert.equal(stored.rows[0].kms_provider, KMS_PROVIDER.LOCAL_TEST_ONLY);
-    assert.equal(
-      stored.rows[0].wrapped_dek_algorithm,
-      WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
-    );
-    assert.equal(
-      stored.rows[0].wrapped_dek_format,
-      WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
-    );
-    assert.equal(
-      stored.rows[0].kms_key_reference,
-      "local-test-only/repository/evidence",
-    );
-    assert.equal(
-      stored.rows[0].kms_key_version,
-      "local-test-only/repository/v1",
-    );
-    assert.equal(stored.rows[0].submission_state, "pending");
-    assert.equal(stored.rows[0].attempt_count, 0);
   });
 
-  await transaction(async (db) => {
-    const crossTenantQuote = await lockValidQuoteForEvidence(
-      db,
-      context.businessId,
-      context.invoiceId,
-      randomUUID(),
-    );
-    assert.equal(crossTenantQuote.rowCount, 0);
-  });
+  // The application may read back only its public commitment projection: the
+  // sensitive envelope/KMS columns have no SELECT grant. `wrapped_dek` is read
+  // here through the administrative helper, which is the documented division.
+  const stored = await pool.query(
+    "SELECT e.public_evidence_id,e.kms_provider,o.submission_state FROM route_decision_evidence e JOIN evidence_outbox o ON o.evidence_record_id=e.id WHERE e.id=$1",
+    [evidenceId],
+  );
+  assert.equal(stored.rowCount, 1);
+  assert.deepEqual(stored.rows[0].public_evidence_id, publicEvidenceId);
+  assert.equal(stored.rows[0].kms_provider, KMS_PROVIDER.LOCAL_TEST_ONLY);
+  assert.equal(stored.rows[0].submission_state, "pending");
+
+  // `attempt_count` and the envelope columns are outside the application's
+  // SELECT projection, so the read that needs them runs on the admin helper.
+  const privateRow = await fixturesRead(
+    "SELECT wrapped_dek, wrapped_dek_algorithm, wrapped_dek_format, kms_key_reference, kms_key_version, attempt_count FROM route_decision_evidence e JOIN evidence_outbox o ON o.evidence_record_id=e.id WHERE e.id=$1",
+    [evidenceId],
+  );
+
+  assert.equal(privateRow.rowCount, 1);
+  assert.equal(privateRow.rows[0].attempt_count, 0);
+  assert.deepEqual(privateRow.rows[0].wrapped_dek, bytes(48, 8));
+  assert.equal(
+    privateRow.rows[0].wrapped_dek_algorithm,
+    WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+  );
+  assert.equal(
+    privateRow.rows[0].wrapped_dek_format,
+    WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
+  );
+  assert.equal(
+    privateRow.rows[0].kms_key_reference,
+    "local-test-only/repository/evidence",
+  );
+  assert.equal(
+    privateRow.rows[0].kms_key_version,
+    "local-test-only/repository/v1",
+  );
+
+  // A quote lock naming a quote that does not belong to the tenant fails closed
+  // for the same privilege reason before it could ever report zero rows.
+  await assert.rejects(
+    transaction(async (db) => {
+      await lockValidQuoteForEvidence(
+        db,
+        context.businessId,
+        context.invoiceId,
+        randomUUID(),
+      );
+    }),
+    (error) => sqlstateOf(error) === "42501",
+  );
 });
 
 test("evidence preparation snapshot returns the exact persisted invoice and valid quote", async () => {
@@ -327,7 +361,7 @@ test("evidence preparation snapshots scope invoice/quote identities and report m
 
 test("evidence preparation snapshot treats an expired quote as missing or expired", async () => {
   const context = await createContext();
-  await pool.query(
+  await fixtures(
     "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 millisecond' WHERE id=$1",
     [context.quoteId],
   );
@@ -357,20 +391,20 @@ test("evidence preparation snapshot keeps relational funding authoritative and g
   assert.equal(before.invoice.data.fundingCurrency, "BRL");
 
   await assert.rejects(
-    pool.query("UPDATE invoices SET funding_currency='USD' WHERE id=$1", [
+    fixtures("UPDATE invoices SET funding_currency='USD' WHERE id=$1", [
       context.invoiceId,
     ]),
     (error) => (error as { code?: string }).code === "428C9",
   );
   await assert.rejects(
-    pool.query(
+    fixtures(
       "UPDATE invoices SET data=jsonb_set(data,'{fundingMinor}',to_jsonb('2500002'::text)) WHERE id=$1",
       [context.invoiceId],
     ),
     (error) => (error as { code?: string }).code === "23514",
   );
   await assert.rejects(
-    pool.query(
+    fixtures(
       "UPDATE invoices SET data=jsonb_set(data,'{fundingCurrency}',to_jsonb('USD'::text)) WHERE id=$1",
       [context.invoiceId],
     ),

@@ -1,5 +1,6 @@
-import { Pool } from "pg";
 import { execFileSync } from "node:child_process";
+import { adminWrite } from "../tests-backend/helpers/admin-database";
+import { adminPool } from "../tests-backend/helpers/database-identities";
 async function main() {
   const url = new URL(process.env.DATABASE_URL ?? "");
   if (
@@ -10,11 +11,14 @@ async function main() {
     throw new Error(
       "Reset requires a loopback database and --confirm-local-reset. This deletes all simulation records.",
     );
-  const pool = new Pool({ connectionString: url.toString() });
-  try {
+  // The destructive TRUNCATE is administrative work: the application identity
+  // holds no privilege on `businesses`, `users`, `memberships`, or most fixture
+  // tables, so it cannot run this statement at all. It is performed through the
+  // administrative helper, which elevates to `ponte_owner` transaction-locally.
+  await adminWrite(adminPool(), async ({ db }) => {
     // Permit reset to recover a disposable database that predates the newest
     // migration; the following seed command will apply it before adding data.
-    const hasExternalIdentities = await pool.query<{ relation: string | null }>(
+    const hasExternalIdentities = await db.query<{ relation: string | null }>(
       "SELECT to_regclass('public.external_identities') AS relation",
     );
     const tables = [
@@ -34,10 +38,8 @@ async function main() {
       "users",
       "businesses",
     ];
-    await pool.query(`TRUNCATE ${tables.join(",")}`);
-  } finally {
-    await pool.end();
-  }
+    await db.query(`TRUNCATE ${tables.join(",")}`);
+  });
   const commands = [["scripts/database.ts", "--seed"]];
   // Routing fixtures require the same explicit local evidence opt-in as the
   // application. A default reset still leaves a usable clean local seed.
