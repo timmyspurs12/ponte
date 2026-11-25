@@ -66,13 +66,24 @@ jobs:
           node-version: '24.22.1'
           cache: npm
       - run: npm ci
-      # Phase 2C.2B: provision roles and the privilege matrix before any
-      # migration. `db:migrate`/`db:seed` elevate with `SET LOCAL ROLE
-      # ponte_owner`, which only exists once this step has run. `--test` also
-      # grants CREATE ON DATABASE for the scratch schemas test:migrations creates.
-      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:provision -- --test
-      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:seed
+      # Phase 2C.2B two-phase provisioning. Phase 1 is the pre-migration
+      # bootstrap: roles, memberships, ACL/CONNECT, owner schema privileges,
+      # test-only CREATE, default-function hardening. None of it references
+      # application tables, so it is valid on the fresh CI database. `--test`
+      # also grants CREATE ON DATABASE for the scratch schemas test:migrations
+      # creates. `db:migrate` then elevates with `SET LOCAL ROLE ponte_owner`,
+      # which only exists once Phase 1 has run.
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:provision -- --phase 1 --test
+      # Migrations create the tables and trigger functions, owned by ponte_owner.
       - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:migrate
+      # Approved bootstrap seed (businesses/users), run as the bootstrap
+      # connection because `businesses` is read-only for the application.
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:seed
+      # Phase 2 is the post-migration object-privilege phase. It verifies every
+      # expected table and trigger function exists (failing explicitly if any
+      # are missing), then applies the drift revocations, the approved
+      # privilege matrix, and the trigger-function EXECUTE revocations.
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:provision -- --phase 2 --test
       - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run test:migrations
       - run: npm run test:backend
       - run: npm run lint
