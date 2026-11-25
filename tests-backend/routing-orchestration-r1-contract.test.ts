@@ -210,8 +210,11 @@ test("a matching normal Routing commit between preflight miss and snapshot repla
    */
   // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
   // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `quotes`. Persistence therefore fails closed before
-  // any write, with a sanitised application error rather than a raw 42501.
+  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
+  // statement is the membership reauthorization, so persistence fails closed
+  // there, before any write, with a sanitised application error rather than a
+  // raw 42501. (The quote row lock is probed independently as an app-role
+  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
   const context = await createContext();
   await assert.rejects(
     persistPreparedEvidenceCandidate(persistenceInput(context)),
@@ -228,13 +231,18 @@ test("a matching normal Routing commit between preflight miss and snapshot repla
     status: "Funded",
   });
 
-  // The denial is the quote row lock itself, not an incidental error:
-  // `lockValidQuoteForEvidence` is the first statement that needs a
-  // privilege the application identity does not hold.
-  const repository = await readFile("src/server/repository.ts", "utf8");
+  // The denial is the membership row lock taken by the first row-lock
+  // statement in the persistence path, not an incidental error:
+  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
+  // so it is the first statement that needs a privilege the application
+  // identity does not hold.
+  const persistenceSource = await readFile(
+    "src/server/evidence/persist-candidate.ts",
+    "utf8",
+  );
   assert.match(
-    repository,
-    /FROM quotes WHERE business_id=\$1 AND invoice_id=\$2 AND id=\$3 AND expires_at>clock_timestamp\(\) FOR UPDATE/,
+    persistenceSource,
+    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
   );
 });
 
@@ -332,8 +340,11 @@ test("controlled preparation starts after read-only work, without final locks, t
    */
   // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
   // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `quotes`. Persistence therefore fails closed before
-  // any write, with a sanitised application error rather than a raw 42501.
+  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
+  // statement is the membership reauthorization, so persistence fails closed
+  // there, before any write, with a sanitised application error rather than a
+  // raw 42501. (The quote row lock is probed independently as an app-role
+  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
   const context = await createContext();
   await assert.rejects(
     persistPreparedEvidenceCandidate(persistenceInput(context)),
@@ -350,13 +361,18 @@ test("controlled preparation starts after read-only work, without final locks, t
     status: "Funded",
   });
 
-  // The denial is the quote row lock itself, not an incidental error:
-  // `lockValidQuoteForEvidence` is the first statement that needs a
-  // privilege the application identity does not hold.
-  const repository = await readFile("src/server/repository.ts", "utf8");
+  // The denial is the membership row lock taken by the first row-lock
+  // statement in the persistence path, not an incidental error:
+  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
+  // so it is the first statement that needs a privilege the application
+  // identity does not hold.
+  const persistenceSource = await readFile(
+    "src/server/evidence/persist-candidate.ts",
+    "utf8",
+  );
   assert.match(
-    repository,
-    /FROM quotes WHERE business_id=\$1 AND invoice_id=\$2 AND id=\$3 AND expires_at>clock_timestamp\(\) FOR UPDATE/,
+    persistenceSource,
+    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
   );
 });
 
@@ -372,8 +388,11 @@ test("a matching record committed during preparation becomes final authoritative
    */
   // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
   // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `quotes`. Persistence therefore fails closed before
-  // any write, with a sanitised application error rather than a raw 42501.
+  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
+  // statement is the membership reauthorization, so persistence fails closed
+  // there, before any write, with a sanitised application error rather than a
+  // raw 42501. (The quote row lock is probed independently as an app-role
+  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
   const context = await createContext();
   await assert.rejects(
     persistPreparedEvidenceCandidate(persistenceInput(context)),
@@ -390,13 +409,18 @@ test("a matching record committed during preparation becomes final authoritative
     status: "Funded",
   });
 
-  // The denial is the quote row lock itself, not an incidental error:
-  // `lockValidQuoteForEvidence` is the first statement that needs a
-  // privilege the application identity does not hold.
-  const repository = await readFile("src/server/repository.ts", "utf8");
+  // The denial is the membership row lock taken by the first row-lock
+  // statement in the persistence path, not an incidental error:
+  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
+  // so it is the first statement that needs a privilege the application
+  // identity does not hold.
+  const persistenceSource = await readFile(
+    "src/server/evidence/persist-candidate.ts",
+    "utf8",
+  );
   assert.match(
-    repository,
-    /FROM quotes WHERE business_id=\$1 AND invoice_id=\$2 AND id=\$3 AND expires_at>clock_timestamp\(\) FOR UPDATE/,
+    persistenceSource,
+    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
   );
 });
 
@@ -412,8 +436,11 @@ test("provider failure prevents final persistence and stale final state rolls ba
    */
   // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
   // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `quotes`. Persistence therefore fails closed before
-  // any write, with a sanitised application error rather than a raw 42501.
+  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
+  // statement is the membership reauthorization, so persistence fails closed
+  // there, before any write, with a sanitised application error rather than a
+  // raw 42501. (The quote row lock is probed independently as an app-role
+  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
   const context = await createContext();
   await assert.rejects(
     persistPreparedEvidenceCandidate(persistenceInput(context)),
@@ -430,13 +457,18 @@ test("provider failure prevents final persistence and stale final state rolls ba
     status: "Funded",
   });
 
-  // The denial is the quote row lock itself, not an incidental error:
-  // `lockValidQuoteForEvidence` is the first statement that needs a
-  // privilege the application identity does not hold.
-  const repository = await readFile("src/server/repository.ts", "utf8");
+  // The denial is the membership row lock taken by the first row-lock
+  // statement in the persistence path, not an incidental error:
+  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
+  // so it is the first statement that needs a privilege the application
+  // identity does not hold.
+  const persistenceSource = await readFile(
+    "src/server/evidence/persist-candidate.ts",
+    "utf8",
+  );
   assert.match(
-    repository,
-    /FROM quotes WHERE business_id=\$1 AND invoice_id=\$2 AND id=\$3 AND expires_at>clock_timestamp\(\) FOR UPDATE/,
+    persistenceSource,
+    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
   );
 });
 

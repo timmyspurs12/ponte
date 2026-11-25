@@ -19,7 +19,9 @@ the privilege model in [`PHASE2C2B_PRIVILEGE_MODEL.md`](./PHASE2C2B_PRIVILEGE_MO
 the application identity holds **no `UPDATE` grant on `quotes` or
 `memberships`**, and PostgreSQL requires `UPDATE` on a table for *every* row-lock
 mode (`FOR UPDATE`, `FOR SHARE`, `FOR NO KEY UPDATE`, `FOR KEY SHARE`). The
-first statement that needs a row lock therefore fails with `42501`.
+first row-lock statement the persistence path issues therefore fails with
+`42501` — and that first statement is the **membership** lock, not the quote
+lock.
 
 ## The two dormancy layers
 
@@ -37,11 +39,18 @@ Routing cannot reach persistence through either of its two entry points:
    `PROVIDER_FAILURE`, mapped to a sanitised `503 EVIDENCE_PROVIDER_UNAVAILABLE`.
 
 2. **The final persistence lock is denied by privilege even when a provider is
-   available.** `persistPreparedEvidenceCandidate()` takes a quote row lock
-   (`lockValidQuoteForEvidence`, `src/server/repository.ts`) and a membership
-   row lock (`assertActiveMutationMembership`,
-   `src/server/evidence/persist-candidate.ts`). Both tables are append-only for
-   the application identity, so both locks raise `42501`.
+   available.** `persistPreparedEvidenceCandidate()` issues two row locks: the
+   membership reauthorization (`assertActiveMutationMembership`,
+   `src/server/evidence/persist-candidate.ts`) and, later, the quote lock
+   (`lockValidQuoteForEvidence`, `src/server/repository.ts`).
+   **`assertActiveMutationMembership` runs first**, so the membership lock is the
+   first runtime denial — it is the statement whose `42501` aborts the
+   transaction, and the quote lock is never reached. Both `memberships` and
+   `quotes` are append-only for the application identity, so each lock would
+   deny on its own; the membership lock is simply the one that fires first. The
+   quote lock is nonetheless probed **independently** as an app-role permission
+   probe (`privilege-boundary.test.ts`, L1), so both tables' `42501` boundaries
+   are verified directly rather than only inferred through the persistence path.
 
 Either layer alone is sufficient to stop persistence; both are fail-closed.
 
@@ -84,11 +93,15 @@ Phase 2C.2B review report). Each contract test asserts three things, not a bare
 - a **zero-write** snapshot — `evidence`, `outbox`, `settlements`, `events`,
   `idempotency` all `"0"` and the invoice status unchanged — proving no partial
   write survives,
-- the **exact construct** that denies the request: the quote lock
-  `FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3 AND
-  expires_at>clock_timestamp() FOR UPDATE` or the membership lock
+- the **exact construct** that denies the request: the membership lock
   `FROM memberships WHERE business_id=$1 AND user_id=$2 AND status='active'
-  FOR UPDATE`.
+  FOR UPDATE` — the first row-lock statement in the persistence path, which is
+  where the denial actually fires.
+
+The quote lock is not asserted through the persistence path (it is never
+reached there); it is asserted **independently** as an app-role permission probe
+in `privilege-boundary.test.ts` (L1: `lockValidQuoteForEvidence` fails closed
+with `42501`), and L2 probes the membership lock the same way.
 
 The full backend suite exits `0` (218 tests / 208 pass / 0 fail / 10 skipped).
 
