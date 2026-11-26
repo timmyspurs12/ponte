@@ -23,28 +23,36 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   let expectedRouting500s = 0;
   // Collect every HTTP 5xx response so the complete failure list can be
   // asserted, not just the single expected transitions response. Each entry
-  // carries the URL, status, request method and sanitised error code.
+  // carries the URL, status, request method and sanitised error code. The
+  // async parse is tracked as a task from the moment the 5xx is received,
+  // so the list can be awaited in full before assertion instead of racing
+  // expect.poll on a partially processed list.
   const failedResponses: Array<{
     url: string;
     status: number;
     method: string;
     code: string | null;
   }> = [];
-  page.on("response", async (response) => {
+  const captureTasks: Promise<void>[] = [];
+  page.on("response", (response) => {
     if (response.status() < 500) return;
-    let code: string | null = null;
-    try {
-      const body = await response.json();
-      code = body?.error?.code ?? null;
-    } catch {
-      code = null;
-    }
-    failedResponses.push({
-      url: response.url(),
-      status: response.status(),
-      method: response.request().method(),
-      code,
-    });
+    captureTasks.push(
+      (async () => {
+        let code: string | null = null;
+        try {
+          const body = await response.json();
+          code = body?.error?.code ?? null;
+        } catch {
+          code = null;
+        }
+        failedResponses.push({
+          url: response.url(),
+          status: response.status(),
+          method: response.request().method(),
+          code,
+        });
+      })(),
+    );
   });
   page.on("console", (m) => {
     if (m.type() !== "error") return;
@@ -122,12 +130,11 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   expect(transitionsResponse.status()).toBe(500);
   const transitionsBody = await transitionsResponse.json();
   expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
-  // Assert the complete 5xx failure list is exactly the expected Routing
-  // transition: one POST to the transitions endpoint, status 500, code
-  // EVIDENCE_PERSISTENCE_FAILED. Any unexpected 5xx would fail this.
-  await expect
-    .poll(() => failedResponses.length, { timeout: 5000 })
-    .toBe(1);
+  // Wait for all outstanding 5xx capture tasks to settle, then assert the
+  // complete failure list is exactly the expected Routing transition: the
+  // transitions POST, status 500, code EVIDENCE_PERSISTENCE_FAILED, and no
+  // other HTTP 5xx responses.
+  await Promise.all(captureTasks);
   expect(failedResponses).toEqual([
     {
       url: expect.stringContaining(transitionsUrl),
@@ -303,28 +310,36 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   // stays detectable.
   let expectedRouting500s = 0;
   // Collect every HTTP 5xx response so the complete failure list can be
-  // asserted, not just the single expected transitions response.
+  // asserted, not just the single expected transitions response. The async
+  // parse is tracked as a task from the moment the 5xx is received, so the
+  // list can be awaited in full before assertion instead of racing
+  // expect.poll on a partially processed list.
   const failedResponses: Array<{
     url: string;
     status: number;
     method: string;
     code: string | null;
   }> = [];
-  page.on("response", async (response) => {
+  const captureTasks: Promise<void>[] = [];
+  page.on("response", (response) => {
     if (response.status() < 500) return;
-    let code: string | null = null;
-    try {
-      const body = await response.json();
-      code = body?.error?.code ?? null;
-    } catch {
-      code = null;
-    }
-    failedResponses.push({
-      url: response.url(),
-      status: response.status(),
-      method: response.request().method(),
-      code,
-    });
+    captureTasks.push(
+      (async () => {
+        let code: string | null = null;
+        try {
+          const body = await response.json();
+          code = body?.error?.code ?? null;
+        } catch {
+          code = null;
+        }
+        failedResponses.push({
+          url: response.url(),
+          status: response.status(),
+          method: response.request().method(),
+          code,
+        });
+      })(),
+    );
   });
   page.on("console", (m) => {
     if (m.type() !== "error") return;
@@ -388,11 +403,10 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   expect(transitionsResponse.status()).toBe(500);
   const transitionsBody = await transitionsResponse.json();
   expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
-  // Assert the complete 5xx failure list is exactly the expected Routing
-  // transition. Any unexpected 5xx would fail this.
-  await expect
-    .poll(() => failedResponses.length, { timeout: 5000 })
-    .toBe(1);
+  // Wait for all outstanding 5xx capture tasks to settle, then assert the
+  // complete failure list is exactly the expected Routing transition and no
+  // other HTTP 5xx responses.
+  await Promise.all(captureTasks);
   expect(failedResponses).toEqual([
     {
       url: expect.stringContaining(`/api/v1/invoices/${seedId}/transitions`),
