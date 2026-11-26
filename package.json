@@ -17,6 +17,7 @@
     "test:install": "playwright install chromium",
     "db:local": "tsx scripts/local-postgres.ts",
     "db:migrate": "node --env-file-if-exists=.env.local --import tsx scripts/database.ts",
+    "db:provision": "node --env-file-if-exists=.env.local --import tsx scripts/provision-roles.ts",
     "db:seed": "node --env-file-if-exists=.env.local --import tsx scripts/database.ts --seed",
     "db:fixtures": "node --env-file-if-exists=.env.local --import ./scripts/test-server-only-stub.mjs --import tsx scripts/seed-fixtures.ts",
     "test:backend": "node scripts/run-backend-tests.mjs",

@@ -83,9 +83,33 @@ test("migrations take the transaction-scoped lock before any schema change", asy
   // transaction pooling cannot guarantee; it must never appear here.
   for (const sql of statements) {
     assert.equal(/pg_advisory_(?:lock|unlock)\s*\(/.test(sql), false, sql);
-    assert.equal(/^\s*SET\s/i.test(sql), false, sql);
+    /**
+     * `SET LOCAL` is transaction-scoped: PostgreSQL reverts it at
+     * COMMIT/ROLLBACK, so a pooled connection is never returned holding a
+     * different role or parameter. That is precisely why PgBouncer transaction
+     * mode tolerates it and why the Phase 2C.2B owner switch may use it.
+     *
+     * A bare `SET` (session-scoped) must still never appear: it would outlive
+     * the transaction and leak into whatever the pooler hands the connection to
+     * next. The distinction is asserted rather than assumed.
+     */
+    const isLocalSet = /^\s*SET\s+LOCAL\s/i.test(sql);
+    assert.equal(
+      /^\s*SET\s/i.test(sql) && !isLocalSet,
+      false,
+      `session-scoped SET is forbidden: ${sql}`,
+    );
     assert.equal(/^\s*(?:DROP|TRUNCATE|DELETE)\b/i.test(sql), false, sql);
   }
+  // The owner switch must happen inside the transaction, after BEGIN.
+  const roleSwitch = statements.findIndex((sql) =>
+    /^\s*SET\s+LOCAL\s+ROLE\s+ponte_owner/i.test(sql),
+  );
+  assert.ok(roleSwitch > begin, "the owner switch must follow BEGIN");
+  assert.ok(
+    roleSwitch < lock,
+    "the owner switch must precede the advisory lock so schema work runs as the owner",
+  );
   assert.equal(MIGRATION_LOCK_KEY, 5832041);
 });
 

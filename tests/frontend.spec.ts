@@ -1,5 +1,6 @@
 import { resetFixtures } from "./setup-database";
 let seedId = "";
+let routedId = "";
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
 test.beforeEach(async ({ context }) => {
@@ -13,8 +14,62 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // R1 deliberately rejects Routing persistence with a 500
+  // EVIDENCE_PERSISTENCE_FAILED. Rather than blanket-suppressing every HTTP
+  // 500 console entry, capture the transitions response explicitly and assert
+  // its status and code; only the verified-expected 500 console message is
+  // allowed, so an unexpected 500 or an unrelated console error stays
+  // detectable.
+  let expectedRouting500s = 0;
+  // Collect every HTTP 5xx response so the complete failure list can be
+  // asserted, not just the single expected transitions response. Each entry
+  // carries the URL, status, request method and sanitised error code. The
+  // async parse is tracked as a task from the moment the 5xx is received,
+  // so the list can be awaited in full before assertion instead of racing
+  // expect.poll on a partially processed list.
+  const failedResponses: Array<{
+    url: string;
+    status: number;
+    method: string;
+    code: string | null;
+  }> = [];
+  const captureTasks: Promise<void>[] = [];
+  page.on("response", (response) => {
+    if (response.status() < 500) return;
+    captureTasks.push(
+      (async () => {
+        let code: string | null = null;
+        try {
+          const body = await response.json();
+          code = body?.error?.code ?? null;
+        } catch {
+          code = null;
+        }
+        failedResponses.push({
+          url: response.url(),
+          status: response.status(),
+          method: response.request().method(),
+          code,
+        });
+      })(),
+    );
+  });
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+    if (m.type() !== "error") return;
+    const text = m.text();
+    if (
+      /Failed to load resource: the server responded with a status of 500/.test(
+        text,
+      )
+    ) {
+      // Allow only as many expected 500 console entries as verified
+      // transitions responses; any surplus is an unexpected 500.
+      if (expectedRouting500s > 0) {
+        expectedRouting500s--;
+        return;
+      }
+    }
+    errors.push(text);
   });
   await page.goto("/app");
   await expect(
@@ -57,16 +112,64 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
     page.getByRole("heading", { name: "Compare illustrative routes" }),
   ).toBeVisible();
   await page.getByRole("radio", { name: /Split liquidity/ }).click();
+  // R1: Routing evidence persistence is dormant and fail-closed. The
+  // membership lock rejects the Routing attempt, so the invoice stays Funded
+  // and no evidence is persisted. Assert the POST transitions response
+  // explicitly is 500 EVIDENCE_PERSISTENCE_FAILED, then verify the UI
+  // presents the limitation clearly.
+  expectedRouting500s = 1;
+  const transitionsUrl = `/api/v1/invoices/${invoiceId}/transitions`;
+  const transitionsPromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(transitionsUrl) &&
+      response.request().method() === "POST" &&
+      response.status() >= 500,
+  );
   await page.getByRole("button", { name: "Select route & continue" }).click();
+  const transitionsResponse = await transitionsPromise;
+  expect(transitionsResponse.status()).toBe(500);
+  const transitionsBody = await transitionsResponse.json();
+  expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
+  // Wait for relevant network activity to settle, then await all outstanding
+  // 5xx capture tasks, and assert the complete failure list is exactly the
+  // expected Routing transition: the transitions POST, status 500, code
+  // EVIDENCE_PERSISTENCE_FAILED, and no other HTTP 5xx responses.
+  await page.waitForLoadState("networkidle");
+  await Promise.all(captureTasks);
+  expect(failedResponses).toEqual([
+    {
+      url: expect.stringContaining(transitionsUrl),
+      status: 500,
+      method: "POST",
+      code: "EVIDENCE_PERSISTENCE_FAILED",
+    },
+  ]);
   await expect(
-    page.getByRole("heading", { name: "Ready for settlement" }),
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Routing is unavailable in this demo" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
   ).toBeVisible();
   await expect(
     page.getByTestId("invoice-evidence-panel").getByText("Evidence persisted", {
       exact: true,
     }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Ready for settlement" }),
+  ).toHaveCount(0);
   await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
+  ).toBeVisible();
+
+  // Settlement is exercised against an admin-primed Routing fixture. The
+  // application identity cannot create Routing state (R1), so the fixture is
+  // pre-seeded by primeRoutedState and settlement runs on the application
+  // identity against that pre-existing state.
+  await page.goto(`/app/invoices/${routedId}`);
   await expect(
     page.getByRole("heading", { name: "Ready for settlement" }),
   ).toBeVisible();
@@ -87,7 +190,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   ).toBeVisible();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export demo receipt" }).click();
-  expect((await download).suggestedFilename()).toContain("QA-2026-001");
+  expect((await download).suggestedFilename()).toContain("PNT-2026-1047");
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await expect(page.locator(".toast")).toHaveCount(0);
   await page.screenshot({
@@ -116,7 +219,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   await page
     .getByRole("combobox", { name: "Sort invoices" })
     .selectOption("amount");
-  await page.goto(detail);
+  await page.goto(`/app/invoices/${routedId}`);
   await expect(
     page.getByRole("heading", { name: "Settlement receipt" }),
   ).toBeVisible();
@@ -131,7 +234,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
     { name: "ponte-locale", value: "en-US", domain: "localhost", path: "/" },
   ]);
   const reopened = await separate.newPage();
-  await reopened.goto(detail);
+  await reopened.goto(`/app/invoices/${routedId}`);
   await expect(
     reopened.getByRole("heading", { name: "Settlement receipt" }),
   ).toBeVisible();
@@ -201,8 +304,58 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // R1 deliberately rejects Routing persistence with a 500
+  // EVIDENCE_PERSISTENCE_FAILED. Capture the transitions response explicitly
+  // and assert its status and code; only the verified-expected 500 console
+  // message is allowed, so an unexpected 500 or an unrelated console error
+  // stays detectable.
+  let expectedRouting500s = 0;
+  // Collect every HTTP 5xx response so the complete failure list can be
+  // asserted, not just the single expected transitions response. The async
+  // parse is tracked as a task from the moment the 5xx is received, so the
+  // list can be awaited in full before assertion instead of racing
+  // expect.poll on a partially processed list.
+  const failedResponses: Array<{
+    url: string;
+    status: number;
+    method: string;
+    code: string | null;
+  }> = [];
+  const captureTasks: Promise<void>[] = [];
+  page.on("response", (response) => {
+    if (response.status() < 500) return;
+    captureTasks.push(
+      (async () => {
+        let code: string | null = null;
+        try {
+          const body = await response.json();
+          code = body?.error?.code ?? null;
+        } catch {
+          code = null;
+        }
+        failedResponses.push({
+          url: response.url(),
+          status: response.status(),
+          method: response.request().method(),
+          code,
+        });
+      })(),
+    );
+  });
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+    if (m.type() !== "error") return;
+    const text = m.text();
+    if (
+      /Failed to load resource: the server responded with a status of 500/.test(
+        text,
+      )
+    ) {
+      if (expectedRouting500s > 0) {
+        expectedRouting500s--;
+        return;
+      }
+    }
+    errors.push(text);
   });
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -236,7 +389,35 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   await expect(
     page.getByRole("radio", { name: /Split liquidity/ }),
   ).toHaveAttribute("aria-checked", "true");
+  // R1: the Routing attempt is rejected with a 500 EVIDENCE_PERSISTENCE_FAILED.
+  // Assert the transitions response explicitly, then complete the settlement
+  // flow on an admin-primed Routing fixture instead.
+  expectedRouting500s = 1;
+  const transitionsPromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/v1/invoices/${seedId}/transitions`) &&
+      response.request().method() === "POST" &&
+      response.status() >= 500,
+  );
   await page.getByRole("button", { name: "Select route & continue" }).click();
+  const transitionsResponse = await transitionsPromise;
+  expect(transitionsResponse.status()).toBe(500);
+  const transitionsBody = await transitionsResponse.json();
+  expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
+  // Wait for relevant network activity to settle, then await all outstanding
+  // 5xx capture tasks, and assert the complete failure list is exactly the
+  // expected Routing transition and no other HTTP 5xx responses.
+  await page.waitForLoadState("networkidle");
+  await Promise.all(captureTasks);
+  expect(failedResponses).toEqual([
+    {
+      url: expect.stringContaining(`/api/v1/invoices/${seedId}/transitions`),
+      status: 500,
+      method: "POST",
+      code: "EVIDENCE_PERSISTENCE_FAILED",
+    },
+  ]);
+  await page.goto(`/app/invoices/${routedId}`);
   await page
     .getByRole("button", { name: "Simulate settlement", exact: true })
     .click();
@@ -259,6 +440,69 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   });
 });
 
+test("Routing provider-unavailable shows a clear message and keeps the invoice funded (en-US and pt-BR)", async ({
+  page,
+}) => {
+  // R1: when the evidence provider is unavailable the backend rejects a
+  // Routing attempt with 503 EVIDENCE_PROVIDER_UNAVAILABLE. Intercept the
+  // transitions response with a controlled 503 so the UI's sanitised
+  // handling can be exercised without a real provider or any backend
+  // change. Verify the English and Portuguese messages and that the
+  // invoice remains Funded.
+  await page.goto(`/app/invoices/${seedId}`);
+  await page
+    .getByRole("button", { name: "Simulate Pix payment received" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
+  ).toBeVisible();
+  await page.getByRole("radio", { name: /Split liquidity/ }).click();
+
+  // Intercept only the Routing transitions POST and fulfill it with the
+  // sanitised provider-unavailable error. Other requests pass through.
+  await page.route(
+    "**/api/v1/invoices/*/transitions",
+    async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { code: "EVIDENCE_PROVIDER_UNAVAILABLE" },
+            requestId: "provider-unavailable-test",
+          }),
+        });
+      } else {
+        await route.continue();
+      }
+    },
+  );
+  await page.getByRole("button", { name: "Select route & continue" }).click();
+
+  // English message and the invoice stays Funded.
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Routing is unavailable in this environment" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
+  ).toBeVisible();
+
+  // Switch to Portuguese and verify the translated message and heading.
+  await page
+    .getByRole("combobox", { name: "Language", exact: true })
+    .selectOption("pt-BR");
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "O roteamento não está disponível neste ambiente" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Compare rotas ilustrativas" }),
+  ).toBeVisible();
+});
+
 test.beforeEach(async ({ context, request }) => {
   await resetFixtures();
   await context.addCookies([
@@ -275,6 +519,13 @@ test.beforeEach(async ({ context, request }) => {
   const { data } = await response.json();
   seedId = data.find(
     (i: { reference: string }) => i.reference === "PNT-2026-1048",
+  ).id;
+  // The Routing invoice is an admin-primed synthetic fixture (see
+  // tests/setup-database.ts primeRoutedState). R1 makes Routing persistence
+  // fail-closed, so the application identity cannot create Routing state; this
+  // fixture exists so the settlement/receipt UI can be exercised.
+  routedId = data.find(
+    (i: { reference: string }) => i.reference === "PNT-2026-1047",
   ).id;
 });
 test("development login issues an HttpOnly session; unauthenticated API is not public", async ({

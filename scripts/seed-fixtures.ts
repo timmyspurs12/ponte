@@ -59,17 +59,22 @@ async function main() {
       await api(`/${i.id}/transitions`, { status: "Failed" });
       continue;
     }
+    // Application-supported operations only. Routing evidence persistence is
+    // dormant and fail-closed by design (R1): the application identity holds no
+    // UPDATE on `quotes`/`memberships`, so the persistence path's membership
+    // lock rejects every Routing attempt with EVIDENCE_PERSISTENCE_FAILED.
+    // The seeder therefore creates the payment and the quote but does **not**
+    // attempt a Routing or Settled transition. Routing/Settled fixtures are
+    // primed directly by `tests/setup-database.ts` through the administrative
+    // helper, which is the approved path for pre-existing Routing state.
     await api(`/${i.id}/payments`, {});
-    if (n === 3) continue;
-    const q = (await api(`/${i.id}/quotes`, {})) as { id: string };
-    await api(`/${i.id}/transitions`, {
-      status: "Routing",
-      route: "direct",
-      quoteId: q.id,
-    });
-    if (n === 2) continue;
-    await api(`/${i.id}/transitions`, { status: "Settled" });
+    // Create the quote so the admin-primed Routing/Settled fixtures have a
+    // valid quote to reference (route_decision_evidence and settlements both
+    // foreign-key to quotes). The quote is created through the application
+    // identity, which is a supported operation.
+    await api(`/${i.id}/quotes`, {});
   }
   await pool.end();
 }
 void main();
+

@@ -30,6 +30,7 @@ import {
   type AnchorWorld,
 } from "./helpers/trusted-verification";
 import { hex32 } from "../tests/evidence/helpers/mock-rpc-server";
+import { fixtures, fixturesRead } from "./helpers/fixtures";
 
 /**
  * Confirmed-state invariant tests, Phase 2C.2A.
@@ -105,15 +106,15 @@ async function seedOutbox(): Promise<Seeded> {
   const previousPayloadHash = Buffer.alloc(32);
   const registryAddress = Buffer.from(REGISTRY.slice(2), "hex");
 
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     businessId,
     "Anchor invariant test business",
   ]);
-  await pool.query("INSERT INTO users(id,email) VALUES($1,$2)", [
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
     userId,
     `${userId}@example.invalid`,
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [businessId, userId],
   );
@@ -161,8 +162,14 @@ async function seedOutbox(): Promise<Seeded> {
       WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
     ],
   );
-  await pool.query(
-    "INSERT INTO evidence_outbox(id,evidence_record_id,submission_state) VALUES($1,$2,'pending')",
+  /**
+   * Seeding the outbox row is fixture work: the application's grant is
+   * `INSERT (id, evidence_record_id)` only and relies on the migration-007
+   * `DEFAULT 'pending'`. The production writer is asserted separately by
+   * `insertPendingEvidenceOutbox`, which uses exactly the two-column form.
+   */
+  await fixtures(
+    "INSERT INTO evidence_outbox(id,evidence_record_id) VALUES($1,$2)",
     [outboxId, evidenceId],
   );
 
@@ -176,8 +183,12 @@ async function seedOutbox(): Promise<Seeded> {
   };
 }
 
+/**
+ * Priming `submitted` is administrative: the application holds no `UPDATE` on
+ * `evidence_outbox` at all, so this state is unreachable for it by privilege.
+ */
 async function markSubmitted(outboxId: string) {
-  await pool.query(
+  await fixtures(
     "UPDATE evidence_outbox SET submission_state='submitted', transaction_hash=$2, submitted_at=now() WHERE id=$1",
     [outboxId, Buffer.from(TX_HASH.slice(2), "hex")],
   );
@@ -254,18 +265,30 @@ class FakeChainReader implements EvidenceChainReader {
   }
 }
 
+/**
+ * Confirmation-state snapshot, read on the administrative identity.
+ *
+ * Four of the five columns are ungranted for the application: it may read only
+ * `submission_state`. Asserting the confirmation columns from the app identity
+ * would fail with `42501` rather than returning a state, so this is exactly the
+ * "admin helper" case the design assigns to private metadata reads.
+ */
 async function stateOf(outboxId: string) {
-  const result = await pool.query<{
+  const result = await fixturesRead(
+    "SELECT submission_state,transaction_hash,confirmed_at,confirmed_block_number,attestor_address FROM evidence_outbox WHERE id=$1",
+    [outboxId],
+  );
+  /**
+   * Narrowed to the historical non-optional shape: every call site already
+   * seeds the row first, and the original `pool.query` was typed the same way.
+   */
+  return result.rows[0] as {
     submission_state: string;
     transaction_hash: Buffer | null;
     confirmed_at: Date | null;
     confirmed_block_number: string | null;
     attestor_address: Buffer | null;
-  }>(
-    "SELECT submission_state,transaction_hash,confirmed_at,confirmed_block_number,attestor_address FROM evidence_outbox WHERE id=$1",
-    [outboxId],
-  );
-  return result.rows[0];
+  };
 }
 
 after(async () => {
@@ -806,7 +829,7 @@ test("each commitment field is enforced by the write itself, not only in memory"
 
     // Persisted evidence cannot drift: append-only trigger.
     await assert.rejects(
-      pool.query(
+      fixtures(
         "UPDATE route_decision_evidence SET payload_hash=$2 WHERE id=$1",
         [seeded.evidenceId, Buffer.from("ff".repeat(32), "hex")],
       ),

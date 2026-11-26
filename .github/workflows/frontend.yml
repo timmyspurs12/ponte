@@ -20,13 +20,33 @@ jobs:
           POSTGRES_USER: ponte
           POSTGRES_PASSWORD: ci-only-password
           POSTGRES_DB: ponte_test
+          # Phase 2C.2B: the provisioned login roles (ponte_app_login,
+          # ponte_migrator) are created without a password by `db:provision`.
+          # CI is an ephemeral, localhost-only service, so host authentication
+          # is trust; the superuser bootstrap URL below still authenticates and
+          # the two provisioned logins connect without a stored secret.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U ponte -d ponte_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       NEXT_TELEMETRY_DISABLED: '1'
-      DATABASE_URL: postgres://ponte:ci-only-password@localhost:5432/ponte_test
+      # The application identity the backend suite and the app under test run
+      # as. `db:provision` creates this login; every ordinary query and every
+      # `42501` assertion depends on it holding only the provisioned grants.
+      DATABASE_URL: postgres://ponte_app_login@localhost:5432/ponte_test
+      # The administrative identity (ponte_migrator) used by the test admin
+      # helper for TRUNCATE/DELETE/private reads. Distinct from DATABASE_URL so
+      # the application and administrative identities never share a connection.
+      PONTE_TEST_ADMIN_DATABASE_URL: postgres://ponte_migrator@localhost:5432/ponte_test
+      # Marks DATABASE_URL as a provisioned application login (not the bootstrap
+      # superuser), so `42501` assertions pass for the right reason.
+      PONTE_TEST_APP_IDENTITY: '1'
+      # The bootstrap superuser used only by the administrative CLIs
+      # (provision / migrate / seed / test:migrations), which must run as the
+      # schema owner. Passed inline so DATABASE_URL stays the app identity.
+      PONTE_BOOTSTRAP_DATABASE_URL: postgres://ponte:ci-only-password@localhost:5432/ponte_test
       PONTE_DEV_AUTH: '1'
       PONTE_DEV_TOKEN: ci-only-not-a-production-credential-000000000000
       PONTE_DEV_BUSINESS_ID: 00000000-0000-4000-8000-000000000001
@@ -46,9 +66,25 @@ jobs:
           node-version: '24.22.1'
           cache: npm
       - run: npm ci
-      - run: npm run db:seed
-      - run: npm run db:migrate
-      - run: npm run test:migrations
+      # Phase 2C.2B two-phase provisioning. Phase 1 is the pre-migration
+      # bootstrap: roles, memberships, ACL/CONNECT, owner schema privileges,
+      # test-only CREATE, default-function hardening. None of it references
+      # application tables, so it is valid on the fresh CI database. `--test`
+      # also grants CREATE ON DATABASE for the scratch schemas test:migrations
+      # creates. `db:migrate` then elevates with `SET LOCAL ROLE ponte_owner`,
+      # which only exists once Phase 1 has run.
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:provision -- --phase 1 --test
+      # Migrations create the tables and trigger functions, owned by ponte_owner.
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:migrate
+      # Approved bootstrap seed (businesses/users), run as the bootstrap
+      # connection because `businesses` is read-only for the application.
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:seed
+      # Phase 2 is the post-migration object-privilege phase. It verifies every
+      # expected table and trigger function exists (failing explicitly if any
+      # are missing), then applies the drift revocations, the approved
+      # privilege matrix, and the trigger-function EXECUTE revocations.
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:provision -- --phase 2 --test
+      - run: DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run test:migrations
       - run: npm run test:backend
       - run: npm run lint
       - run: npm run typecheck

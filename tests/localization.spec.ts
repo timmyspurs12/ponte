@@ -1,5 +1,6 @@
 import { clearDevelopmentRateLimit, resetFixtures } from "./setup-database";
 let seedId = "";
+let routedId = "";
 import { test, expect } from "@playwright/test";
 import { demoQuote } from "../src/lib/quotes";
 import { formatNumber } from "../src/lib/i18n/format";
@@ -10,8 +11,58 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // R1 deliberately rejects Routing persistence with a 500
+  // EVIDENCE_PERSISTENCE_FAILED. Capture the transitions response explicitly
+  // and assert its status and code; only the verified-expected 500 console
+  // message is allowed, so an unexpected 500 or an unrelated console error
+  // stays detectable.
+  let expectedRouting500s = 0;
+  // Collect every HTTP 5xx response so the complete failure list can be
+  // asserted, not just the single expected transitions response. The async
+  // parse is tracked as a task from the moment the 5xx is received, so the
+  // list can be awaited in full before assertion instead of racing
+  // expect.poll on a partially processed list.
+  const failedResponses: Array<{
+    url: string;
+    status: number;
+    method: string;
+    code: string | null;
+  }> = [];
+  const captureTasks: Promise<void>[] = [];
+  page.on("response", (response) => {
+    if (response.status() < 500) return;
+    captureTasks.push(
+      (async () => {
+        let code: string | null = null;
+        try {
+          const body = await response.json();
+          code = body?.error?.code ?? null;
+        } catch {
+          code = null;
+        }
+        failedResponses.push({
+          url: response.url(),
+          status: response.status(),
+          method: response.request().method(),
+          code,
+        });
+      })(),
+    );
+  });
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+    if (m.type() !== "error") return;
+    const text = m.text();
+    if (
+      /Failed to load resource: the server responded with a status of 500/.test(
+        text,
+      )
+    ) {
+      if (expectedRouting500s > 0) {
+        expectedRouting500s--;
+        return;
+      }
+    }
+    errors.push(text);
   });
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
@@ -53,6 +104,7 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   await expect(
     page.getByRole("heading", { name: "Fornecedor Brasil" }),
   ).toBeVisible();
+  const newInvoiceId = page.url().split("/").pop();
   await expect(page.locator(".payment-amount")).toContainText("25.000,01");
   await expect(page.locator("dl")).toContainText("20/01/2027");
   await page
@@ -76,14 +128,54 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   // Route selection is persisted when the user locks it, not before.
   await page.getByRole("radio", { name: /Multi-hop route/ }).click();
+  // R1: Routing persistence is dormant and fail-closed. The attempt is
+  // rejected with a 500 EVIDENCE_PERSISTENCE_FAILED and the invoice stays
+  // Funded. Assert the transitions response explicitly, then switch language
+  // to verify the limitation is presented clearly in the active locale.
+  expectedRouting500s = 1;
+  const transitionsPromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/v1/invoices/${newInvoiceId}/transitions`) &&
+      response.request().method() === "POST" &&
+      response.status() >= 500,
+  );
   await page.getByRole("button", { name: "Select route & continue" }).click();
+  const transitionsResponse = await transitionsPromise;
+  expect(transitionsResponse.status()).toBe(500);
+  const transitionsBody = await transitionsResponse.json();
+  expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
+  // Wait for relevant network activity to settle, then await all outstanding
+  // 5xx capture tasks, and assert the complete failure list is exactly the
+  // expected Routing transition and no other HTTP 5xx responses.
+  await page.waitForLoadState("networkidle");
+  await Promise.all(captureTasks);
+  expect(failedResponses).toEqual([
+    {
+      url: expect.stringContaining(
+        `/api/v1/invoices/${newInvoiceId}/transitions`,
+      ),
+      status: 500,
+      method: "POST",
+      code: "EVIDENCE_PERSISTENCE_FAILED",
+    },
+  ]);
   await page
     .getByRole("combobox", { name: "Language", exact: true })
     .selectOption("pt-BR");
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "O roteamento não está disponível" }),
+  ).toBeVisible();
+
+  // Settlement runs on an admin-primed Routing fixture (the application
+  // identity cannot create Routing state under R1). Navigate there and
+  // complete settlement in Portuguese.
+  await page.goto(`/app/invoices/${routedId}`);
   await page
     .getByRole("button", { name: "Simular liquidação", exact: true })
     .click();
-  await expect(page.getByRole("dialog")).toContainText("Fornecedor Brasil");
+  await expect(page.getByRole("dialog")).toContainText("Confirmar simulação");
   await page.getByRole("button", { name: "Confirmar simulação" }).click();
   await expect(
     page.getByRole("heading", { name: "Comprovante de liquidação" }),
@@ -215,5 +307,11 @@ test.beforeEach(async ({ context, request }) => {
   const { data } = await response.json();
   seedId = data.find(
     (i: { reference: string }) => i.reference === "PNT-2026-1048",
+  ).id;
+  // Admin-primed Routing fixture with the multi route (see primeRoutedState
+  // in setup-database.ts). The application identity cannot create Routing
+  // state under R1.
+  routedId = data.find(
+    (i: { reference: string }) => i.reference === "PNT-2026-1045",
   ).id;
 });

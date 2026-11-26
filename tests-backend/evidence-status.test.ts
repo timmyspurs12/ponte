@@ -5,6 +5,11 @@ import type { Invoice, InvoiceEvidenceStatus } from "../src/lib/models";
 import { evidenceProvenance } from "../src/server/evidence/status";
 import { ApiError, execute } from "../src/server/service";
 import { pool } from "../src/server/repository";
+import { fixtures } from "./helpers/fixtures";
+import {
+  EVIDENCE_INSERT_SQL,
+  evidenceFixtureValues,
+} from "./helpers/evidence-fixture";
 
 const token = process.env.PONTE_DEV_TOKEN!;
 const userId = process.env.PONTE_DEV_USER_ID!;
@@ -44,6 +49,20 @@ async function createInvoice(): Promise<Invoice> {
   }) as Promise<Invoice>;
 }
 
+/**
+ * Drives an invoice to `Routing` and primes one pending evidence row.
+ *
+ * Every lifecycle step below `Routing` runs through the ordinary application
+ * API on the application identity. The final evidence write does not: under R1
+ * the quote-lock path fails closed with 42501 (see
+ * docs/PHASE2C2B_R1_ROUTING_LIMITATION.md), so reaching `Routing` here is
+ * explicit, labelled administrative priming of the state these read tests
+ * start from.
+ *
+ * Everything the tests then assert — the evidence status endpoint, its narrow
+ * projection, and its refusal to disclose envelope secrets — runs on the
+ * application identity and proves the read boundary itself.
+ */
 async function createRoutedInvoice(): Promise<Invoice> {
   const invoice = await createInvoice();
   await api(`/${invoice.id}/transitions`, "POST", {
@@ -53,11 +72,34 @@ async function createRoutedInvoice(): Promise<Invoice> {
   const quote = (await api(`/${invoice.id}/quotes`, "POST", {})) as {
     id: string;
   };
-  return api(`/${invoice.id}/transitions`, "POST", {
-    status: "Routing",
-    route: "direct",
-    quoteId: quote.id,
-  }) as Promise<Invoice>;
+
+  const evidenceId = randomUUID();
+  await fixtures(
+    EVIDENCE_INSERT_SQL,
+    evidenceFixtureValues({
+      id: evidenceId,
+      businessId,
+      invoiceId: invoice.id,
+      quoteId: quote.id,
+      userId,
+    }),
+  );
+  await fixtures(
+    "INSERT INTO evidence_outbox(id,evidence_record_id) VALUES($1,$2)",
+    [randomUUID(), evidenceId],
+  );
+  // `invoice_snapshot_consistent` requires the JSON snapshot and the relational
+  // status to agree, so both move together.
+  await fixtures(
+    `UPDATE invoices SET status='Routing',data=jsonb_set(data,'{status}','"Routing"'::jsonb) WHERE id=$1`,
+    [invoice.id],
+  );
+
+  const routed = await pool.query(
+    "SELECT data FROM invoices WHERE business_id=$1 AND id=$2",
+    [businessId, invoice.id],
+  );
+  return routed.rows[0].data as Invoice;
 }
 
 const isApiError =
@@ -69,11 +111,11 @@ before(async () => {
   // Isolate these additional endpoint requests from the foundation suite's
   // intentional per-tenant rate-limit coverage.
   businessId = randomUUID();
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     businessId,
     "Evidence status integration business",
   ]);
-  await pool.query(
+  await fixtures(
     "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
     [businessId, userId],
   );
@@ -203,7 +245,7 @@ test("evidence status rejects unauthenticated and disabled memberships", async (
     isApiError("UNAUTHENTICATED"),
   );
 
-  await pool.query(
+  await fixtures(
     "UPDATE memberships SET status='disabled' WHERE business_id=$1 AND user_id=$2",
     [businessId, userId],
   );
@@ -213,7 +255,7 @@ test("evidence status rejects unauthenticated and disabled memberships", async (
       isApiError("FORBIDDEN"),
     );
   } finally {
-    await pool.query(
+    await fixtures(
       "UPDATE memberships SET status='active' WHERE business_id=$1 AND user_id=$2",
       [businessId, userId],
     );
@@ -223,7 +265,7 @@ test("evidence status rejects unauthenticated and disabled memberships", async (
 test("active viewers retain the established invoice-detail read policy but cannot cross business or invoice evidence", async () => {
   const withEvidence = await createRoutedInvoice();
   const withoutEvidence = await createInvoice();
-  await pool.query(
+  await fixtures(
     "UPDATE memberships SET role='viewer' WHERE business_id=$1 AND user_id=$2",
     [businessId, userId],
   );
@@ -233,7 +275,7 @@ test("active viewers retain the established invoice-detail read policy but canno
     )) as InvoiceEvidenceStatus;
     assert.equal(viewerStatus.state, "persisted");
   } finally {
-    await pool.query(
+    await fixtures(
       "UPDATE memberships SET role='admin' WHERE business_id=$1 AND user_id=$2",
       [businessId, userId],
     );
@@ -253,7 +295,7 @@ test("active viewers retain the established invoice-detail read policy but canno
   );
 
   const otherBusiness = randomUUID();
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
     otherBusiness,
     "Evidence status isolation business",
   ]);

@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { Invoice, Status } from "@/lib/models";
 import { minorToDisplayNumber } from "@/lib/quotes";
-import { invoiceService as service } from "@/lib/services";
+import { invoiceService as service, ApiRequestError } from "@/lib/services";
 import { Badge } from "./ui";
 import { InvoiceEvidencePanel } from "./invoice-evidence-panel";
 import { SyntheticDemoNotice } from "./synthetic-demo-notice";
@@ -85,11 +85,30 @@ export function InvoiceDetail({
               : "Payment request ready.",
       );
     } catch (e) {
-      setError(
-        e instanceof Error && isMessageKey(e.message)
-          ? e.message
-          : "Could not save demo state. Please try again.",
-      );
+      // R1: Routing evidence persistence is dormant and fail-closed. The
+      // backend rejects a Routing attempt either because the evidence provider
+      // is unavailable (503 EVIDENCE_PROVIDER_UNAVAILABLE) or because the
+      // persistence-path row locks are denied (500 EVIDENCE_PERSISTENCE_FAILED).
+      // In both cases present the documented limitation clearly rather than a
+      // generic save error that could imply a partial or successful operation.
+      if (
+        status === "Routing" &&
+        e instanceof ApiRequestError &&
+        (e.code === "EVIDENCE_PERSISTENCE_FAILED" ||
+          e.code === "EVIDENCE_PROVIDER_UNAVAILABLE")
+      ) {
+        setError(
+          e.code === "EVIDENCE_PROVIDER_UNAVAILABLE"
+            ? "Routing is unavailable in this environment. The evidence provider is not available, so this invoice remains funded."
+            : "Routing is unavailable in this demo. Evidence persistence is dormant and fail-closed by design, so this invoice remains funded.",
+        );
+      } else {
+        setError(
+          e instanceof Error && isMessageKey(e.message)
+            ? e.message
+            : "Could not save demo state. Please try again.",
+        );
+      }
     } finally {
       setBusy(false);
     }

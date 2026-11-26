@@ -498,13 +498,22 @@ export function insertRouteDecisionEvidence(
   );
 }
 
-/** Creates the durable pending job for an already-inserted evidence record. */
+/**
+ * Creates the durable pending job for an already-inserted evidence record.
+ *
+ * `submission_state` is deliberately *not* named. Migration 007 supplies
+ * `DEFAULT 'pending'`, and the application holds a column-level
+ * `INSERT (id, evidence_record_id)` grant with no grant on `submission_state`.
+ * That is what makes `'submitted'` and `'confirmed'` unreachable for the
+ * application identity: a column grant cannot restrict which *value* is
+ * written, so the column must not be writable at all.
+ */
 export function insertPendingEvidenceOutbox(
   db: PoolClient,
   outbox: PendingEvidenceOutboxInsert,
 ) {
   return db.query(
-    "INSERT INTO evidence_outbox(id,evidence_record_id,submission_state) VALUES($1,$2,'pending')",
+    "INSERT INTO evidence_outbox(id,evidence_record_id) VALUES($1,$2)",
     [outbox.id, outbox.evidenceRecordId],
   );
 }

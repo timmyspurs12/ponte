@@ -12,6 +12,15 @@ import { readFile, readdir } from "node:fs/promises";
 /** One advisory-lock key for the whole schema; identical across all callers. */
 export const MIGRATION_LOCK_KEY = 5832041;
 
+/**
+ * The role that owns every object created by a migration.
+ *
+ * Kept here rather than imported from the provisioning module so `migrate.ts`
+ * stays free of any other import; the two constants are asserted equal in
+ * `tests-backend/provisioning.test.ts`.
+ */
+export const MIGRATION_OWNER_ROLE = "ponte_owner";
+
 export type MigrationResult = {
   /** Migration file names applied by this invocation, in order. */
   applied: string[];
@@ -58,6 +67,26 @@ export async function applyMigrations(
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
+    /**
+     * Phase 2C.2B: every object is created by `ponte_owner`, not by whichever
+     * login happened to hold the migration credential.
+     *
+     * Ownership is not cosmetic. `ponte_migrator` elevates with
+     * `SET LOCAL ROLE ponte_owner` to run administrative reads and fixture
+     * work; that only reaches the tables if `ponte_owner` owns them. When the
+     * tables belong to the bootstrap superuser instead, the elevation succeeds
+     * but sees nothing, which fails as a bare `42501` far from its cause.
+     *
+     * `SET LOCAL` is transaction-scoped, so the connection is never returned to
+     * the pool elevated. It is issued *after* BEGIN and before the advisory
+     * lock, so the lock and every migration statement run as the owner.
+     *
+     * On a database where `ponte_owner` does not exist, the statement fails and
+     * the whole batch rolls back: provisioning is a documented prerequisite, and
+     * silently falling back to the connecting role is what produced ownerless
+     * tables in the first place.
+     */
+    await db.query(`SET LOCAL ROLE ${MIGRATION_OWNER_ROLE}`);
     await db.query("SELECT pg_advisory_xact_lock($1)", [MIGRATION_LOCK_KEY]);
     await db.query(
       "CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",

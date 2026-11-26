@@ -17,6 +17,8 @@ import {
 } from "../src/server/public-demo-data";
 import { bootstrapPublicDemo } from "../scripts/production-demo-bootstrap";
 import { resetSyntheticDemo } from "./public-demo-fixture";
+import { operatorPool } from "./helpers/operator-pool";
+import { fixtures } from "./helpers/fixtures";
 
 after(async () => {
   await pool.end();
@@ -51,7 +53,7 @@ const apiError = (code: string) => (error: unknown) =>
 
 async function business(name: string): Promise<string> {
   const id = randomUUID();
-  await pool.query("INSERT INTO businesses(id,name) VALUES($1,$2)", [id, name]);
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [id, name]);
   return id;
 }
 
@@ -110,7 +112,7 @@ test("a provisioned synthetic tenant is readable by a public-demo viewer", async
     businessId: randomUUID(),
     businessName: "Synthetic demo tenant read",
   };
-  await bootstrapPublicDemo(pool, demo);
+  await bootstrapPublicDemo(operatorPool(), demo);
   const policy = config(
     privateBusiness,
     demo.businessId,
@@ -169,7 +171,7 @@ test("a viewer cannot create, edit, fund, route or settle any demo record", asyn
     businessId: randomUUID(),
     businessName: "Synthetic demo tenant write",
   };
-  await bootstrapPublicDemo(pool, demo);
+  await bootstrapPublicDemo(operatorPool(), demo);
   const policy = config(
     privateBusiness,
     demo.businessId,
@@ -273,7 +275,7 @@ test("a demo viewer cannot read or infer the private administrator tenant", asyn
     businessId: randomUUID(),
     businessName: "Synthetic demo tenant isolation",
   };
-  await bootstrapPublicDemo(pool, demo);
+  await bootstrapPublicDemo(operatorPool(), demo);
   const policy = config(
     privateBusiness,
     demo.businessId,
@@ -309,7 +311,7 @@ test("a configured private administrator keeps the private tenant, not the demo"
     businessId: randomUUID(),
     businessName: "Synthetic demo tenant priority",
   };
-  await bootstrapPublicDemo(pool, demo);
+  await bootstrapPublicDemo(operatorPool(), demo);
   const administratorSubject = githubSubject("priority-admin");
   const policy = config(privateBusiness, demo.businessId, administratorSubject);
   const administrator = await provisionGithubIdentity(
@@ -345,7 +347,7 @@ test("an identity provisioned before the demo was enabled gains no viewer access
     businessId: randomUUID(),
     businessName: "Synthetic demo tenant late",
   };
-  await bootstrapPublicDemo(pool, demo);
+  await bootstrapPublicDemo(operatorPool(), demo);
   const administratorSubject = githubSubject("admin");
   const earlySubject = githubSubject("early");
   // The identity was mapped while public-demo onboarding was still disabled.
