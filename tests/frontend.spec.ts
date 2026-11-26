@@ -21,10 +21,30 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   // allowed, so an unexpected 500 or an unrelated console error stays
   // detectable.
   let expectedRouting500s = 0;
-  const failedResponses: Array<{ url: string; status: number }> = [];
-  page.on("response", (response) => {
-    if (response.status() >= 500)
-      failedResponses.push({ url: response.url(), status: response.status() });
+  // Collect every HTTP 5xx response so the complete failure list can be
+  // asserted, not just the single expected transitions response. Each entry
+  // carries the URL, status, request method and sanitised error code.
+  const failedResponses: Array<{
+    url: string;
+    status: number;
+    method: string;
+    code: string | null;
+  }> = [];
+  page.on("response", async (response) => {
+    if (response.status() < 500) return;
+    let code: string | null = null;
+    try {
+      const body = await response.json();
+      code = body?.error?.code ?? null;
+    } catch {
+      code = null;
+    }
+    failedResponses.push({
+      url: response.url(),
+      status: response.status(),
+      method: response.request().method(),
+      code,
+    });
   });
   page.on("console", (m) => {
     if (m.type() !== "error") return;
@@ -102,6 +122,20 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   expect(transitionsResponse.status()).toBe(500);
   const transitionsBody = await transitionsResponse.json();
   expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
+  // Assert the complete 5xx failure list is exactly the expected Routing
+  // transition: one POST to the transitions endpoint, status 500, code
+  // EVIDENCE_PERSISTENCE_FAILED. Any unexpected 5xx would fail this.
+  await expect
+    .poll(() => failedResponses.length, { timeout: 5000 })
+    .toBe(1);
+  expect(failedResponses).toEqual([
+    {
+      url: expect.stringContaining(transitionsUrl),
+      status: 500,
+      method: "POST",
+      code: "EVIDENCE_PERSISTENCE_FAILED",
+    },
+  ]);
   await expect(
     page
       .getByRole("alert")
@@ -268,6 +302,30 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   // message is allowed, so an unexpected 500 or an unrelated console error
   // stays detectable.
   let expectedRouting500s = 0;
+  // Collect every HTTP 5xx response so the complete failure list can be
+  // asserted, not just the single expected transitions response.
+  const failedResponses: Array<{
+    url: string;
+    status: number;
+    method: string;
+    code: string | null;
+  }> = [];
+  page.on("response", async (response) => {
+    if (response.status() < 500) return;
+    let code: string | null = null;
+    try {
+      const body = await response.json();
+      code = body?.error?.code ?? null;
+    } catch {
+      code = null;
+    }
+    failedResponses.push({
+      url: response.url(),
+      status: response.status(),
+      method: response.request().method(),
+      code,
+    });
+  });
   page.on("console", (m) => {
     if (m.type() !== "error") return;
     const text = m.text();
@@ -330,6 +388,19 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   expect(transitionsResponse.status()).toBe(500);
   const transitionsBody = await transitionsResponse.json();
   expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
+  // Assert the complete 5xx failure list is exactly the expected Routing
+  // transition. Any unexpected 5xx would fail this.
+  await expect
+    .poll(() => failedResponses.length, { timeout: 5000 })
+    .toBe(1);
+  expect(failedResponses).toEqual([
+    {
+      url: expect.stringContaining(`/api/v1/invoices/${seedId}/transitions`),
+      status: 500,
+      method: "POST",
+      code: "EVIDENCE_PERSISTENCE_FAILED",
+    },
+  ]);
   await page.goto(`/app/invoices/${routedId}`);
   await page
     .getByRole("button", { name: "Simulate settlement", exact: true })
@@ -351,6 +422,69 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
     path: "test-results/screenshots/receipt-mobile.png",
     fullPage: true,
   });
+});
+
+test("Routing provider-unavailable shows a clear message and keeps the invoice funded (en-US and pt-BR)", async ({
+  page,
+}) => {
+  // R1: when the evidence provider is unavailable the backend rejects a
+  // Routing attempt with 503 EVIDENCE_PROVIDER_UNAVAILABLE. Intercept the
+  // transitions response with a controlled 503 so the UI's sanitised
+  // handling can be exercised without a real provider or any backend
+  // change. Verify the English and Portuguese messages and that the
+  // invoice remains Funded.
+  await page.goto(`/app/invoices/${seedId}`);
+  await page
+    .getByRole("button", { name: "Simulate Pix payment received" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
+  ).toBeVisible();
+  await page.getByRole("radio", { name: /Split liquidity/ }).click();
+
+  // Intercept only the Routing transitions POST and fulfill it with the
+  // sanitised provider-unavailable error. Other requests pass through.
+  await page.route(
+    "**/api/v1/invoices/*/transitions",
+    async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: { code: "EVIDENCE_PROVIDER_UNAVAILABLE" },
+            requestId: "provider-unavailable-test",
+          }),
+        });
+      } else {
+        await route.continue();
+      }
+    },
+  );
+  await page.getByRole("button", { name: "Select route & continue" }).click();
+
+  // English message and the invoice stays Funded.
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Routing is unavailable in this environment" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
+  ).toBeVisible();
+
+  // Switch to Portuguese and verify the translated message and heading.
+  await page
+    .getByRole("combobox", { name: "Language", exact: true })
+    .selectOption("pt-BR");
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "O roteamento não está disponível neste ambiente" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Compare rotas ilustrativas" }),
+  ).toBeVisible();
 });
 
 test.beforeEach(async ({ context, request }) => {

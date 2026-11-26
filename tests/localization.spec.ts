@@ -17,6 +17,30 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   // message is allowed, so an unexpected 500 or an unrelated console error
   // stays detectable.
   let expectedRouting500s = 0;
+  // Collect every HTTP 5xx response so the complete failure list can be
+  // asserted, not just the single expected transitions response.
+  const failedResponses: Array<{
+    url: string;
+    status: number;
+    method: string;
+    code: string | null;
+  }> = [];
+  page.on("response", async (response) => {
+    if (response.status() < 500) return;
+    let code: string | null = null;
+    try {
+      const body = await response.json();
+      code = body?.error?.code ?? null;
+    } catch {
+      code = null;
+    }
+    failedResponses.push({
+      url: response.url(),
+      status: response.status(),
+      method: response.request().method(),
+      code,
+    });
+  });
   page.on("console", (m) => {
     if (m.type() !== "error") return;
     const text = m.text();
@@ -112,6 +136,21 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   expect(transitionsResponse.status()).toBe(500);
   const transitionsBody = await transitionsResponse.json();
   expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
+  // Assert the complete 5xx failure list is exactly the expected Routing
+  // transition. Any unexpected 5xx would fail this.
+  await expect
+    .poll(() => failedResponses.length, { timeout: 5000 })
+    .toBe(1);
+  expect(failedResponses).toEqual([
+    {
+      url: expect.stringContaining(
+        `/api/v1/invoices/${newInvoiceId}/transitions`,
+      ),
+      status: 500,
+      method: "POST",
+      code: "EVIDENCE_PERSISTENCE_FAILED",
+    },
+  ]);
   await page
     .getByRole("combobox", { name: "Language", exact: true })
     .selectOption("pt-BR");
