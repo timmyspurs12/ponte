@@ -256,6 +256,22 @@ export type ProvisioningReport = {
   appReadOnlyTables: string[];
   /** Columns the application may INSERT on `evidence_outbox` (exactly two). */
   appInsertDeniedColumns: string[];
+  /**
+   * Direct object privileges held by `ponte_app_login` in the application
+   * schema — tables, sequences and functions, read from the catalogue ACLs.
+   *
+   * This must always be empty. `ponte_app_login` inherits every privilege it
+   * needs from the `ponte_app` group (`INHERIT TRUE`); it holds no independent
+   * object grants. A non-empty list is drift that Phase 2 failed to repair, or
+   * a grant made directly to the login role, and the provisioning gate must
+   * treat it as a failure rather than pass silently. Inherited privileges are
+   * not stored in the object ACLs, so they never appear here.
+   */
+  appLoginDirectPrivileges: {
+    objectType: string;
+    objectName: string;
+    privilegeType: string;
+  }[];
   triggerFunctionPublicExecute: Record<string, boolean>;
   stepsApplied: string[];
 };
@@ -464,8 +480,19 @@ export function provisioningPlanPhase2(
   // (1) Drift repair. `GRANT` is additive, so an earlier design's table-level
   //     `UPDATE` would survive every grant below. Revoke everything from the
   //     application first, then re-apply exactly the approved matrix.
-  //     Only `ponte_app` is touched: `ponte_owner` owns these objects and must
-  //     keep its own privileges, or its `BEFORE UPDATE` triggers stop firing.
+  //     `ponte_owner` is never touched: it owns these objects and must keep its
+  //     own privileges, or its `BEFORE UPDATE` triggers stop firing.
+  //
+  //     Both application identities are revoked, but for different reasons.
+  //     `ponte_app` is the group that holds every approved object grant, so its
+  //     drift must be cleared before re-applying the matrix. `ponte_app_login`
+  //     holds no object grants of its own: it inherits all of them from
+  //     `ponte_app` via `INHERIT TRUE`. Any privilege stored directly on
+  //     `ponte_app_login` is therefore drift — a grant that bypasses the group
+  //     and the approved matrix — and must be removed too. `REVOKE` only
+  //     removes privileges stored directly on the named role; it does not
+  //     touch privileges inherited through role membership, so the login role's
+  //     inherited access from `ponte_app` is unaffected.
   steps.push({
     id: "drift:tables",
     sql: `REVOKE ALL ON ALL TABLES IN SCHEMA ${PONTE_SCHEMA} FROM ${app};`,
@@ -477,6 +504,18 @@ export function provisioningPlanPhase2(
   steps.push({
     id: "drift:functions",
     sql: `REVOKE ALL ON ALL FUNCTIONS IN SCHEMA ${PONTE_SCHEMA} FROM ${app};`,
+  });
+  steps.push({
+    id: "drift:app-login:tables",
+    sql: `REVOKE ALL ON ALL TABLES IN SCHEMA ${PONTE_SCHEMA} FROM ${APP_LOGIN_ROLE};`,
+  });
+  steps.push({
+    id: "drift:app-login:sequences",
+    sql: `REVOKE ALL ON ALL SEQUENCES IN SCHEMA ${PONTE_SCHEMA} FROM ${APP_LOGIN_ROLE};`,
+  });
+  steps.push({
+    id: "drift:app-login:functions",
+    sql: `REVOKE ALL ON ALL FUNCTIONS IN SCHEMA ${PONTE_SCHEMA} FROM ${APP_LOGIN_ROLE};`,
   });
 
   // (2) Application schema reachability.
@@ -774,6 +813,54 @@ export async function readProvisioningReport(
         AND (p.proname || '()') = ANY(${arrayLiteral([...TRIGGER_FUNCTIONS])})`,
   )) as { rows: { proname: string; can: boolean }[] };
 
+  /**
+   * Direct object privileges held by `ponte_app_login`, read from the
+   * catalogue ACLs via `aclexplode`.
+   *
+   * `aclexplode` returns only privileges stored directly on the object's ACL.
+   * Inherited privileges (resolved through role membership at check time) are
+   * not stored there, so they never appear — which is exactly the property
+   * needed: the login role's inherited access from `ponte_app` is invisible,
+   * and only an independent direct grant is reported as drift. `information_schema`
+   * would work for tables and sequences, but it has no function-privilege view,
+   * and `has_function_privilege` would falsely report inherited EXECUTE, so the
+   * ACL is read directly for all three object types. `aclexplode(NULL)` yields a
+   * single all-NULL row, filtered out by `grantee IS NOT NULL`.
+   */
+  const appLoginDirect = (await client.query(
+    `SELECT object_type, object_name, privilege_type
+       FROM (
+             SELECT 'table' AS object_type, c.relname AS object_name, a.privilege_type
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               JOIN aclexplode(c.relacl) a ON a.grantee IS NOT NULL
+               JOIN pg_roles r ON r.oid = a.grantee
+              WHERE n.nspname = '${PONTE_SCHEMA}'
+                AND r.rolname = '${APP_LOGIN_ROLE}'
+                AND c.relkind IN ('r','v','p','m','f')
+             UNION ALL
+             SELECT 'sequence', c.relname, a.privilege_type
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               JOIN aclexplode(c.relacl) a ON a.grantee IS NOT NULL
+               JOIN pg_roles r ON r.oid = a.grantee
+              WHERE n.nspname = '${PONTE_SCHEMA}'
+                AND r.rolname = '${APP_LOGIN_ROLE}'
+                AND c.relkind = 'S'
+             UNION ALL
+             SELECT 'function', p.proname || '()', a.privilege_type
+               FROM pg_proc p
+               JOIN pg_namespace n ON n.oid = p.pronamespace
+               JOIN aclexplode(p.proacl) a ON a.grantee IS NOT NULL
+               JOIN pg_roles r ON r.oid = a.grantee
+              WHERE n.nspname = '${PONTE_SCHEMA}'
+                AND r.rolname = '${APP_LOGIN_ROLE}'
+          ) sub
+       ORDER BY object_type, object_name, privilege_type`,
+  )) as {
+    rows: { object_type: string; object_name: string; privilege_type: string }[];
+  };
+
   const appUpdateColumns: Record<string, string[]> = {};
   for (const row of appUpdate.rows) {
     (appUpdateColumns[row.table_name] ??= []).push(row.column_name);
@@ -809,6 +896,11 @@ export async function readProvisioningReport(
     appUpdateColumns,
     appReadOnlyTables: [...READ_ONLY_TABLES],
     appInsertDeniedColumns: insertDenied.rows.map((row) => row.column_name),
+    appLoginDirectPrivileges: appLoginDirect.rows.map((row) => ({
+      objectType: row.object_type,
+      objectName: row.object_name,
+      privilegeType: row.privilege_type,
+    })),
     triggerFunctionPublicExecute: Object.fromEntries(
       publicExecute.rows.map((row) => [row.proname, row.can]),
     ),

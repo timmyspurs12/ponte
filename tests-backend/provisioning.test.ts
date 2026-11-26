@@ -31,6 +31,7 @@ import {
   applyProvisioningPhase2,
   provisionDatabasePhase1,
   provisionDatabasePhase2,
+  readProvisioningReport,
   provisioningPlanPhase1,
   provisioningPlanPhase2,
   verifyExpectedObjects,
@@ -149,6 +150,17 @@ function assertApprovedMatrix(report: ProvisioningReport): void {
     false,
     "database ACL still contains a PUBLIC grant",
   );
+
+  // ponte_app_login must hold no independent object grants: it inherits every
+  // privilege from the ponte_app group (INHERIT TRUE). Any direct privilege is
+  // drift that Phase 2 must have removed; a non-empty list must not pass.
+  assert.deepEqual(
+    report.appLoginDirectPrivileges,
+    [],
+    `ponte_app_login holds unexpected direct object privileges: ${JSON.stringify(
+      report.appLoginDirectPrivileges,
+    )}`,
+  );
 }
 
 describe("two-phase provisioning", { skip: !provisioned ? "PONTE_BOOTSTRAP_DATABASE_URL not set (superuser required)" : false }, () => {
@@ -247,6 +259,104 @@ describe("two-phase provisioning", { skip: !provisioned ? "PONTE_BOOTSTRAP_DATAB
       [...report.appInsertDeniedColumns].sort(),
       [...OUTBOX_INSERT_COLUMNS].sort(),
     );
+  });
+
+  test("Phase 2 repairs direct object privilege drift granted to ponte_app_login", async () => {
+    // ponte_app_login inherits every privilege from ponte_app (INHERIT TRUE)
+    // and must hold no independent object grants. Inject drift directly on the
+    // login role across all three object types, then prove Phase 2 removes it
+    // without disturbing the inherited access from the group.
+    const seqName = `ponte_app_login_drift_${randomUUID().slice(0, 8)}`;
+    const client = await live.connect();
+    try {
+      // Table-level direct grant on a table the group already reads.
+      await client.query(
+        `GRANT SELECT ON public.businesses TO ${APP_LOGIN_ROLE}`,
+      );
+      // Column-level direct grant: REVOKE ALL ON ALL TABLES must remove it too.
+      await client.query(
+        `GRANT INSERT (reference) ON public.invoices TO ${APP_LOGIN_ROLE}`,
+      );
+      // Sequence direct grant. No sequence exists in the schema by design, so
+      // create a scratch one to exercise the sequence revoke.
+      await client.query(`CREATE SEQUENCE public.${seqName}`);
+      await client.query(
+        `GRANT USAGE ON SEQUENCE public.${seqName} TO ${APP_LOGIN_ROLE}`,
+      );
+      // Function direct grant.
+      await client.query(
+        `GRANT EXECUTE ON FUNCTION public.touch_updated_at() TO ${APP_LOGIN_ROLE}`,
+      );
+    } finally {
+      client.release();
+    }
+
+    // Confirm the drift is present before provisioning repairs it. Phase 1 does
+    // not touch object privileges, so a phase-1 report still surfaces the drift.
+    const before = await provisionDatabasePhase1(live, {
+      allowScratchSchemaCreates: true,
+    });
+    assert.ok(
+      before.appLoginDirectPrivileges.length > 0,
+      "sanity: injected app_login direct privileges are detected before repair",
+    );
+
+    // Phase 2 must revoke the direct grants and re-apply the approved matrix.
+    const report = await provisionDatabasePhase2(live, {
+      allowScratchSchemaCreates: true,
+    });
+    assertApprovedMatrix(report);
+    assert.deepEqual(
+      report.appLoginDirectPrivileges,
+      [],
+      "ponte_app_login must hold no direct object privileges after Phase 2",
+    );
+
+    // The inherited privileges from ponte_app are untouched: the group still
+    // holds the approved matrix (assertApprovedMatrix above re-checks it).
+    assert.deepEqual(
+      Object.keys(report.appUpdateColumns).sort(),
+      Object.keys(expectedUpdateColumns()).sort(),
+      "ponte_app group matrix is intact after revoking app_login direct grants",
+    );
+
+    // Cleanup the scratch sequence.
+    const drop = await live.connect();
+    try {
+      await drop.query(`DROP SEQUENCE IF EXISTS public.${seqName}`);
+    } finally {
+      drop.release();
+    }
+  });
+
+  test("readProvisioningReport detects unexpected direct privileges on ponte_app_login", async () => {
+    // The report is the CI gate: a direct grant to the login role must be
+    // visible, not silently accepted. Grant one, read the report without
+    // running Phase 2's drift repair, and prove it is reported.
+    const client = await live.connect();
+    try {
+      await client.query(
+        `GRANT SELECT ON public.businesses TO ${APP_LOGIN_ROLE}`,
+      );
+      const report = await readProvisioningReport(client, {
+        stepsApplied: [],
+        phase: "phase2",
+      });
+      assert.ok(
+        report.appLoginDirectPrivileges.length > 0,
+        "report must flag the direct app_login privilege",
+      );
+      const found = report.appLoginDirectPrivileges.find(
+        (p) => p.objectType === "table" && p.objectName === "businesses",
+      );
+      assert.ok(found, "the injected table grant is reported");
+      assert.equal(found.privilegeType, "SELECT");
+    } finally {
+      await client.query(
+        `REVOKE SELECT ON public.businesses FROM ${APP_LOGIN_ROLE}`,
+      ).catch(() => {});
+      client.release();
+    }
   });
 
   test("Phase 1 repairs role-attribute drift (strips superuser-class privileges)", async () => {
