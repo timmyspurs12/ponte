@@ -1,7 +1,7 @@
 # Phase 2C.2B R1 — Routing persistence is dormant (fail-closed)
 
 Status: **implemented and intentional**. This document records why
-`POST /api/invoices/[id]/route` (the Routing transition) cannot activate
+`POST /api/v1/invoices/:id/transitions` (the Routing transition) cannot activate
 `persistPreparedEvidenceCandidate()` under the Phase 2C.2B role separation, and
 how the behaviour is verified.
 
@@ -78,7 +78,7 @@ behaviour.
 Routing state is reached **administratively**, not through the application
 identity: tests prime a `Routing` settlement row, invoice state, and event with
 `primeRoutedState()` (`tests-backend/helpers/routed-fixture.ts`) using the
-administrative helper. From that primed state, `POST /transitions
+administrative helper. From that primed state, `POST /api/v1/invoices/:id/transitions
 {status:"Settled", route:"split"}` succeeds with the exact expected output
 (`amountMinor` `473904`, `costMinor` `2`) and an identical idempotent replay.
 

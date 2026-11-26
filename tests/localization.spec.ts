@@ -11,15 +11,26 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // R1 deliberately rejects Routing persistence with a 500
+  // EVIDENCE_PERSISTENCE_FAILED. Capture the transitions response explicitly
+  // and assert its status and code; only the verified-expected 500 console
+  // message is allowed, so an unexpected 500 or an unrelated console error
+  // stays detectable.
+  let expectedRouting500s = 0;
   page.on("console", (m) => {
-    // R1 deliberately rejects Routing persistence; the deliberate attempt
-    // produces an expected 500 console entry.
+    if (m.type() !== "error") return;
+    const text = m.text();
     if (
-      m.type() === "error" &&
-      !/status of 500 \(Internal Server Error\)/.test(m.text())
+      /Failed to load resource: the server responded with a status of 500/.test(
+        text,
+      )
     ) {
-      errors.push(m.text());
+      if (expectedRouting500s > 0) {
+        expectedRouting500s--;
+        return;
+      }
     }
+    errors.push(text);
   });
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
@@ -61,6 +72,7 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   await expect(
     page.getByRole("heading", { name: "Fornecedor Brasil" }),
   ).toBeVisible();
+  const newInvoiceId = page.url().split("/").pop();
   await expect(page.locator(".payment-amount")).toContainText("25.000,01");
   await expect(page.locator("dl")).toContainText("20/01/2027");
   await page
@@ -85,9 +97,21 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   // Route selection is persisted when the user locks it, not before.
   await page.getByRole("radio", { name: /Multi-hop route/ }).click();
   // R1: Routing persistence is dormant and fail-closed. The attempt is
-  // rejected and the invoice stays Funded. Switch language to verify the
-  // limitation is presented clearly in the active locale.
+  // rejected with a 500 EVIDENCE_PERSISTENCE_FAILED and the invoice stays
+  // Funded. Assert the transitions response explicitly, then switch language
+  // to verify the limitation is presented clearly in the active locale.
+  expectedRouting500s = 1;
+  const transitionsPromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/v1/invoices/${newInvoiceId}/transitions`) &&
+      response.request().method() === "POST" &&
+      response.status() >= 500,
+  );
   await page.getByRole("button", { name: "Select route & continue" }).click();
+  const transitionsResponse = await transitionsPromise;
+  expect(transitionsResponse.status()).toBe(500);
+  const transitionsBody = await transitionsResponse.json();
+  expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
   await page
     .getByRole("combobox", { name: "Language", exact: true })
     .selectOption("pt-BR");

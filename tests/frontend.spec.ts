@@ -14,15 +14,34 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // R1 deliberately rejects Routing persistence with a 500
+  // EVIDENCE_PERSISTENCE_FAILED. Rather than blanket-suppressing every HTTP
+  // 500 console entry, capture the transitions response explicitly and assert
+  // its status and code; only the verified-expected 500 console message is
+  // allowed, so an unexpected 500 or an unrelated console error stays
+  // detectable.
+  let expectedRouting500s = 0;
+  const failedResponses: Array<{ url: string; status: number }> = [];
+  page.on("response", (response) => {
+    if (response.status() >= 500)
+      failedResponses.push({ url: response.url(), status: response.status() });
+  });
   page.on("console", (m) => {
-    // R1 deliberately rejects Routing persistence, so the deliberate attempt
-    // produces an expected 500 EVIDENCE_PERSISTENCE_FAILED console entry.
+    if (m.type() !== "error") return;
+    const text = m.text();
     if (
-      m.type() === "error" &&
-      !/status of 500 \(Internal Server Error\)/.test(m.text())
+      /Failed to load resource: the server responded with a status of 500/.test(
+        text,
+      )
     ) {
-      errors.push(m.text());
+      // Allow only as many expected 500 console entries as verified
+      // transitions responses; any surplus is an unexpected 500.
+      if (expectedRouting500s > 0) {
+        expectedRouting500s--;
+        return;
+      }
     }
+    errors.push(text);
   });
   await page.goto("/app");
   await expect(
@@ -67,8 +86,22 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   await page.getByRole("radio", { name: /Split liquidity/ }).click();
   // R1: Routing evidence persistence is dormant and fail-closed. The
   // membership lock rejects the Routing attempt, so the invoice stays Funded
-  // and no evidence is persisted. The UI presents the limitation clearly.
+  // and no evidence is persisted. Assert the POST transitions response
+  // explicitly is 500 EVIDENCE_PERSISTENCE_FAILED, then verify the UI
+  // presents the limitation clearly.
+  expectedRouting500s = 1;
+  const transitionsUrl = `/api/v1/invoices/${invoiceId}/transitions`;
+  const transitionsPromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(transitionsUrl) &&
+      response.request().method() === "POST" &&
+      response.status() >= 500,
+  );
   await page.getByRole("button", { name: "Select route & continue" }).click();
+  const transitionsResponse = await transitionsPromise;
+  expect(transitionsResponse.status()).toBe(500);
+  const transitionsBody = await transitionsResponse.json();
+  expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
   await expect(
     page
       .getByRole("alert")
@@ -229,15 +262,26 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // R1 deliberately rejects Routing persistence with a 500
+  // EVIDENCE_PERSISTENCE_FAILED. Capture the transitions response explicitly
+  // and assert its status and code; only the verified-expected 500 console
+  // message is allowed, so an unexpected 500 or an unrelated console error
+  // stays detectable.
+  let expectedRouting500s = 0;
   page.on("console", (m) => {
-    // R1 deliberately rejects Routing persistence; the deliberate attempt
-    // produces an expected 500 console entry.
+    if (m.type() !== "error") return;
+    const text = m.text();
     if (
-      m.type() === "error" &&
-      !/status of 500 \(Internal Server Error\)/.test(m.text())
+      /Failed to load resource: the server responded with a status of 500/.test(
+        text,
+      )
     ) {
-      errors.push(m.text());
+      if (expectedRouting500s > 0) {
+        expectedRouting500s--;
+        return;
+      }
     }
+    errors.push(text);
   });
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -271,9 +315,21 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   await expect(
     page.getByRole("radio", { name: /Split liquidity/ }),
   ).toHaveAttribute("aria-checked", "true");
+  // R1: the Routing attempt is rejected with a 500 EVIDENCE_PERSISTENCE_FAILED.
+  // Assert the transitions response explicitly, then complete the settlement
+  // flow on an admin-primed Routing fixture instead.
+  expectedRouting500s = 1;
+  const transitionsPromise = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/v1/invoices/${seedId}/transitions`) &&
+      response.request().method() === "POST" &&
+      response.status() >= 500,
+  );
   await page.getByRole("button", { name: "Select route & continue" }).click();
-  // R1: the Routing attempt is rejected; settlement is unavailable here.
-  // Complete the settlement flow on an admin-primed Routing fixture instead.
+  const transitionsResponse = await transitionsPromise;
+  expect(transitionsResponse.status()).toBe(500);
+  const transitionsBody = await transitionsResponse.json();
+  expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
   await page.goto(`/app/invoices/${routedId}`);
   await page
     .getByRole("button", { name: "Simulate settlement", exact: true })
