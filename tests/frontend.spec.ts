@@ -130,10 +130,11 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   expect(transitionsResponse.status()).toBe(500);
   const transitionsBody = await transitionsResponse.json();
   expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
-  // Wait for all outstanding 5xx capture tasks to settle, then assert the
-  // complete failure list is exactly the expected Routing transition: the
-  // transitions POST, status 500, code EVIDENCE_PERSISTENCE_FAILED, and no
-  // other HTTP 5xx responses.
+  // Wait for relevant network activity to settle, then await all outstanding
+  // 5xx capture tasks, and assert the complete failure list is exactly the
+  // expected Routing transition: the transitions POST, status 500, code
+  // EVIDENCE_PERSISTENCE_FAILED, and no other HTTP 5xx responses.
+  await page.waitForLoadState("networkidle");
   await Promise.all(captureTasks);
   expect(failedResponses).toEqual([
     {
@@ -403,9 +404,10 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   expect(transitionsResponse.status()).toBe(500);
   const transitionsBody = await transitionsResponse.json();
   expect(transitionsBody.error?.code).toBe("EVIDENCE_PERSISTENCE_FAILED");
-  // Wait for all outstanding 5xx capture tasks to settle, then assert the
-  // complete failure list is exactly the expected Routing transition and no
-  // other HTTP 5xx responses.
+  // Wait for relevant network activity to settle, then await all outstanding
+  // 5xx capture tasks, and assert the complete failure list is exactly the
+  // expected Routing transition and no other HTTP 5xx responses.
+  await page.waitForLoadState("networkidle");
   await Promise.all(captureTasks);
   expect(failedResponses).toEqual([
     {
