@@ -37,7 +37,10 @@ import {
   ProvisioningObjectsMissingError,
   PROVISIONING_VERSION,
   APP_ROLE,
+  APP_LOGIN_ROLE,
   OWNER_ROLE,
+  MIGRATOR_ROLE,
+  ROLE_HARDENING_ATTRIBUTES,
   READ_ONLY_TABLES,
   TRIGGER_FUNCTIONS,
   EXPECTED_TABLES,
@@ -77,7 +80,38 @@ function expectedUpdateColumns(): Record<string, string[]> {
   );
 }
 
+/** The four managed roles, in a stable order. */
+const MANAGED_ROLES = [OWNER_ROLE, APP_ROLE, MIGRATOR_ROLE, APP_LOGIN_ROLE];
+
+/**
+ * Every managed role must be free of superuser-class privileges. The readback
+ * reports the raw catalogue booleans; all of these must be false.
+ */
+function assertRoleHardening(report: ProvisioningReport): void {
+  for (const name of MANAGED_ROLES) {
+    const role = report.roles[name];
+    assert.ok(role, `role ${name} missing from report`);
+    assert.equal(role.exists, true, `role ${name} does not exist`);
+    for (const [attr, value] of Object.entries({
+      superuser: role.superuser,
+      createdb: role.createdb,
+      createrole: role.createrole,
+      replication: role.replication,
+      bypassrls: role.bypassrls,
+    })) {
+      assert.equal(
+        value,
+        false,
+        `role ${name} still has ${attr}=true (expected NO${attr.toUpperCase()})`,
+      );
+    }
+  }
+}
+
 function assertApprovedMatrix(report: ProvisioningReport): void {
+  // Role hardening: no managed role is a superuser or otherwise privileged.
+  assertRoleHardening(report);
+
   // UPDATE columns: exactly the approved map, no more, no fewer. The readback
   // column order comes from information_schema and may differ from the declared
   // order, so compare as sorted sets.
@@ -213,6 +247,63 @@ describe("two-phase provisioning", { skip: !provisioned ? "PONTE_BOOTSTRAP_DATAB
       [...report.appInsertDeniedColumns].sort(),
       [...OUTBOX_INSERT_COLUMNS].sort(),
     );
+  });
+
+  test("Phase 1 repairs role-attribute drift (strips superuser-class privileges)", async () => {
+    // Inject drift: grant superuser-class privileges to managed roles that
+    // must never hold them. `ALTER ROLE` is the only way to set these, so the
+    // drift simulates a role that was created or altered outside provisioning.
+    const client = await live.connect();
+    try {
+      await client.query(`ALTER ROLE ${APP_LOGIN_ROLE} SUPERUSER CREATEDB`);
+      await client.query(`ALTER ROLE ${OWNER_ROLE} CREATEROLE REPLICATION`);
+      await client.query(`ALTER ROLE ${MIGRATOR_ROLE} BYPASSRLS`);
+    } finally {
+      client.release();
+    }
+
+    // Confirm the drift is actually present before provisioning repairs it.
+    const before = await provisionDatabasePhase1(live, {
+      allowScratchSchemaCreates: true,
+    });
+    assertRoleHardening(before);
+
+    // Run again to prove the repair is idempotent and stable.
+    const after2 = await provisionDatabasePhase1(live, {
+      allowScratchSchemaCreates: true,
+    });
+    assertRoleHardening(after2);
+  });
+
+  test("Phase 1 plan enforces hardening attributes on every role", () => {
+    // The plan must set the hardening attributes on both CREATE and ALTER, so
+    // a fresh role is never privileged and drift is repaired on every run.
+    const steps = provisioningPlanPhase1({
+      allowScratchSchemaCreates: true,
+      database: "probe",
+    });
+    const alterIdByRole: Record<string, string> = {
+      [OWNER_ROLE]: "alter-role:owner",
+      [APP_ROLE]: "alter-role:app",
+      [MIGRATOR_ROLE]: "alter-role:migrator",
+      [APP_LOGIN_ROLE]: "alter-role:app-login",
+    };
+    for (const role of MANAGED_ROLES) {
+      const create = steps.find((s) => s.id === `create-role:${role}`);
+      assert.ok(create, `missing create-role step for ${role}`);
+      assert.ok(
+        create.sql.includes(`CREATE ROLE ${role}`) &&
+          create.sql.includes(ROLE_HARDENING_ATTRIBUTES),
+        `CREATE ROLE ${role} must include hardening attributes`,
+      );
+      const alter = steps.find((s) => s.id === alterIdByRole[role]);
+      assert.ok(alter, `missing alter-role step for ${role}`);
+      assert.ok(
+        alter.sql.includes(`ALTER ROLE ${role}`) &&
+          alter.sql.includes(ROLE_HARDENING_ATTRIBUTES),
+        `ALTER ROLE ${role} must include hardening attributes`,
+      );
+    }
   });
 
   test("verifyExpectedObjects reports every expected object on a migrated database", async () => {

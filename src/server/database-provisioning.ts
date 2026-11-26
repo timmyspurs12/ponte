@@ -44,6 +44,16 @@ export const OWNER_ROLE = "ponte_owner";
 export const MIGRATOR_ROLE = "ponte_migrator";
 
 /**
+ * Attribute hardening applied to every managed role on creation and on every
+ * subsequent provisioning run. No managed role is a superuser, may create
+ * databases, may create roles, may replicate, or may bypass row-level security.
+ * The approved `LOGIN`/`NOLOGIN` and membership settings are preserved; these
+ * attributes only strip privileges that no managed role should ever hold.
+ */
+export const ROLE_HARDENING_ATTRIBUTES =
+  "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS";
+
+/**
  * Trigger functions whose default `PUBLIC EXECUTE` is revoked.
  *
  * `PUBLIC` holds `EXECUTE` on every new function, and a trigger function can
@@ -228,7 +238,18 @@ export type ProvisioningPhase = "phase1" | "phase2" | "all";
 export type ProvisioningReport = {
   phase: ProvisioningPhase;
   serverVersionNum: number;
-  roles: Record<string, { exists: boolean; canLogin: boolean }>;
+  roles: Record<
+    string,
+    {
+      exists: boolean;
+      canLogin: boolean;
+      superuser: boolean;
+      createdb: boolean;
+      createrole: boolean;
+      replication: boolean;
+      bypassrls: boolean;
+    }
+  >;
   memberships: Record<string, { inheritOption: boolean; setOption: boolean }>;
   databaseAcl: string | null;
   appUpdateColumns: Record<string, string[]>;
@@ -315,23 +336,40 @@ DO $$ BEGIN
 END $$;`,
   });
 
-  // (2) Roles. `CREATE ROLE` is not idempotent, so each is guarded.
-  steps.push(createRoleStatement(OWNER_ROLE, "NOLOGIN"));
-  steps.push(createRoleStatement(APP_ROLE, "NOLOGIN"));
-  steps.push(createRoleStatement(MIGRATOR_ROLE, "LOGIN NOINHERIT"));
-  steps.push(createRoleStatement(APP_LOGIN_ROLE, "LOGIN"));
+  // (2) Roles. `CREATE ROLE` is not idempotent, so each is guarded. Every
+  //     role is created with the hardening attributes so a fresh role is
+  //     never a superuser or otherwise privileged.
+  steps.push(createRoleStatement(OWNER_ROLE, `NOLOGIN ${ROLE_HARDENING_ATTRIBUTES}`));
+  steps.push(createRoleStatement(APP_ROLE, `NOLOGIN ${ROLE_HARDENING_ATTRIBUTES}`));
+  steps.push(
+    createRoleStatement(
+      MIGRATOR_ROLE,
+      `LOGIN NOINHERIT ${ROLE_HARDENING_ATTRIBUTES}`,
+    ),
+  );
+  steps.push(
+    createRoleStatement(APP_LOGIN_ROLE, `LOGIN ${ROLE_HARDENING_ATTRIBUTES}`),
+  );
 
   // (3) Correct existing role attributes. A guarded `CREATE ROLE` never
-  //     repairs a role created by an earlier run with different attributes.
-  steps.push({ id: "alter-role:owner", sql: `ALTER ROLE ${OWNER_ROLE} NOLOGIN;` });
-  steps.push({ id: "alter-role:app", sql: `ALTER ROLE ${APP_ROLE} NOLOGIN;` });
+  //     repairs a role created by an earlier run with different attributes,
+  //     so every run re-asserts both the LOGIN setting and the hardening
+  //     attributes to repair drift.
+  steps.push({
+    id: "alter-role:owner",
+    sql: `ALTER ROLE ${OWNER_ROLE} NOLOGIN ${ROLE_HARDENING_ATTRIBUTES};`,
+  });
+  steps.push({
+    id: "alter-role:app",
+    sql: `ALTER ROLE ${APP_ROLE} NOLOGIN ${ROLE_HARDENING_ATTRIBUTES};`,
+  });
   steps.push({
     id: "alter-role:migrator",
-    sql: `ALTER ROLE ${MIGRATOR_ROLE} LOGIN NOINHERIT;`,
+    sql: `ALTER ROLE ${MIGRATOR_ROLE} LOGIN NOINHERIT ${ROLE_HARDENING_ATTRIBUTES};`,
   });
   steps.push({
     id: "alter-role:app-login",
-    sql: `ALTER ROLE ${APP_LOGIN_ROLE} LOGIN;`,
+    sql: `ALTER ROLE ${APP_LOGIN_ROLE} LOGIN ${ROLE_HARDENING_ATTRIBUTES};`,
   });
   // Defence in depth: an earlier design attached a session-level default
   // elevation to the migrator. Elevation must be transaction-local only.
@@ -667,14 +705,26 @@ export async function readProvisioningReport(
   )) as { rows: { n: number }[] };
 
   const roles = (await client.query(
-    `SELECT rolname, rolcanlogin FROM pg_roles
+    `SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+            rolreplication, rolbypassrls
+       FROM pg_roles
       WHERE rolname = ANY(${arrayLiteral([
         OWNER_ROLE,
         APP_ROLE,
         MIGRATOR_ROLE,
         APP_LOGIN_ROLE,
       ])})`,
-  )) as { rows: { rolname: string; rolcanlogin: boolean }[] };
+  )) as {
+    rows: {
+      rolname: string;
+      rolcanlogin: boolean;
+      rolsuper: boolean;
+      rolcreatedb: boolean;
+      rolcreaterole: boolean;
+      rolreplication: boolean;
+      rolbypassrls: boolean;
+    }[];
+  };
 
   const memberships = (await client.query(
     `SELECT m.rolname AS member, g.rolname AS granted,
@@ -735,7 +785,18 @@ export async function readProvisioningReport(
     roles: Object.fromEntries(
       [OWNER_ROLE, APP_ROLE, MIGRATOR_ROLE, APP_LOGIN_ROLE].map((name) => {
         const found = roles.rows.find((row) => row.rolname === name);
-        return [name, { exists: Boolean(found), canLogin: found?.rolcanlogin ?? false }];
+        return [
+          name,
+          {
+            exists: Boolean(found),
+            canLogin: found?.rolcanlogin ?? false,
+            superuser: found?.rolsuper ?? false,
+            createdb: found?.rolcreatedb ?? false,
+            createrole: found?.rolcreaterole ?? false,
+            replication: found?.rolreplication ?? false,
+            bypassrls: found?.rolbypassrls ?? false,
+          },
+        ];
       }),
     ),
     memberships: Object.fromEntries(

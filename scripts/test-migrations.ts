@@ -669,9 +669,52 @@ async function main() {
     }
 
     const fresh = `${schema}_fresh`;
-    await db.query(`CREATE SCHEMA ${fresh}`);
+    // PostgreSQL 18 changed unqualified CREATE resolution: the statement now
+    // selects the first schema in `search_path` where the *current user* holds
+    // CREATE. The child runs `SET LOCAL ROLE ponte_owner`, so the scratch
+    // schema must be owned by (or grant CREATE to) `ponte_owner` — otherwise
+    // `current_schema` is null and the migration runner's unqualified
+    // `CREATE TABLE schema_migrations` fails with 3F000
+    // ("no schema has been selected to create in"). Authorizing `ponte_owner`
+    // here is the fix; the assertions below lock it in as a regression guard.
+    await db.query(`CREATE SCHEMA ${fresh} AUTHORIZATION ponte_owner`);
     try {
       const env = { ...process.env, PGOPTIONS: `-c search_path=${fresh}` };
+
+      // Regression guard: the spawned child must run as ponte_owner with the
+      // scratch schema selected, so its unqualified DDL targets the intended
+      // schema and creates objects owned by ponte_owner.
+      const probeCode = [
+        "(async () => {",
+        "  const { Pool } = await import('pg');",
+        "  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });",
+        "  const c = await pool.connect();",
+        "  await c.query('BEGIN');",
+        "  await c.query('SET LOCAL ROLE ponte_owner');",
+        "  const r = await c.query('SELECT current_user AS u, current_schema AS s');",
+        "  console.log(JSON.stringify({ u: r.rows[0].u, s: r.rows[0].s }));",
+        "  await c.query('COMMIT');",
+        "  c.release();",
+        "  await pool.end();",
+        "})();",
+      ].join("\n");
+      const probeOut = execFileSync(
+        process.execPath,
+        ["--import", "tsx", "-e", probeCode],
+        { env, encoding: "utf8" },
+      ).trim();
+      const probe = JSON.parse(probeOut);
+      assert.equal(
+        probe.u,
+        "ponte_owner",
+        "child migration process must run as ponte_owner",
+      );
+      assert.equal(
+        probe.s,
+        fresh,
+        "child migration process must select the scratch schema as current_schema",
+      );
+
       for (let run = 0; run < 2; run++)
         execFileSync(
           process.execPath,
@@ -690,8 +733,30 @@ async function main() {
           "004_kms_envelope_metadata",
           "005_local_test_provider_provenance",
           "006_github_external_identities",
+          "007_evidence_outbox_pending_default",
         ],
       );
+
+      // The migration objects in the scratch schema must be owned by
+      // ponte_owner, proving the child elevated correctly (not the bootstrap
+      // superuser).
+      const owners = await db.query(
+        `SELECT c.relname AS name, c.relowner::regrole::text AS owner
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1
+            AND c.relkind = 'r'
+            AND c.relname IN ('schema_migrations', 'businesses')
+          ORDER BY c.relname`,
+        [fresh],
+      );
+      for (const row of owners.rows) {
+        assert.equal(
+          row.owner,
+          "ponte_owner",
+          `migration object ${row.name} in scratch schema must be owned by ponte_owner`,
+        );
+      }
     } finally {
       await db.query(`DROP SCHEMA ${fresh} CASCADE`);
     }
