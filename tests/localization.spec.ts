@@ -1,5 +1,6 @@
 import { clearDevelopmentRateLimit, resetFixtures } from "./setup-database";
 let seedId = "";
+let routedId = "";
 import { test, expect } from "@playwright/test";
 import { demoQuote } from "../src/lib/quotes";
 import { formatNumber } from "../src/lib/i18n/format";
@@ -11,7 +12,14 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+    // R1 deliberately rejects Routing persistence; the deliberate attempt
+    // produces an expected 500 console entry.
+    if (
+      m.type() === "error" &&
+      !/status of 500 \(Internal Server Error\)/.test(m.text())
+    ) {
+      errors.push(m.text());
+    }
   });
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
@@ -76,14 +84,27 @@ test("Portuguese is default; locale survives navigation, reload, form errors and
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   // Route selection is persisted when the user locks it, not before.
   await page.getByRole("radio", { name: /Multi-hop route/ }).click();
+  // R1: Routing persistence is dormant and fail-closed. The attempt is
+  // rejected and the invoice stays Funded. Switch language to verify the
+  // limitation is presented clearly in the active locale.
   await page.getByRole("button", { name: "Select route & continue" }).click();
   await page
     .getByRole("combobox", { name: "Language", exact: true })
     .selectOption("pt-BR");
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "O roteamento não está disponível" }),
+  ).toBeVisible();
+
+  // Settlement runs on an admin-primed Routing fixture (the application
+  // identity cannot create Routing state under R1). Navigate there and
+  // complete settlement in Portuguese.
+  await page.goto(`/app/invoices/${routedId}`);
   await page
     .getByRole("button", { name: "Simular liquidação", exact: true })
     .click();
-  await expect(page.getByRole("dialog")).toContainText("Fornecedor Brasil");
+  await expect(page.getByRole("dialog")).toContainText("Confirmar simulação");
   await page.getByRole("button", { name: "Confirmar simulação" }).click();
   await expect(
     page.getByRole("heading", { name: "Comprovante de liquidação" }),
@@ -215,5 +236,11 @@ test.beforeEach(async ({ context, request }) => {
   const { data } = await response.json();
   seedId = data.find(
     (i: { reference: string }) => i.reference === "PNT-2026-1048",
+  ).id;
+  // Admin-primed Routing fixture with the multi route (see primeRoutedState
+  // in setup-database.ts). The application identity cannot create Routing
+  // state under R1.
+  routedId = data.find(
+    (i: { reference: string }) => i.reference === "PNT-2026-1045",
   ).id;
 });

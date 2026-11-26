@@ -1,5 +1,6 @@
 import { resetFixtures } from "./setup-database";
 let seedId = "";
+let routedId = "";
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
 test.beforeEach(async ({ context }) => {
@@ -14,7 +15,14 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+    // R1 deliberately rejects Routing persistence, so the deliberate attempt
+    // produces an expected 500 EVIDENCE_PERSISTENCE_FAILED console entry.
+    if (
+      m.type() === "error" &&
+      !/status of 500 \(Internal Server Error\)/.test(m.text())
+    ) {
+      errors.push(m.text());
+    }
   });
   await page.goto("/app");
   await expect(
@@ -57,16 +65,36 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
     page.getByRole("heading", { name: "Compare illustrative routes" }),
   ).toBeVisible();
   await page.getByRole("radio", { name: /Split liquidity/ }).click();
+  // R1: Routing evidence persistence is dormant and fail-closed. The
+  // membership lock rejects the Routing attempt, so the invoice stays Funded
+  // and no evidence is persisted. The UI presents the limitation clearly.
   await page.getByRole("button", { name: "Select route & continue" }).click();
   await expect(
-    page.getByRole("heading", { name: "Ready for settlement" }),
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Routing is unavailable in this demo" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
   ).toBeVisible();
   await expect(
     page.getByTestId("invoice-evidence-panel").getByText("Evidence persisted", {
       exact: true,
     }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Ready for settlement" }),
+  ).toHaveCount(0);
   await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Compare illustrative routes" }),
+  ).toBeVisible();
+
+  // Settlement is exercised against an admin-primed Routing fixture. The
+  // application identity cannot create Routing state (R1), so the fixture is
+  // pre-seeded by primeRoutedState and settlement runs on the application
+  // identity against that pre-existing state.
+  await page.goto(`/app/invoices/${routedId}`);
   await expect(
     page.getByRole("heading", { name: "Ready for settlement" }),
   ).toBeVisible();
@@ -87,7 +115,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   ).toBeVisible();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export demo receipt" }).click();
-  expect((await download).suggestedFilename()).toContain("QA-2026-001");
+  expect((await download).suggestedFilename()).toContain("PNT-2026-1047");
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await expect(page.locator(".toast")).toHaveCount(0);
   await page.screenshot({
@@ -116,7 +144,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
   await page
     .getByRole("combobox", { name: "Sort invoices" })
     .selectOption("amount");
-  await page.goto(detail);
+  await page.goto(`/app/invoices/${routedId}`);
   await expect(
     page.getByRole("heading", { name: "Settlement receipt" }),
   ).toBeVisible();
@@ -131,7 +159,7 @@ test("complete invoice lifecycle, validation, filters and persistence", async ({
     { name: "ponte-locale", value: "en-US", domain: "localhost", path: "/" },
   ]);
   const reopened = await separate.newPage();
-  await reopened.goto(detail);
+  await reopened.goto(`/app/invoices/${routedId}`);
   await expect(
     reopened.getByRole("heading", { name: "Settlement receipt" }),
   ).toBeVisible();
@@ -202,7 +230,14 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
-    if (m.type() === "error") errors.push(m.text());
+    // R1 deliberately rejects Routing persistence; the deliberate attempt
+    // produces an expected 500 console entry.
+    if (
+      m.type() === "error" &&
+      !/status of 500 \(Internal Server Error\)/.test(m.text())
+    ) {
+      errors.push(m.text());
+    }
   });
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -237,6 +272,9 @@ test("keyboard, reduced motion, workspace demo payment and accessibility", async
     page.getByRole("radio", { name: /Split liquidity/ }),
   ).toHaveAttribute("aria-checked", "true");
   await page.getByRole("button", { name: "Select route & continue" }).click();
+  // R1: the Routing attempt is rejected; settlement is unavailable here.
+  // Complete the settlement flow on an admin-primed Routing fixture instead.
+  await page.goto(`/app/invoices/${routedId}`);
   await page
     .getByRole("button", { name: "Simulate settlement", exact: true })
     .click();
@@ -275,6 +313,13 @@ test.beforeEach(async ({ context, request }) => {
   const { data } = await response.json();
   seedId = data.find(
     (i: { reference: string }) => i.reference === "PNT-2026-1048",
+  ).id;
+  // The Routing invoice is an admin-primed synthetic fixture (see
+  // tests/setup-database.ts primeRoutedState). R1 makes Routing persistence
+  // fail-closed, so the application identity cannot create Routing state; this
+  // fixture exists so the settlement/receipt UI can be exercised.
+  routedId = data.find(
+    (i: { reference: string }) => i.reference === "PNT-2026-1047",
   ).id;
 });
 test("development login issues an HttpOnly session; unauthenticated API is not public", async ({
