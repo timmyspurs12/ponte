@@ -462,16 +462,31 @@ export function assertPreparedCandidateMatchesLockedRows(
   }
 }
 
+/**
+ * Re-authorizes the actor's membership against the locked row and takes the
+ * membership row lock.
+ *
+ * Phase 2C.3: the lock is carried by the SECURITY DEFINER function
+ * `ponte_lock_routing_membership`, owned by `ponte_routing_lock`. The
+ * application identity holds no UPDATE on `memberships`, so the previous
+ * direct `SELECT ... FOR UPDATE` failed with 42501 (the R1 dormancy); the
+ * function locks the active membership row with its own column-level
+ * privileges and returns the role.
+ *
+ * The caller must run this before comparing an existing idempotency key's
+ * fingerprint: authorization is re-checked against the locked row on every
+ * path, replay or new persistence.
+ */
 async function assertActiveMutationMembership(
   db: Parameters<typeof lockInvoiceForEvidence>[0],
   context: TrustedPersistenceContext,
 ): Promise<void> {
-  const membership = await db.query<{ role: string }>(
-    "SELECT role FROM memberships WHERE business_id=$1 AND user_id=$2 AND status='active' FOR UPDATE",
+  const membership = await db.query<{ role: string | null }>(
+    "SELECT public.ponte_lock_routing_membership($1,$2) AS role",
     [context.businessId, context.actorUserId],
   );
-  if (!membership.rowCount || membership.rows[0].role === "viewer")
-    fail("FORBIDDEN");
+  const role = membership.rows[0]?.role ?? null;
+  if (role === null || role === "viewer") fail("FORBIDDEN");
 }
 
 async function afterWrite(
@@ -507,6 +522,14 @@ async function persistNewCandidate(
   );
   if (lockedQuote.rowCount !== 1) fail("INVOICE_OR_QUOTE_UNAVAILABLE");
   const quote = lockedQuote.rows[0];
+
+  // Post-lock quote-expiry check. The lock function's predicate already
+  // excluded expired quotes (an expired quote returns zero rows and takes no
+  // lock), but the invariant is re-asserted against the locked row's own
+  // timestamp here so it is explicit at the call site rather than only
+  // implied by the function.
+  if (quote.expires_at.getTime() <= Date.now())
+    fail("INVOICE_OR_QUOTE_UNAVAILABLE");
 
   if (!verifyPreparedEvidenceCandidateIntegrity(candidate))
     fail("CANDIDATE_INVALID");
@@ -651,9 +674,15 @@ export async function persistPreparedEvidenceCandidate(
         context.idempotencyKey,
       ]);
       if (existing.rowCount) {
+        // Phase 2C.3: membership is re-authorized against the locked row
+        // BEFORE the fingerprint is compared. A replay discloses a durable
+        // response only to an actor whose membership is active at this
+        // moment: a revoked or viewer membership fails with FORBIDDEN even
+        // when the fingerprint matches, and before a mismatch can be
+        // reported as a conflict.
+        await assertActiveMutationMembership(db, context);
         if (existing.rows[0].fingerprint !== context.requestFingerprint)
           fail("IDEMPOTENCY_CONFLICT");
-        await assertActiveMutationMembership(db, context);
         return { kind: "replay", response: existing.rows[0].response };
       }
 
@@ -668,6 +697,12 @@ export async function persistPreparedEvidenceCandidate(
     if (error instanceof EvidencePersistenceError) throw error;
     if (error instanceof CommitOutcomeUnknownError)
       return fail("COMMIT_OUTCOME_UNKNOWN");
+    // An invalid UUID that reaches a lock function raises 22P02
+    // (invalid_text_representation). That is a request-context defect, not an
+    // internal persistence failure: map it explicitly instead of folding it
+    // into PERSISTENCE_FAILED.
+    if ((error as { code?: string }).code === "22P02")
+      return fail("INVALID_CONTEXT");
     return fail("PERSISTENCE_FAILED");
   }
 }

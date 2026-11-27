@@ -1,5 +1,5 @@
 /**
- * Phase 2C.2B privilege regression suite.
+ * Phase 2C.2B/2C.3 privilege regression suite.
  *
  * These tests assert the *database* enforces the design. Every assertion runs
  * on a connection authenticated as `ponte_app_login` (the application identity)
@@ -8,15 +8,21 @@
  *
  * Design notes that shaped the assertions:
  *
- * - The two row-lock statements are probed as **SQL**, not through the
- *   application wrapper. `persistPreparedEvidenceCandidate` maps failures
- *   through `mapEvidenceError`, which replaces the driver error with a
- *   sanitised `EVIDENCE_PERSISTENCE_FAILED`; asserting `42501` through it is
- *   impossible by design. `lockValidQuoteForEvidence` is exported, so L1 uses
- *   the real function; `assertActiveMutationMembership` is module-private and is
- *   deliberately *not* exported just to be tested, so L2 reproduces its exact
- *   statement text (source of truth: `src/server/evidence/persist-candidate.ts`,
- *   `assertActiveMutationMembership`) and flags the duplication here.
+ * - The two Routing row locks are carried by the SECURITY DEFINER lock
+ *   functions `ponte_lock_routing_membership` / `ponte_lock_routing_quote`,
+ *   owned by `ponte_routing_lock` with EXECUTE granted to `ponte_app` (Phase
+ *   2C.3). L1 and L2 assert both halves of the privilege contract: the
+ *   application identity can EXECUTE the lock functions and obtain the locked
+ *   rows, and it still cannot take a raw `FOR UPDATE` on `quotes` or
+ *   `memberships` directly — the row-lock privilege stays inside the function,
+ *   never on the application role.
+ * - `persistPreparedEvidenceCandidate` maps failures through
+ *   `mapEvidenceError`, which replaces the driver error with a sanitised
+ *   `EVIDENCE_PERSISTENCE_FAILED`; asserting `42501` through it is impossible
+ *   by design. `lockValidQuoteForEvidence` is exported, so L1 uses the real
+ *   function; the membership lock is probed through its lock function, which
+ *   is the same statement `assertActiveMutationMembership` runs (source of
+ *   truth: `src/server/evidence/persist-candidate.ts`).
  * - `confirmVerifiedAnchor()` is never invoked to prove a negative. Manufacturing
  *   a `TrustedAnchorVerification` is forbidden by Decision A, and a successful
  *   confirmation is impossible for the application identity. The privilege is
@@ -175,7 +181,7 @@ function evidenceInsert(
 }
 
 describe("application privilege boundary", { skip: !provisioned }, () => {
-  test("L1: lockValidQuoteForEvidence fails closed with 42501", async () => {
+  test("L1: the application can lock quotes through ponte_lock_routing_quote but cannot lock them directly", async () => {
     const businessId = randomUUID();
     const userId = randomUUID();
     const invoiceId = randomUUID();
@@ -196,14 +202,30 @@ describe("application privilege boundary", { skip: !provisioned }, () => {
 
     const client = await app.connect();
     try {
-      // The lock requires UPDATE on at least one column of `quotes`, which the
-      // application does not have. This is R1.
-      const code = await sqlstateOf(() =>
-        lockValidQuoteForEvidence(client, businessId, invoiceId, quoteId),
+      // Phase 2C.3: the quote row lock is carried by the SECURITY DEFINER
+      // function `ponte_lock_routing_quote`. The application identity holds
+      // EXECUTE on it, so the real lock helper succeeds and returns the row.
+      const locked = await lockValidQuoteForEvidence(
+        client,
+        businessId,
+        invoiceId,
+        quoteId,
       );
-      assert.equal(code, "42501");
+      assert.equal(locked.rowCount, 1);
+      assert.equal(locked.rows[0].id, quoteId);
 
-      // Control: the same row is readable without a lock, so the failure is the
+      // Control: the raw lock is still denied. The row-lock privilege lives
+      // inside the function (column-level grants to `ponte_routing_lock`),
+      // never on the application role.
+      const directLock = await sqlstateOf(() =>
+        client.query(
+          "SELECT id FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3 FOR UPDATE",
+          [businessId, invoiceId, quoteId],
+        ),
+      );
+      assert.equal(directLock, "42501");
+
+      // Control: the same row is readable without a lock, so the denial is the
       // lock and not table access.
       const control = await client.query(
         "SELECT id FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3",
@@ -217,7 +239,7 @@ describe("application privilege boundary", { skip: !provisioned }, () => {
     void userId;
   });
 
-  test("L2: the membership FOR UPDATE lock fails closed with 42501", async () => {
+  test("L2: the application can lock memberships through ponte_lock_routing_membership but cannot lock them directly", async () => {
     const businessId = randomUUID();
     const userId = randomUUID();
 
@@ -237,18 +259,28 @@ describe("application privilege boundary", { skip: !provisioned }, () => {
     const client = await app.connect();
     try {
       /**
-       * Verbatim from `assertActiveMutationMembership` in
-       * `src/server/evidence/persist-candidate.ts`. That function is private and
-       * is not exported for the test's convenience; if this statement changes,
-       * the comment above is the pointer to the source of truth.
+       * Phase 2C.3: the membership row lock is carried by the SECURITY DEFINER
+       * function `ponte_lock_routing_membership`. This is the exact statement
+       * `assertActiveMutationMembership` in
+       * `src/server/evidence/persist-candidate.ts` runs; that function is
+       * private and is not exported for the test's convenience, so the
+       * statement text here is the pointer to the source of truth.
        */
-      const locked = await sqlstateOf(() =>
+      const locked = await client.query<{ role: string | null }>(
+        "SELECT public.ponte_lock_routing_membership($1,$2) AS role",
+        [businessId, userId],
+      );
+      assert.equal(locked.rows[0].role, "admin");
+
+      // Control: the raw lock is still denied. The row-lock privilege lives
+      // inside the function, never on the application role.
+      const directLock = await sqlstateOf(() =>
         client.query(
           "SELECT role FROM memberships WHERE business_id=$1 AND user_id=$2 AND status='active' FOR UPDATE",
           [businessId, userId],
         ),
       );
-      assert.equal(locked, "42501");
+      assert.equal(directLock, "42501");
 
       // Control: identical predicate, no lock clause.
       const control = await client.query(

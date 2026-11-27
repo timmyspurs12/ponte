@@ -90,7 +90,7 @@ async function main(): Promise<void> {
     }
     for (const [grant, options] of Object.entries(report.memberships)) {
       console.log(
-        `  membership ${grant}: INHERIT=${options.inheritOption} SET=${options.setOption}`,
+        `  membership ${grant}: INHERIT=${options.inheritOption} SET=${options.setOption} ADMIN=${options.adminOption}`,
       );
     }
     const publicAcl = report.databaseAcl ?? "";

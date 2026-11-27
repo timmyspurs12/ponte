@@ -1,115 +1,198 @@
-// R1 fail-closed contracts, carried over from the pre-R1 normal-routing-evidence suite.
+// Contracts restored from the pre-R1 normal-routing-evidence suite.
 //
-// Each block below names the test it replaces. The original asserted that
-// evidence persistence SUCCEEDS; under R1 that is unreachable by construction
-// because PostgreSQL requires UPDATE on a table for every row-lock mode and the
-// application identity holds SELECT+INSERT only on `quotes` and `memberships`.
+// Phase 2C.2B (R1) made the two Routing row locks unreachable by construction:
+// PostgreSQL requires UPDATE on a table for every row-lock mode and the
+// application identity held SELECT+INSERT only on `quotes` and `memberships`,
+// so these tests were re-expressed as fail-closed contracts and the original
+// assertions moved here.
 //
-// Nothing is skipped or silently dropped: every original case is preserved as an
-// explicit fail-closed contract. See docs/PHASE2C2B_R1_ROUTING_LIMITATION.md.
+// Phase 2C.3 resolves the R1 limitation with the SECURITY DEFINER lock
+// functions `ponte_lock_routing_membership` / `ponte_lock_routing_quote`
+// (owned by `ponte_routing_lock`, EXECUTE granted to `ponte_app`). These
+// contracts are therefore restored to the original successful-persistence
+// semantics named in each block's header. The R1 fail-closed history is
+// preserved in docs/PHASE2C2B_R1_ROUTING_LIMITATION.md; the mechanism that
+// supersedes it is documented in docs/PHASE2C3_ROUTING_LOCK_FUNCTIONS.md.
 
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
+import { quote } from "../src/lib/quotes";
 import { pool } from "../src/server/repository";
 import {
   EvidencePersistenceError,
   persistPreparedEvidenceCandidate,
+  type PersistPreparedEvidenceCandidateInput,
 } from "../src/server/evidence/persist-candidate";
+import {
+  KMS_PROVIDER,
+  WRAPPED_DEK_ALGORITHM,
+  WRAPPED_DEK_FORMAT,
+  type CreatedAndWrappedDek,
+  type DekProvider,
+  type DekWrappingContext,
+} from "../src/server/evidence/kms";
+import {
+  prepareEvidenceCandidate,
+  type PreparedEvidenceCandidate,
+} from "../src/server/evidence/prepare-candidate";
+import { readEvidencePreparationSnapshot } from "../src/server/repository";
 import { fixtures } from "./helpers/fixtures";
 
-/**
- * Minimal context for the fail-closed contract.
- *
- * The pre-R1 fixtures built real encrypted candidates with a provider. Under R1
- * the denial happens before any candidate is consumed, so a context and an
- * idempotency key are enough: `persistPreparedEvidenceCandidate()` is called
- * with no candidate, which is precisely the candidate-free final path the
- * orchestration uses for replay and conflict resolution.
- */
-async function createContext() {
-  const businessId = randomUUID();
-  const userId = randomUUID();
-  const invoiceId = randomUUID();
-  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
-    businessId,
-    "R1 contract tenant",
-  ]);
-  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
-    userId,
-    `r1-contract-${userId}@example.test`,
-  ]);
-  await fixtures(
-    "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
-    [businessId, userId],
-  );
-  // `invoices` has NOT NULL relational columns in addition to the JSON
-  // snapshot, and `invoice_snapshot_consistent` requires the two to agree.
-  await fixtures(
-    "INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,2500001,'Funded',$4)",
-    [
-      invoiceId,
-      businessId,
-      `R1-${invoiceId}`,
-      JSON.stringify({
-        id: invoiceId,
-        reference: `R1-${invoiceId}`,
-        status: "Funded",
-        supplier: "R1 contract supplier",
-        wallet: `0x${"a".repeat(40)}`,
-        fundingCurrency: "BRL",
-        settlementCurrency: "USDG",
-        fundingMinor: "2500001",
-        amount: 25000.01,
-        due: "2027-12-20",
-        description: "R1 contract fixture",
-      }),
-    ],
-  );
-  return { businessId, userId, invoiceId };
+const REGISTRY_ADDRESS = "0x1111111111111111111111111111111111111111";
+
+class SyntheticDekProvider implements DekProvider {
+  readonly provider = KMS_PROVIDER.LOCAL_TEST_ONLY;
+  calls = 0;
+
+  async createAndWrapDek(
+    _context: DekWrappingContext,
+  ): Promise<CreatedAndWrappedDek> {
+    this.calls += 1;
+    return {
+      plaintextDek: Buffer.alloc(32, 73),
+      wrappedDek: Buffer.from("synthetic-persistence-wrapped-dek-v1"),
+      kmsProvider: KMS_PROVIDER.LOCAL_TEST_ONLY,
+      kmsKeyReference: "local-test-only/persistence/evidence",
+      kmsKeyVersion: "local-test-only/persistence/v1",
+      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
+      wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
+    };
+  }
 }
 
-function persistenceInput(context: {
+interface Context {
   businessId: string;
-  userId: string;
-}) {
+  actorUserId: string;
+  invoiceId: string;
+  quoteId: string;
+}
+
+function requestFingerprint(value = "ab"): string {
+  return value.repeat(32);
+}
+
+function persistenceInput(
+  context: Context,
+  candidate: PreparedEvidenceCandidate | undefined,
+  idempotencyKey = `evidence-${randomUUID()}`,
+  fingerprint = requestFingerprint(),
+): PersistPreparedEvidenceCandidateInput {
   return {
     businessId: context.businessId,
-    actorUserId: context.userId,
-    idempotencyKey: `r1-contract-${randomUUID()}`,
-    // The helper requires a 64-char lowercase hex request fingerprint.
-    requestFingerprint: createHash("sha256")
-      .update(`r1-contract-${randomUUID()}`)
-      .digest("hex"),
+    actorUserId: context.actorUserId,
+    idempotencyKey,
+    requestFingerprint: fingerprint,
+    candidate,
   };
 }
 
-const isPersistenceError = (code: string) => (error: unknown) =>
-  error instanceof EvidencePersistenceError && error.code === code;
+async function createContext(): Promise<Context> {
+  const businessId = randomUUID();
+  const actorUserId = randomUUID();
+  const invoiceId = randomUUID();
+  const quoteId = randomUUID();
+  const fundingMinor = "2500001";
+  const persistedQuote = quote({ fundingMinor });
+  const invoice = {
+    id: invoiceId,
+    reference: `EVIDENCE-PERSIST-${invoiceId}`,
+    supplier: "Final evidence persistence test supplier",
+    wallet: `0x${"c".repeat(40)}`,
+    amount: 25000.01,
+    fundingMinor,
+    fundingCurrency: "BRL",
+    settlementCurrency: "USDG",
+    due: "2035-12-20",
+    description: "Synthetic final evidence persistence test only",
+    status: "Funded",
+    created: "2026-11-19",
+    quote: persistedQuote,
+  };
 
-async function counts(context: { businessId: string; invoiceId: string }) {
-  const row = await pool.query<{
+  await fixtures("INSERT INTO businesses(id,name) VALUES($1,$2)", [
+    businessId,
+    "Evidence persistence test business",
+  ]);
+  await fixtures("INSERT INTO users(id,email) VALUES($1,$2)", [
+    actorUserId,
+    `${actorUserId}@example.invalid`,
+  ]);
+  await fixtures(
+    "INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active')",
+    [businessId, actorUserId],
+  );
+  await pool.query(
+    "INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,$4,$5,$6)",
+    [
+      invoiceId,
+      businessId,
+      invoice.reference,
+      fundingMinor,
+      invoice.status,
+      JSON.stringify(invoice),
+    ],
+  );
+  await pool.query(
+    "INSERT INTO quotes(id,business_id,invoice_id,source,simulated,data,expires_at) VALUES($1,$2,$3,'simulation-fixed-525',true,$4,$5)",
+    [
+      quoteId,
+      businessId,
+      invoiceId,
+      JSON.stringify(persistedQuote),
+      "2035-12-20T00:00:00.123Z",
+    ],
+  );
+  return { businessId, actorUserId, invoiceId, quoteId };
+}
+
+async function prepare(
+  context: Context,
+  fingerprint = requestFingerprint(),
+  provider = new SyntheticDekProvider(),
+  actorUserId = context.actorUserId,
+): Promise<{
+  candidate: PreparedEvidenceCandidate;
+  provider: SyntheticDekProvider;
+}> {
+  const snapshot = await readEvidencePreparationSnapshot(
+    context.businessId,
+    context.invoiceId,
+    context.quoteId,
+  );
+  if (snapshot.kind !== "ready")
+    assert.fail(`expected preparation snapshot, got ${snapshot.kind}`);
+  const candidate = await prepareEvidenceCandidate({
+    snapshot,
+    selectedRouteId: "split",
+    registryAddress: REGISTRY_ADDRESS,
+    createdByUserId: actorUserId,
+    requestFingerprint: fingerprint,
+    provider,
+  });
+  return { candidate, provider };
+}
+
+async function counts(context: Context) {
+  const result = await pool.query<{
+    evidence: string;
+    outbox: string;
     settlements: string;
     events: string;
     idempotency: string;
     status: string;
   }>(
-    `SELECT
-       (SELECT count(*) FROM settlements WHERE invoice_id=$2)::text AS settlements,
-       (SELECT count(*) FROM payment_events WHERE invoice_id=$2)::text AS events,
-       (SELECT count(*) FROM idempotency WHERE business_id=$1)::text AS idempotency,
-       (SELECT status FROM invoices WHERE id=$2) AS status`,
+    "SELECT (SELECT count(*) FROM route_decision_evidence WHERE business_id=$1)::text AS evidence,(SELECT count(*) FROM evidence_outbox o JOIN route_decision_evidence e ON e.id=o.evidence_record_id WHERE e.business_id=$1)::text AS outbox,(SELECT count(*) FROM settlements WHERE business_id=$1)::text AS settlements,(SELECT count(*) FROM payment_events WHERE business_id=$1)::text AS events,(SELECT count(*) FROM idempotency WHERE business_id=$1)::text AS idempotency,(SELECT status FROM invoices WHERE business_id=$1 AND id=$2) AS status",
     [context.businessId, context.invoiceId],
   );
-  return {
-    evidence: "0",
-    outbox: "0",
-    settlements: row.rows[0].settlements,
-    events: row.rows[0].events,
-    idempotency: row.rows[0].idempotency,
-    status: row.rows[0].status,
-  };
+  return result.rows[0];
+}
+
+function isPersistenceError(
+  code: EvidencePersistenceError["code"],
+): (error: unknown) => boolean {
+  return (error) =>
+    error instanceof EvidencePersistenceError && error.code === code;
 }
 
 after(async () => {
@@ -118,76 +201,69 @@ after(async () => {
 
 // ORIGINAL TEST: normal Routing endpoint atomically persists simulated settlement, encrypted evidence, pending outbox, event, and replay
 test("normal Routing endpoint atomically persists simulated settlement, encrypted evidence, pending outbox, event, and replay", async () => {
-  /*
-   * ORIGINAL TEST (preserved here, not deleted):
-   * normal Routing endpoint atomically persists simulated settlement, encrypted evidence, pending outbox, event, and replay
-   *
-   * It asserted that the normal Routing endpoint write succeeds end to end. Under R1 that is unreachable
-   * by construction, so it is re-expressed as the intentional fail-closed
-   * contract. See docs/PHASE2C2B_R1_ROUTING_LIMITATION.md.
-   */
-  // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
-  // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
-  // statement is the membership reauthorization, so persistence fails closed
-  // there, before any write, with a sanitised application error rather than a
-  // raw 42501. (The quote row lock is probed independently as an app-role
-  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
+  // Phase 2C.3 restored semantics: the membership and quote locks are carried
+  // by the SECURITY DEFINER lock functions, so the persistence path runs to
+  // completion and commits one full final-persistence effect set.
   const context = await createContext();
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(persistenceInput(context)),
-    isPersistenceError("PERSISTENCE_FAILED"),
-  );
+  const idempotencyKey = `normal-routing-${randomUUID()}`;
+  const fingerprint = requestFingerprint();
+  const { candidate, provider } = await prepare(context, fingerprint);
 
-  // No partial write survives a denied attempt.
+  const first = await persistPreparedEvidenceCandidate(
+    persistenceInput(context, candidate, idempotencyKey, fingerprint),
+  );
+  assert.equal(first.kind, "persisted");
   assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
+    evidence: "1",
+    outbox: "1",
+    settlements: "1",
+    events: "1",
+    idempotency: "1",
+    status: "Routing",
   });
 
-  // The denial is the membership row lock taken by the first row-lock
-  // statement in the persistence path, not an incidental error:
-  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
-  // so it is the first statement that needs a privilege the application
-  // identity does not hold.
-  const persistenceSource = await readFile(
-    "src/server/evidence/persist-candidate.ts",
-    "utf8",
+  // The same key and fingerprint replays the durable response without a
+  // second write or a provider call.
+  const replay = await persistPreparedEvidenceCandidate(
+    persistenceInput(context, undefined, idempotencyKey, fingerprint),
   );
-  assert.match(
-    persistenceSource,
-    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
-  );
+  assert.equal(replay.kind, "replay");
+  assert.deepEqual(replay.response, first.response);
+  assert.equal(provider.calls, 1, "a replay must not call a provider");
+  assert.deepEqual(await counts(context), {
+    evidence: "1",
+    outbox: "1",
+    settlements: "1",
+    events: "1",
+    idempotency: "1",
+    status: "Routing",
+  });
 });
 
 // ORIGINAL TEST: final locked-row validation failure rolls back all normal Routing writes
 test("final locked-row validation failure rolls back all normal Routing writes", async () => {
-  /*
-   * ORIGINAL TEST (preserved here, not deleted):
-   * final locked-row validation failure rolls back all normal Routing writes
-   *
-   * It asserted that locked-row validation rollback succeeds end to end. Under R1 that is unreachable
-   * by construction, so it is re-expressed as the intentional fail-closed
-   * contract. See docs/PHASE2C2B_R1_ROUTING_LIMITATION.md.
-   */
-  // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
-  // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
-  // statement is the membership reauthorization, so persistence fails closed
-  // there, before any write, with a sanitised application error rather than a
-  // raw 42501. (The quote row lock is probed independently as an app-role
-  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
+  // Phase 2C.3 restored semantics: the final locked-row validation compares
+  // the candidate against the rows locked by the two lock functions, so a
+  // drifted quote row fails with CANDIDATE_MISMATCH and the transaction
+  // rolls back every write.
   const context = await createContext();
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(persistenceInput(context)),
-    isPersistenceError("PERSISTENCE_FAILED"),
+  const fingerprint = requestFingerprint();
+  const { candidate } = await prepare(context, fingerprint);
+
+  // Mutate the quote row after preparation; the locked row no longer matches
+  // the frozen candidate (a hypothetical stale quote row). The quote UPDATE
+  // runs as the administrative identity: the application holds no UPDATE on
+  // `quotes`.
+  await fixtures(
+    "UPDATE quotes SET data = jsonb_set(data, '{fundingMinor}', '\"9999999\"') WHERE id=$1",
+    [context.quoteId],
   );
 
-  // No partial write survives a denied attempt.
+  await assert.rejects(
+    persistPreparedEvidenceCandidate(persistenceInput(context, candidate, undefined, fingerprint)),
+    isPersistenceError("CANDIDATE_MISMATCH"),
+  );
+
   assert.deepEqual(await counts(context), {
     evidence: "0",
     outbox: "0",
@@ -196,115 +272,69 @@ test("final locked-row validation failure rolls back all normal Routing writes",
     idempotency: "0",
     status: "Funded",
   });
-
-  // The denial is the membership row lock taken by the first row-lock
-  // statement in the persistence path, not an incidental error:
-  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
-  // so it is the first statement that needs a privilege the application
-  // identity does not hold.
-  const persistenceSource = await readFile(
-    "src/server/evidence/persist-candidate.ts",
-    "utf8",
-  );
-  assert.match(
-    persistenceSource,
-    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
-  );
 });
 
 // ORIGINAL TEST: concurrent identical normal Routing requests commit one operation and return a durable replay
 test("concurrent identical normal Routing requests commit one operation and return a durable replay", async () => {
-  /*
-   * ORIGINAL TEST (preserved here, not deleted):
-   * concurrent identical normal Routing requests commit one operation and return a durable replay
-   *
-   * It asserted that concurrent duplicate suppression succeeds end to end. Under R1 that is unreachable
-   * by construction, so it is re-expressed as the intentional fail-closed
-   * contract. See docs/PHASE2C2B_R1_ROUTING_LIMITATION.md.
-   */
-  // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
-  // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
-  // statement is the membership reauthorization, so persistence fails closed
-  // there, before any write, with a sanitised application error rather than a
-  // raw 42501. (The quote row lock is probed independently as an app-role
-  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
+  // Phase 2C.3 restored semantics: concurrent duplicates serialize on the
+  // idempotency advisory lock, one persists, the rest replay the durable
+  // response, and exactly one effect set survives.
   const context = await createContext();
-  await assert.rejects(
-    persistPreparedEvidenceCandidate(persistenceInput(context)),
-    isPersistenceError("PERSISTENCE_FAILED"),
-  );
+  const idempotencyKey = `normal-routing-concurrent-${randomUUID()}`;
+  const fingerprint = requestFingerprint();
+  const { candidate } = await prepare(context, fingerprint);
 
-  // No partial write survives a denied attempt.
+  const attempts = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      persistPreparedEvidenceCandidate(
+        persistenceInput(context, candidate, idempotencyKey, fingerprint),
+      ),
+    ),
+  );
+  const persisted = attempts.filter((result) => result.kind === "persisted");
+  const replays = attempts.filter((result) => result.kind === "replay");
+  assert.equal(persisted.length, 1);
+  assert.equal(replays.length, 3);
+  for (const replay of replays)
+    assert.deepEqual(replay.response, persisted[0].response);
+
   assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
+    evidence: "1",
+    outbox: "1",
+    settlements: "1",
+    events: "1",
+    idempotency: "1",
+    status: "Routing",
   });
-
-  // The denial is the membership row lock taken by the first row-lock
-  // statement in the persistence path, not an incidental error:
-  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
-  // so it is the first statement that needs a privilege the application
-  // identity does not hold.
-  const persistenceSource = await readFile(
-    "src/server/evidence/persist-candidate.ts",
-    "utf8",
-  );
-  assert.match(
-    persistenceSource,
-    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
-  );
 });
 
 // ORIGINAL TEST: normal Routing rejects a same-key conflicting payload without a second write
 test("normal Routing rejects a same-key conflicting payload without a second write", async () => {
-  /*
-   * ORIGINAL TEST (preserved here, not deleted):
-   * normal Routing rejects a same-key conflicting payload without a second write
-   *
-   * It asserted that same-key conflict rejection succeeds end to end. Under R1 that is unreachable
-   * by construction, so it is re-expressed as the intentional fail-closed
-   * contract. See docs/PHASE2C2B_R1_ROUTING_LIMITATION.md.
-   */
-  // R1 fail-closed contract (Phase 2C.2B). PostgreSQL requires UPDATE on a
-  // table for every row-lock mode, and the application identity holds
-  // SELECT+INSERT only on `memberships`. The persistence path's first row-lock
-  // statement is the membership reauthorization, so persistence fails closed
-  // there, before any write, with a sanitised application error rather than a
-  // raw 42501. (The quote row lock is probed independently as an app-role
-  // permission probe in tests-backend/privilege-boundary.test.ts, L1.)
+  // Phase 2C.3 restored semantics: a second persist with the same idempotency
+  // key but a different fingerprint is an authoritative conflict, and no
+  // second write or state change occurs.
   const context = await createContext();
+  const idempotencyKey = `normal-routing-conflict-${randomUUID()}`;
+  const { candidate } = await prepare(context, requestFingerprint("cd"));
+
+  const first = await persistPreparedEvidenceCandidate(
+    persistenceInput(context, candidate, idempotencyKey, requestFingerprint("cd")),
+  );
+  assert.equal(first.kind, "persisted");
+
   await assert.rejects(
-    persistPreparedEvidenceCandidate(persistenceInput(context)),
-    isPersistenceError("PERSISTENCE_FAILED"),
+    persistPreparedEvidenceCandidate(
+      persistenceInput(context, candidate, idempotencyKey, requestFingerprint("ef")),
+    ),
+    isPersistenceError("IDEMPOTENCY_CONFLICT"),
   );
 
-  // No partial write survives a denied attempt.
   assert.deepEqual(await counts(context), {
-    evidence: "0",
-    outbox: "0",
-    settlements: "0",
-    events: "0",
-    idempotency: "0",
-    status: "Funded",
+    evidence: "1",
+    outbox: "1",
+    settlements: "1",
+    events: "1",
+    idempotency: "1",
+    status: "Routing",
   });
-
-  // The denial is the membership row lock taken by the first row-lock
-  // statement in the persistence path, not an incidental error:
-  // `assertActiveMutationMembership` runs before `lockValidQuoteForEvidence`,
-  // so it is the first statement that needs a privilege the application
-  // identity does not hold.
-  const persistenceSource = await readFile(
-    "src/server/evidence/persist-candidate.ts",
-    "utf8",
-  );
-  assert.match(
-    persistenceSource,
-    /FROM memberships WHERE business_id=\$1 AND user_id=\$2 AND status='active' FOR UPDATE/,
-  );
 });
-
