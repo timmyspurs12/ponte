@@ -453,7 +453,7 @@ any fingerprint comparison or disclosure can happen.
 
 `tests-backend/routing-lock-provisioning.test.ts` → **"a quote that expires
 while a concurrent session blocks on the lock yields zero rows on resumption"**
-(the file's 8th and final test; all 8 tests pass). Full test body:
+(the file's 9th and final test; all 9 tests pass). Full test body:
 
 ```ts
   test("a quote that expires while a concurrent session blocks on the lock yields zero rows on resumption", async () => {
@@ -481,20 +481,43 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
     // Both client lifecycles are managed unconditionally: both clients are
     // acquired INSIDE the protected try/finally, Transaction A is rolled
     // back if an assertion fails before its commit, and both clients are
-    // released even on failure. If the rollback itself fails, B's backend
-    // is terminated so its lock wait can never hang the suite indefinitely.
+    // destroyed (never returned to the pool) even on failure. If the
+    // rollback itself fails, A's backend is terminated so the server
+    // releases the row lock; B's backend is terminated as a fallback to
+    // cancel its blocked query, and every wait on B is bounded so the
+    // cleanup can never hang the suite indefinitely.
     let sessionA: PoolClient | undefined;
     let sessionB: PoolClient | undefined;
+    let backendA: number | undefined;
     let backendB: number | undefined;
     let committedA = false;
+    let txnOpen = false;
     let settledB = false;
     let lockB: Promise<unknown> | undefined;
     try {
       sessionA = await app!.connect();
+      // A's backend PID is tracked as soon as the connection is
+      // established, so the cleanup path can terminate A itself if the
+      // rollback fails — terminating A releases the row lock at the
+      // server, which is the lock B is waiting on.
+      backendA = (
+        await sessionA.query("SELECT pg_backend_pid() AS pid")
+      ).rows[0].pid;
       sessionB = await app!.connect();
+      backendB = (
+        await sessionB.query("SELECT pg_backend_pid() AS pid")
+      ).rows[0].pid;
+
+      // Locals for the body: the outer variables stay optional because the
+      // cleanup path must tolerate them being untracked.
+      const backendAId = backendA;
+      const backendBId = backendB;
+      assert.ok(backendAId, "session A backend PID must be tracked");
+      assert.ok(backendBId, "session B backend PID must be tracked");
 
       // (1) Transaction A acquires the row lock on a valid quote and holds it.
       await sessionA.query("BEGIN");
+      txnOpen = true;
       const lockedA = await sessionA.query(
         `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
         [businessId, invoiceId, quoteId],
@@ -507,12 +530,8 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
       // `pg_stat_activity` are queried to show B holds an ungranted lock
       // request while A holds the granted lock, and B's wait_event_type is
       // "Lock" — the server itself is reporting B is waiting on a lock.
-      backendB = (
-        await sessionB.query("SELECT pg_backend_pid() AS pid")
-      ).rows[0].pid;
-      const backendA = (
-        await sessionA.query("SELECT pg_backend_pid() AS pid")
-      ).rows[0] as { pid: number };
+      // (Both backend PIDs were tracked when the connections were
+      // established above.)
       lockB = sessionB
         .query(
           `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
@@ -534,11 +553,11 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
         const blockerProbe = await superuser(
           bootstrap,
           `SELECT unnest(pg_blocking_pids($1)) AS pid`,
-          [backendB],
+          [backendBId],
         );
         lastBlockers = (blockerProbe.rows as { pid: number }[])
           .map((row) => Number(row.pid));
-        if (!settledB && lastBlockers.includes(backendA.pid)) {
+        if (!settledB && lastBlockers.includes(backendAId)) {
           blocked = true;
           break;
         }
@@ -546,7 +565,7 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
       }
       assert.ok(
         blocked,
-        `session B must be waiting on session A's row lock (pg_blocking_pids must include A's backend PID ${backendA.pid}); last probe: ${JSON.stringify(lastBlockers)}`,
+        `session B must be waiting on session A's row lock (pg_blocking_pids must include A's backend PID ${backendAId}); last probe: ${JSON.stringify(lastBlockers)}`,
       );
 
       // Prove B is genuinely waiting on a PostgreSQL lock held by A. The
@@ -560,7 +579,7 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
            FROM pg_locks
           WHERE pid = $1
           ORDER BY granted`,
-        [backendB],
+        [backendBId],
       );
       const bLockRows = bLocks.rows as { granted: boolean; locktype: string }[];
       assert.ok(
@@ -573,7 +592,7 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
         `SELECT wait_event_type, wait_event, state
            FROM pg_stat_activity
           WHERE pid = $1`,
-        [backendB],
+        [backendBId],
       );
       const bActRow = bActivity.rows[0] as {
         wait_event_type: string | null;
@@ -598,7 +617,7 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
            FROM pg_locks
           WHERE pid = $1
           ORDER BY granted`,
-        [backendA.pid],
+        [backendAId],
       );
       const aLockRows = aLocks.rows as { granted: boolean; locktype: string }[];
       const waitingType = bLockRows.find((row) => row.granted === false)!.locktype;
@@ -654,16 +673,32 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
         "a quote that expired while B waited for the lock must yield zero rows on resumption",
       );
     } finally {
-      // Unconditional cleanup: roll back A if the commit never happened
-      // (an assertion failed mid-test), let B's in-flight lock query settle,
-      // and release both clients.
-      if (sessionA && !committedA) {
+      // Unconditional cleanup. Transaction A is rolled back if the commit
+      // never happened (an assertion failed mid-test). If the rollback itself
+      // fails, A's backend is terminated so the server releases the row lock
+      // that B is waiting on. B's backend is terminated as a fallback to
+      // cancel its blocked query, and every wait on B is bounded so a
+      // termination failure cannot hang the suite indefinitely. Both clients
+      // are destroyed rather than released: after a failed rollback or a
+      // terminated backend they may hold an aborted transaction or a dead
+      // socket, and returning them to the pool would poison other tests.
+      if (sessionA && !committedA && txnOpen) {
         try {
           await sessionA.query("ROLLBACK");
         } catch {
-          // The rollback failed: A's row lock may still be held, which would
-          // leave B blocked indefinitely. Terminate B's backend so its lock
-          // wait is cancelled and the suite cannot hang.
+          if (backendA !== undefined) {
+            await superuser(
+              bootstrap,
+              `SELECT pg_terminate_backend($1)`,
+              [backendA],
+            ).catch(() => {});
+          }
+        }
+      }
+      if (lockB) {
+        if ((await settleWithTimeout(lockB, 5000)) === "timeout" && !settledB) {
+          // A's termination may have failed and the row lock may still be
+          // held: cancel B's blocked query as the fallback.
           if (backendB !== undefined) {
             await superuser(
               bootstrap,
@@ -671,13 +706,11 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
               [backendB],
             ).catch(() => {});
           }
+          await settleWithTimeout(lockB, 5000);
         }
       }
-      if (lockB) {
-        await lockB.catch(() => {});
-      }
-      sessionB?.release();
-      sessionA?.release();
+      destroyClient(sessionB);
+      destroyClient(sessionA);
     }
   });
 ```
@@ -695,7 +728,168 @@ zero rows.
 
 ---
 
-## 7. Exact disabled-member / mismatched-fingerprint regression test
+## 7. Hardened-schema regression test
+
+`tests-backend/routing-lock-provisioning.test.ts` → **"a hardened schema
+(PUBLIC USAGE revoked before provisioning) still provisions and both lock
+functions execute through the app identity"** (the file's 6th test, in the
+provisioning describe). In an isolated disposable database the default
+`PUBLIC USAGE` on the schema is revoked *before* any provisioning step; the
+full lifecycle (Phase 1 → migrations → seed → Phase 2) must then succeed, the
+lock role must hold effective USAGE without CREATE, and both SECURITY
+DEFINER functions must execute through the application identity. The
+disposable database is dropped in a `finally` block on every path. The
+privilege model itself is untouched — the test proves the explicit USAGE
+grant, it does not relax anything to pass. Full test body:
+
+```ts
+  test(
+    "a hardened schema (PUBLIC USAGE revoked before provisioning) still provisions and both lock functions execute through the app identity",
+    {
+      skip: !appUrl
+        ? "DATABASE_URL (application identity) not configured"
+        : false,
+    },
+    async () => {
+      const { name, pool } = await freshDatabase("hardened");
+      let appClient: Client | undefined;
+      try {
+        // HARDEN: remove the default PUBLIC USAGE on the schema BEFORE any
+        // provisioning step. ponte_routing_lock is not the schema owner, so
+        // its reachability now depends solely on the explicit USAGE grant
+        // made by migration 008 — exactly the property under test. The
+        // revocation must be in place before Phase 1, not applied as a
+        // fix-up afterwards.
+        await superuser(
+          pool,
+          `REVOKE USAGE ON SCHEMA ${PONTE_SCHEMA} FROM PUBLIC`,
+        );
+        const revoked = await superuser(
+          pool,
+          `SELECT has_schema_privilege('public', $1::regnamespace, 'USAGE') AS can`,
+          [PONTE_SCHEMA],
+        );
+        assert.equal(
+          (revoked.rows[0] as { can: boolean }).can,
+          false,
+          "the PUBLIC USAGE revocation must be effective before provisioning",
+        );
+
+        // Full provisioning lifecycle: Phase 1 → migrations → seed → Phase 2.
+        const phase1 = await provisionDatabasePhase1(pool, {
+          allowScratchSchemaCreates: true,
+        });
+        assert.equal(phase1.phase, "phase1");
+
+        const applied = await applyMigrations(pool);
+        assert.ok(
+          applied.applied.includes("008_routing_lock_functions"),
+          `migration 008 must run on the hardened schema; got ${applied.applied.join(", ")}`,
+        );
+
+        await seedLocalData(pool);
+
+        const report = await provisionDatabasePhase2(pool, {
+          allowScratchSchemaCreates: true,
+        });
+        assert.equal(report.phase, "phase2");
+
+        // The lock role has effective USAGE but no CREATE on the schema.
+        const privileges = await superuser(
+          pool,
+          `SELECT has_schema_privilege($1::regrole, $2, 'USAGE') AS usage,
+                  has_schema_privilege($1::regrole, $2, 'CREATE') AS create`,
+          [ROUTING_LOCK_ROLE, PONTE_SCHEMA],
+        );
+        const privRow = privileges.rows[0] as {
+          usage: boolean;
+          create: boolean;
+        };
+        assert.equal(
+          privRow.usage,
+          true,
+          "ponte_routing_lock must have USAGE on the hardened schema",
+        );
+        assert.equal(
+          privRow.create,
+          false,
+          "ponte_routing_lock must not have CREATE on the hardened schema",
+        );
+
+        // The Phase 2 report carries the same schema-privilege verification.
+        assert.equal(
+          report.routingLockSchema.usage,
+          true,
+          "the report must confirm USAGE on the hardened schema",
+        );
+        assert.equal(
+          report.routingLockSchema.create,
+          false,
+          "the report must confirm the absence of CREATE on the hardened schema",
+        );
+
+        // Both SECURITY DEFINER functions execute through the application
+        // identity — the identity that holds no direct table privileges.
+        appClient = new Client({
+          connectionString: appUrl!.replace(/\/[^/]*$/, `/${name}`),
+        });
+        await appClient.connect();
+
+        const membership = await appClient.query<{ role: string | null }>(
+          `SELECT ${PONTE_SCHEMA}.ponte_lock_routing_membership($1,$2) AS role`,
+          [LOCAL_SEED_BUSINESS_ID, LOCAL_SEED_USER_ID],
+        );
+        assert.equal(membership.rows[0].role, "admin");
+
+        // A quote row for the quote-lock function; the seed covers only the
+        // membership case. The fixture rows are inserted by the superuser
+        // because the app identity holds no direct table privileges.
+        const invoiceId = randomUUID();
+        const quoteId = randomUUID();
+        await superuser(
+          pool,
+          `INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,1000,'Funded',$4)`,
+          [
+            invoiceId,
+            LOCAL_SEED_BUSINESS_ID,
+            `HQ-${invoiceId}`,
+            invoiceData(invoiceId, `HQ-${invoiceId}`, "Funded"),
+          ],
+        );
+        await superuser(
+          pool,
+          `INSERT INTO quotes(id,business_id,invoice_id,source,simulated,data,expires_at) VALUES($1,$2,$3,'simulation-fixed-525',true,$4,date_trunc('milliseconds',now())+interval '1 hour')`,
+          [quoteId, LOCAL_SEED_BUSINESS_ID, invoiceId, JSON.stringify({})],
+        );
+
+        const quote = await appClient.query(
+          `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
+          [LOCAL_SEED_BUSINESS_ID, invoiceId, quoteId],
+        );
+        assert.equal(
+          quote.rowCount,
+          1,
+          "the quote-lock function must return the quote through the app identity",
+        );
+      } finally {
+        // Unconditional cleanup on every path, including failures: end the
+        // app client, close the superuser pool, and drop the disposable
+        // database (WITH (FORCE) terminates any lingering connection).
+        await appClient?.end().catch(() => {});
+        await pool.end().catch(() => {});
+        await dropDatabase(name);
+      }
+    },
+  );
+```
+
+The cleanup guarantees of the concurrency test (§6) are equally enforced
+here: the app client and the superuser pool are ended and the disposable
+database is dropped unconditionally, including on failure.
+
+---
+
+## 8. Exact disabled-member / mismatched-fingerprint regression test
 
 `tests-backend/evidence-persistence-r1-contract.test.ts` → **"revoked or
 viewer memberships cannot persist or disclose a durable replay"**. Full
@@ -786,7 +980,7 @@ tests in `routing-orchestration-r1-contract.test.ts` and
 
 ---
 
-## 8. Summary of the three rewritten R1 contract test files
+## 9. Summary of the three rewritten R1 contract test files
 
 All three files were rewritten in Phase 2C.3 from R1 **fail-closed**
 contracts (asserting the 42501/`PERSISTENCE_FAILED` dormancy of Phase
@@ -846,17 +1040,17 @@ UPDATE).
 
 ---
 
-## 9. Diff statistics and final Git status
+## 10. Diff statistics and final Git status
 
 **Complete implementation diff against the starting commit
-`f7a5bde0d109131e64596dab92879f024719a453` (17 files, 4130 insertions,
+`f7a5bde0d109131e64596dab92879f024719a453` (17 files, 4561 insertions,
 1193 deletions; the review patch file itself is excluded to avoid
 recursive inclusion):**
 
 ```
  docs/PHASE2C2B_R1_ROUTING_LIMITATION.md            |   29 +-
  docs/PHASE2C3_ROUTING_LOCK.md                      |  148 +++
- docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md             | 1072 +++++++++++++++++++
+ docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md             | 1264 +++++++++++++++++++
  migrations/008_routing_lock_functions.sql          |  200 +++
  scripts/provision-roles.ts                         |    2 +-
  scripts/test-migrations.ts                         |    1 +
@@ -869,39 +1063,25 @@ recursive inclusion):**
  tests-backend/normal-routing-evidence-r1-contract.test.ts | 474 ++++----
  tests-backend/privilege-boundary.test.ts           |   80 +-
  tests-backend/provisioning.test.ts                 |    4 +-
- tests-backend/routing-lock-provisioning.test.ts    |  876 +++++++++++++++++
+ tests-backend/routing-lock-provisioning.test.ts    | 1115 ++++++++++++++++++
  tests-backend/routing-orchestration-r1-contract.test.ts | 746 ++++++++-------
- 17 files changed, 4130 insertions(+), 1193 deletions(-)
+ 17 files changed, 4561 insertions(+), 1193 deletions(-)
 ```
 
 **Final Git status (`git status --short --branch`):**
 
 ```
 ## phase2c3-routing-lock
- M docs/PHASE2C2B_R1_ROUTING_LIMITATION.md
- M scripts/provision-roles.ts
- M scripts/test-migrations.ts
- M src/server/database-provisioning.ts
- M src/server/evidence/persist-candidate.ts
- M src/server/repository.ts
- M tests-backend/evidence-foundation.test.ts
- M tests-backend/evidence-persistence-r1-contract.test.ts
- M tests-backend/foundation.test.ts
- M tests-backend/normal-routing-evidence-r1-contract.test.ts
- M tests-backend/privilege-boundary.test.ts
- M tests-backend/routing-orchestration-r1-contract.test.ts
-?? docs/PHASE2C3_ROUTING_LOCK.md
-?? migrations/008_routing_lock_functions.sql
-?? tests-backend/routing-lock-provisioning.test.ts
 ```
 
-(`docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md` is this file, added by this
-package.) `git diff --check` is clean. Nothing is committed, pushed, merged,
-or deployed.
+Clean working tree: every Phase 2C.3 change (implementation, tests, this
+package and the review patch) is committed on `phase2c3-routing-lock` and
+pushed to `origin`. `git diff --check` is clean. Nothing is merged,
+deployed, or open as a pull request.
 
 ---
 
-## 10. Known risks and limitations
+## 11. Known risks and limitations
 
 1. **PostgreSQL 16 runtime validation not performed.** No PG 16 server is
    available in the verification environment; every empirical result
@@ -939,7 +1119,7 @@ or deployed.
 
 ---
 
-## 11. Read-only self-review
+## 12. Read-only self-review
 
 ### (a) Privilege escalation — no path found
 
@@ -1026,9 +1206,10 @@ or deployed.
   and `22P02`, and folds everything else into `PERSISTENCE_FAILED` —
   no raw error text escapes, and cleanup helpers (`clearBufferBestEffort`)
   never mask a transaction outcome.
-- The concurrency test releases both clients deterministically after
-  resume; the suite's `after()` closes pools and restores any cluster-wide
-  drift.
+- The concurrency test destroys both clients (never returns them to the
+  pool) unconditionally after resume or failure, with a bounded wait on the
+  blocked session so cleanup can never hang; the suite's `after()` closes
+  pools and restores any cluster-wide drift.
 
 ### (f) Test coverage lost during the R1 contract rewrites — none
 
@@ -1070,11 +1251,12 @@ or deployed.
 |---|---|
 | `npx tsc --noEmit` | Pass (exit 0) |
 | `npx eslint` (all changed files) | Pass (exit 0) |
-| Full backend suite (`scripts/run-backend-tests.mjs`) | **239 tests, 229 pass, 0 fail, 10 skipped** (exit 0) |
-| `npm run test:migrations` | Pass (exit 0) |
+| Full backend suite (`scripts/run-backend-tests.mjs`) | **240 tests, 230 pass, 0 fail, 10 skipped** (exit 0) |
+| `npm run test:migrations` | Pass (exit 0; run with `DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL` exactly as CI does — the app-login role holds only CONNECT after provisioning) |
 | Fresh disposable DB: Phase 1 → migrate → seed → Phase 2 | All four steps exit 0 |
 | Hardened-schema scenario (PUBLIC USAGE on `public` revoked before provisioning) | Full sequence exits 0; `ponte_routing_lock` USAGE=true / CREATE=false; both functions execute via the app identity; disposable DB dropped |
-| Routing-lock suite (`routing-lock-provisioning.test.ts`) | 8/8 pass |
+| Routing-lock suite (`routing-lock-provisioning.test.ts`) | 9/9 pass (incl. the hardened-schema regression test) |
+| Concurrency-test failure-path cleanup (ad-hoc probe) | B blocked on A (`pg_blocking_pids`); A's backend terminated → rollback fails → cleanup terminates A → B settles in 2 ms; no hang |
 | Shared `ponte` database | Untouched (7 baseline `schema_migrations` rows) |
 | Playwright | Unavailable (sandbox CDN restriction) — not passed |
 | PostgreSQL 16 | Unavailable (no server) — PG 18.6 results only |

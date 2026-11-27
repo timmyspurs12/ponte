@@ -25,6 +25,10 @@
  *   take a raw row lock or UPDATE either locked table.
  * - **Membership cases** — the membership lock returns the role for
  *   active admin/viewer rows and NULL for missing/disabled rows.
+ * - **Hardened-schema provisioning** — with the default PUBLIC USAGE on the
+ *   schema revoked before provisioning, Phase 1 → migrations → seed →
+ *   Phase 2 all succeed, the lock role holds effective USAGE without CREATE,
+ *   and both functions execute through the application identity.
  * - **Quote expiry after a concurrent lock wait** — a quote that expires
  *   while a second session waits for the row lock yields zero rows when the
  *   lock is finally taken (the expiry predicate is evaluated at lock time).
@@ -105,10 +109,37 @@ async function dropDatabase(name: string): Promise<void> {
 async function superuser(pool: Pool, sql: string, values: unknown[] = []) {
   const client = await pool.connect();
   try {
-      return await client.query(sql, values as never[]);
+    return await client.query(sql, values as never[]);
   } finally {
     client.release();
   }
+}
+
+/** The fixed local identity written by the `db:seed` CLI (`scripts/database.ts`). */
+const LOCAL_SEED_BUSINESS_ID = "00000000-0000-4000-8000-000000000001";
+const LOCAL_SEED_USER_ID = "00000000-0000-4000-8000-000000000002";
+
+/**
+ * Mirrors the local seed written by `npm run db:seed -- --seed` against a
+ * disposable database: the fixed local business, user and admin membership.
+ * Idempotent, so a re-run cannot fail on a duplicate key.
+ */
+async function seedLocalData(pool: Pool): Promise<void> {
+  await superuser(
+    pool,
+    `INSERT INTO businesses(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
+    [LOCAL_SEED_BUSINESS_ID, "PONTE local simulation"],
+  );
+  await superuser(
+    pool,
+    `INSERT INTO users(id,email) VALUES($1,$2) ON CONFLICT DO NOTHING`,
+    [LOCAL_SEED_USER_ID, "local@example.invalid"],
+  );
+  await superuser(
+    pool,
+    `INSERT INTO memberships(business_id,user_id,role,status) VALUES($1,$2,'admin','active') ON CONFLICT DO NOTHING`,
+    [LOCAL_SEED_BUSINESS_ID, LOCAL_SEED_USER_ID],
+  );
 }
 
 /** The catalogue row for one lock function, as the migration leaves it. */
@@ -481,6 +512,145 @@ describe("routing lock migration and provisioning", {
       await dropDatabase(name);
     }
   });
+
+  test(
+    "a hardened schema (PUBLIC USAGE revoked before provisioning) still provisions and both lock functions execute through the app identity",
+    {
+      skip: !appUrl
+        ? "DATABASE_URL (application identity) not configured"
+        : false,
+    },
+    async () => {
+      const { name, pool } = await freshDatabase("hardened");
+      let appClient: Client | undefined;
+      try {
+        // HARDEN: remove the default PUBLIC USAGE on the schema BEFORE any
+        // provisioning step. ponte_routing_lock is not the schema owner, so
+        // its reachability now depends solely on the explicit USAGE grant
+        // made by migration 008 — exactly the property under test. The
+        // revocation must be in place before Phase 1, not applied as a
+        // fix-up afterwards.
+        await superuser(
+          pool,
+          `REVOKE USAGE ON SCHEMA ${PONTE_SCHEMA} FROM PUBLIC`,
+        );
+        const revoked = await superuser(
+          pool,
+          `SELECT has_schema_privilege('public', $1::regnamespace, 'USAGE') AS can`,
+          [PONTE_SCHEMA],
+        );
+        assert.equal(
+          (revoked.rows[0] as { can: boolean }).can,
+          false,
+          "the PUBLIC USAGE revocation must be effective before provisioning",
+        );
+
+        // Full provisioning lifecycle: Phase 1 → migrations → seed → Phase 2.
+        const phase1 = await provisionDatabasePhase1(pool, {
+          allowScratchSchemaCreates: true,
+        });
+        assert.equal(phase1.phase, "phase1");
+
+        const applied = await applyMigrations(pool);
+        assert.ok(
+          applied.applied.includes("008_routing_lock_functions"),
+          `migration 008 must run on the hardened schema; got ${applied.applied.join(", ")}`,
+        );
+
+        await seedLocalData(pool);
+
+        const report = await provisionDatabasePhase2(pool, {
+          allowScratchSchemaCreates: true,
+        });
+        assert.equal(report.phase, "phase2");
+
+        // The lock role has effective USAGE but no CREATE on the schema.
+        const privileges = await superuser(
+          pool,
+          `SELECT has_schema_privilege($1::regrole, $2, 'USAGE') AS usage,
+                  has_schema_privilege($1::regrole, $2, 'CREATE') AS create`,
+          [ROUTING_LOCK_ROLE, PONTE_SCHEMA],
+        );
+        const privRow = privileges.rows[0] as {
+          usage: boolean;
+          create: boolean;
+        };
+        assert.equal(
+          privRow.usage,
+          true,
+          "ponte_routing_lock must have USAGE on the hardened schema",
+        );
+        assert.equal(
+          privRow.create,
+          false,
+          "ponte_routing_lock must not have CREATE on the hardened schema",
+        );
+
+        // The Phase 2 report carries the same schema-privilege verification.
+        assert.equal(
+          report.routingLockSchema.usage,
+          true,
+          "the report must confirm USAGE on the hardened schema",
+        );
+        assert.equal(
+          report.routingLockSchema.create,
+          false,
+          "the report must confirm the absence of CREATE on the hardened schema",
+        );
+
+        // Both SECURITY DEFINER functions execute through the application
+        // identity — the identity that holds no direct table privileges.
+        appClient = new Client({
+          connectionString: appUrl!.replace(/\/[^/]*$/, `/${name}`),
+        });
+        await appClient.connect();
+
+        const membership = await appClient.query<{ role: string | null }>(
+          `SELECT ${PONTE_SCHEMA}.ponte_lock_routing_membership($1,$2) AS role`,
+          [LOCAL_SEED_BUSINESS_ID, LOCAL_SEED_USER_ID],
+        );
+        assert.equal(membership.rows[0].role, "admin");
+
+        // A quote row for the quote-lock function; the seed covers only the
+        // membership case. The fixture rows are inserted by the superuser
+        // because the app identity holds no direct table privileges.
+        const invoiceId = randomUUID();
+        const quoteId = randomUUID();
+        await superuser(
+          pool,
+          `INSERT INTO invoices(id,business_id,reference,funding_minor,status,data) VALUES($1,$2,$3,1000,'Funded',$4)`,
+          [
+            invoiceId,
+            LOCAL_SEED_BUSINESS_ID,
+            `HQ-${invoiceId}`,
+            invoiceData(invoiceId, `HQ-${invoiceId}`, "Funded"),
+          ],
+        );
+        await superuser(
+          pool,
+          `INSERT INTO quotes(id,business_id,invoice_id,source,simulated,data,expires_at) VALUES($1,$2,$3,'simulation-fixed-525',true,$4,date_trunc('milliseconds',now())+interval '1 hour')`,
+          [quoteId, LOCAL_SEED_BUSINESS_ID, invoiceId, JSON.stringify({})],
+        );
+
+        const quote = await appClient.query(
+          `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
+          [LOCAL_SEED_BUSINESS_ID, invoiceId, quoteId],
+        );
+        assert.equal(
+          quote.rowCount,
+          1,
+          "the quote-lock function must return the quote through the app identity",
+        );
+      } finally {
+        // Unconditional cleanup on every path, including failures: end the
+        // app client, close the superuser pool, and drop the disposable
+        // database (WITH (FORCE) terminates any lingering connection).
+        await appClient?.end().catch(() => {});
+        await pool.end().catch(() => {});
+        await dropDatabase(name);
+      }
+    },
+  );
 });
 
 describe("routing lock function contracts", {
@@ -641,20 +811,43 @@ describe("routing lock function contracts", {
     // Both client lifecycles are managed unconditionally: both clients are
     // acquired INSIDE the protected try/finally, Transaction A is rolled
     // back if an assertion fails before its commit, and both clients are
-    // released even on failure. If the rollback itself fails, B's backend
-    // is terminated so its lock wait can never hang the suite indefinitely.
+    // destroyed (never returned to the pool) even on failure. If the
+    // rollback itself fails, A's backend is terminated so the server
+    // releases the row lock; B's backend is terminated as a fallback to
+    // cancel its blocked query, and every wait on B is bounded so the
+    // cleanup can never hang the suite indefinitely.
     let sessionA: PoolClient | undefined;
     let sessionB: PoolClient | undefined;
+    let backendA: number | undefined;
     let backendB: number | undefined;
     let committedA = false;
+    let txnOpen = false;
     let settledB = false;
     let lockB: Promise<unknown> | undefined;
     try {
       sessionA = await app!.connect();
+      // A's backend PID is tracked as soon as the connection is
+      // established, so the cleanup path can terminate A itself if the
+      // rollback fails — terminating A releases the row lock at the
+      // server, which is the lock B is waiting on.
+      backendA = (
+        await sessionA.query("SELECT pg_backend_pid() AS pid")
+      ).rows[0].pid;
       sessionB = await app!.connect();
+      backendB = (
+        await sessionB.query("SELECT pg_backend_pid() AS pid")
+      ).rows[0].pid;
+
+      // Locals for the body: the outer variables stay optional because the
+      // cleanup path must tolerate them being untracked.
+      const backendAId = backendA;
+      const backendBId = backendB;
+      assert.ok(backendAId, "session A backend PID must be tracked");
+      assert.ok(backendBId, "session B backend PID must be tracked");
 
       // (1) Transaction A acquires the row lock on a valid quote and holds it.
       await sessionA.query("BEGIN");
+      txnOpen = true;
       const lockedA = await sessionA.query(
         `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
         [businessId, invoiceId, quoteId],
@@ -667,12 +860,8 @@ describe("routing lock function contracts", {
       // `pg_stat_activity` are queried to show B holds an ungranted lock
       // request while A holds the granted lock, and B's wait_event_type is
       // "Lock" — the server itself is reporting B is waiting on a lock.
-      backendB = (
-        await sessionB.query("SELECT pg_backend_pid() AS pid")
-      ).rows[0].pid;
-      const backendA = (
-        await sessionA.query("SELECT pg_backend_pid() AS pid")
-      ).rows[0] as { pid: number };
+      // (Both backend PIDs were tracked when the connections were
+      // established above.)
       lockB = sessionB
         .query(
           `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
@@ -694,11 +883,11 @@ describe("routing lock function contracts", {
         const blockerProbe = await superuser(
           bootstrap,
           `SELECT unnest(pg_blocking_pids($1)) AS pid`,
-          [backendB],
+          [backendBId],
         );
         lastBlockers = (blockerProbe.rows as { pid: number }[])
           .map((row) => Number(row.pid));
-        if (!settledB && lastBlockers.includes(backendA.pid)) {
+        if (!settledB && lastBlockers.includes(backendAId)) {
           blocked = true;
           break;
         }
@@ -706,7 +895,7 @@ describe("routing lock function contracts", {
       }
       assert.ok(
         blocked,
-        `session B must be waiting on session A's row lock (pg_blocking_pids must include A's backend PID ${backendA.pid}); last probe: ${JSON.stringify(lastBlockers)}`,
+        `session B must be waiting on session A's row lock (pg_blocking_pids must include A's backend PID ${backendAId}); last probe: ${JSON.stringify(lastBlockers)}`,
       );
 
       // Prove B is genuinely waiting on a PostgreSQL lock held by A. The
@@ -720,7 +909,7 @@ describe("routing lock function contracts", {
            FROM pg_locks
           WHERE pid = $1
           ORDER BY granted`,
-        [backendB],
+        [backendBId],
       );
       const bLockRows = bLocks.rows as { granted: boolean; locktype: string }[];
       assert.ok(
@@ -733,7 +922,7 @@ describe("routing lock function contracts", {
         `SELECT wait_event_type, wait_event, state
            FROM pg_stat_activity
           WHERE pid = $1`,
-        [backendB],
+        [backendBId],
       );
       const bActRow = bActivity.rows[0] as {
         wait_event_type: string | null;
@@ -758,7 +947,7 @@ describe("routing lock function contracts", {
            FROM pg_locks
           WHERE pid = $1
           ORDER BY granted`,
-        [backendA.pid],
+        [backendAId],
       );
       const aLockRows = aLocks.rows as { granted: boolean; locktype: string }[];
       const waitingType = bLockRows.find((row) => row.granted === false)!.locktype;
@@ -814,16 +1003,32 @@ describe("routing lock function contracts", {
         "a quote that expired while B waited for the lock must yield zero rows on resumption",
       );
     } finally {
-      // Unconditional cleanup: roll back A if the commit never happened
-      // (an assertion failed mid-test), let B's in-flight lock query settle,
-      // and release both clients.
-      if (sessionA && !committedA) {
+      // Unconditional cleanup. Transaction A is rolled back if the commit
+      // never happened (an assertion failed mid-test). If the rollback itself
+      // fails, A's backend is terminated so the server releases the row lock
+      // that B is waiting on. B's backend is terminated as a fallback to
+      // cancel its blocked query, and every wait on B is bounded so a
+      // termination failure cannot hang the suite indefinitely. Both clients
+      // are destroyed rather than released: after a failed rollback or a
+      // terminated backend they may hold an aborted transaction or a dead
+      // socket, and returning them to the pool would poison other tests.
+      if (sessionA && !committedA && txnOpen) {
         try {
           await sessionA.query("ROLLBACK");
         } catch {
-          // The rollback failed: A's row lock may still be held, which would
-          // leave B blocked indefinitely. Terminate B's backend so its lock
-          // wait is cancelled and the suite cannot hang.
+          if (backendA !== undefined) {
+            await superuser(
+              bootstrap,
+              `SELECT pg_terminate_backend($1)`,
+              [backendA],
+            ).catch(() => {});
+          }
+        }
+      }
+      if (lockB) {
+        if ((await settleWithTimeout(lockB, 5000)) === "timeout" && !settledB) {
+          // A's termination may have failed and the row lock may still be
+          // held: cancel B's blocked query as the fallback.
           if (backendB !== undefined) {
             await superuser(
               bootstrap,
@@ -831,13 +1036,11 @@ describe("routing lock function contracts", {
               [backendB],
             ).catch(() => {});
           }
+          await settleWithTimeout(lockB, 5000);
         }
       }
-      if (lockB) {
-        await lockB.catch(() => {});
-      }
-      sessionB?.release();
-      sessionA?.release();
+      destroyClient(sessionB);
+      destroyClient(sessionA);
     }
   });
 });
@@ -845,12 +1048,48 @@ describe("routing lock function contracts", {
 /** Runs one statement and returns its SQLSTATE, or undefined on success. */
 async function sqlstateOf(run: () => Promise<unknown>): Promise<string | undefined> {
   try {
-      await run();
-      return undefined;
-    } catch (error) {
-      return (error as { code?: string }).code;
-    }
+    await run();
+    return undefined;
+  } catch (error) {
+    return (error as { code?: string }).code;
   }
+}
+
+/**
+ * Races a promise against a timeout, resolving with `"settled"` when the
+ * promise settles (whether it resolves or rejects) and `"timeout"` when the
+ * timer wins. Cleanup paths use this so a promise that never settles — e.g.
+ * a lock wait whose backend termination failed — can never hang the suite.
+ */
+async function settleWithTimeout(
+  promise: Promise<unknown>,
+  ms: number,
+): Promise<"settled" | "timeout"> {
+  try {
+    return await Promise.race([
+      promise.then(() => "settled" as const),
+      new Promise<"timeout">((resolve) => {
+        const timer = setTimeout(() => resolve("timeout"), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    // The promise rejected: it settled, which is what the cleanup cares
+    // about (the error itself is already swallowed by the caller).
+    return "settled";
+  }
+}
+
+/**
+ * Destroys a pool client instead of returning it to the pool: passing an
+ * error to `release()` removes the client from the pool and tears down its
+ * connection. Used by the concurrency cleanup, where a client may hold an
+ * aborted transaction or a dead (terminated) backend and must never be
+ * handed back to another test.
+ */
+function destroyClient(client: PoolClient | undefined): void {
+  client?.release(new Error("client destroyed during concurrency cleanup"));
+}
 
   /**
    * A complete invoice `data` snapshot. The generated columns
