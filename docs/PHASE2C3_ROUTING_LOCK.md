@@ -112,13 +112,38 @@ through the real `persistPreparedEvidenceCandidate()` path.
 
 ## PostgreSQL version note
 
-All empirical results in this implementation were produced against
-**PostgreSQL 18.6**. The `GRANT ... WITH INHERIT/SET` syntax requires
-PostgreSQL 16+; a version guard in Phase 1 fails explicitly on older
-servers. **PostgreSQL 16 runtime validation was not performed** — no PG 16
-server was available in the development environment — so the 16+ syntax
-path is verified by the version guard and the 18.6 runtime only, not by a
-16.x runtime.
+The `GRANT ... WITH INHERIT/SET` syntax requires PostgreSQL 16+; a version
+guard in Phase 1 fails explicitly on older servers.
+
+**Runtime validation was completed for both supported versions via the
+Phase 2D.1.1 CI matrix** (PR #23, commit `5b26e14`, workflow
+[`frontend.yml`](../.github/workflows/frontend.yml)):
+
+- **PostgreSQL 16** — full quality suite run against a `postgres:16`
+  service container: Phase 1 and 2 provisioning, migrations, seed,
+  migration tests, the complete backend suite, lint, typecheck,
+  production build and Playwright. **All green.** Locally reproduced on
+  a real PostgreSQL **16.16** server with the identical suite:
+  230 backend tests passed, 0 failed.
+- **PostgreSQL 18** — the same full suite run against a `postgres:18`
+  service container. **All green.**
+- **PostgreSQL 15 guard** — an isolated job runs only the Phase 1
+  provisioning command against `postgres:15` and asserts it exits
+  non-zero with the explicit `PostgreSQL 16+ required` error. The guard
+  is the first statement of the Phase 1 plan and the plan executes
+  statement by statement, so no PostgreSQL 16-only SQL is parsed or
+  executed before the rejection. The full application suite
+  intentionally never runs on PostgreSQL 15. **Assertion green.**
+
+Workflow run evidence: [run #88](https://github.com/timmyspurs12/ponte/actions/runs/46064851383)
+(all three jobs: `quality (16)`, `quality (18)`, `pg15-version-guard`).
+
+One incidental assertion was adjusted for the matrix: the foundation
+test previously matched `/PostgreSQL 18/` against `version()`, hard-coding
+the CI version. It now asserts the declared minimum — the version string
+starts with PostgreSQL 16–19 and `server_version_num >= 160000` — so the
+same test passes on both legs. All other tests in the suite are
+unchanged and run identically on 16 and 18.
 
 ## Verification
 
