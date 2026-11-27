@@ -1,5 +1,7 @@
 # Phase 2B.6.0 — Reproducible Stylus testnet artifact readiness
 
+> **Follow-up on this PR branch:** [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) moves the Cargo workspace root to `rust/`, fixes the CLI's reproducible-container path and re-measures the artifact. The measurements below describe the **original** layout and remain historical.
+
 > **Build and packaging only.** This phase prepares a locally built, **unactivated candidate artifact** of the existing synthetic-only PONTE Stylus wrapper and documents a controlled path toward Arbitrum Sepolia. Nothing was deployed or activated. No `cargo stylus check` ran against any RPC endpoint, and no transaction or signature was requested. No wallet, key, funding, payment, settlement or hosting deployment was involved, and nobody was contacted on PONTE's behalf.
 
 ## Status
