@@ -2,16 +2,19 @@
 
 Branch: `phase2c3-routing-lock`. Implementation base (verified):
 `f7a5bde0d109131e64596dab92879f024719a453` (the merge of
-`arena/phase2c2b-r1-20261125`, i.e. HEAD of this branch). The Arena session
+`arena/phase2c2b-r1-20261125`, i.e. HEAD of `main` — still the latest `main`
+base at the time of this refresh). The Arena session
 tracking name `arena/40fa34c0-ponte` and the earlier shallow-checkout base
 `d3dae37f6032fbdea39d1834ef053c5676fb6a43` are historical session context
 only — they are **not** the implementation base of this branch's diff.
-Status: **ready for maintainer review — not merged, not pushed, not
-deployed.**
+Status: **pushed to `origin/phase2c3-routing-lock`; PR #21 open and
+MERGEABLE; GitHub Actions green (run `45994496229`, conclusion: success) —
+not merged, not deployed.**
 
 This package collects every Phase 2C.3 artifact for inspection: the complete
 migration SQL, the Phase 1/2 provisioning logic, the application changes, the
-two security tests, the R1-contract rewrite summary, and a read-only
+two security tests, the R1-contract rewrite summary, the browser-test rewrite
+and messaging cleanup that fixed the PR #21 CI failure, and a read-only
 self-review of the seven requested review areas.
 
 ---
@@ -1038,34 +1041,85 @@ missing/foreign quote lock returns zero rows instead of raising 42501;
 function-based lock path (app identity holds EXECUTE but no direct table
 UPDATE).
 
+### Browser-test rewrite and messaging cleanup (PR #21 CI fix)
+
+CI run `45988744382` failed in `npm test`: 20/23 browser tests passed, and
+three timed out after 90 s waiting for a `POST
+/api/v1/invoices/:id/transitions` response with `status >= 500`
+(`tests/frontend.spec.ts` lines 11 and 302, `tests/localization.spec.ts`
+line 9). Root cause confirmed by local reproduction against the CI-equivalent
+environment: the three tests still asserted the superseded Phase 2C.2B
+fail-closed behaviour, while under the CI test configuration the Routing
+transition **succeeds** — the POST returns **200** with
+`{data:{status:"Routing", selectedRoute}}` and `GET /evidence` returns
+`200` with `state:"persisted"` (synthetic `local-test-only` provider). The
+`waitForResponse(status >= 500)` predicate could therefore never resolve.
+
+The three tests were rewritten to assert the intended Phase 2C.3 successful
+flow: exact HTTP 200 plus the documented response body, the invoice reaching
+Routing with its selected route, the evidence panel reflecting persisted
+evidence with the local-test-provider disclosure, persisted state surviving a
+reload, and settlement exercised on the newly routed invoice (the
+admin-primed Routing fixture settlement is retained as pre-existing-state
+coverage). The complete-5xx-response-list assertions now expect an empty
+list, and the expected-500 console allowance was removed. The
+provider-unavailable test (controlled 503 intercept → safe translated UI
+message, invoice stays Funded) is retained unchanged. Stale R1 fail-closed
+comments in `tests/setup-database.ts` and `tests/evidence-status.spec.ts`
+were updated.
+
+Final messaging cleanup (same round): the user-facing
+`EVIDENCE_PERSISTENCE_FAILED` message in `src/components/invoice-detail.tsx`
+was rewritten from the stale "evidence persistence is dormant and
+fail-closed" wording to accurate wording that communicates the Routing
+attempt failed because the evidence could not be persisted and the invoice
+remains Funded (Portuguese translation updated; the provider-unavailable
+message and its translations are unchanged), and the stale comment in
+`src/server/evidence/persist-candidate.ts` claiming
+`persistPreparedEvidenceCandidate()` is unreachable from normal
+Routing/API flows was corrected: it is the final state authority for Routing
+persistence, invoked by `orchestratePreparedRoutingCandidate()` (the normal
+Routing/API flow used by the service entrypoint) and by the candidate-free
+replay recheck.
+
+**Result:** full browser suite **23/23 pass**; follow-up GitHub Actions run
+**`45994496229` — conclusion: success**. No backend behaviour or database
+privilege model was changed to silence the tests.
+
 ---
 
 ## 10. Diff statistics and final Git status
 
 **Complete implementation diff against the starting commit
-`f7a5bde0d109131e64596dab92879f024719a453` (17 files, 4561 insertions,
-1193 deletions; the review patch file itself is excluded to avoid
+`f7a5bde0d109131e64596dab92879f024719a453` (23 files, 4732 insertions,
+1376 deletions; the review patch file itself is excluded to avoid
 recursive inclusion):**
 
 ```
  docs/PHASE2C2B_R1_ROUTING_LIMITATION.md            |   29 +-
  docs/PHASE2C3_ROUTING_LOCK.md                      |  148 +++
- docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md             | 1264 +++++++++++++++++++
- migrations/008_routing_lock_functions.sql          |  200 +++
+ docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md             | 1326 ++++++++++++++++++++
+ migrations/008_routing_lock_functions.sql          |  200 ++++
  scripts/provision-roles.ts                         |    2 +-
  scripts/test-migrations.ts                         |    1 +
- src/server/database-provisioning.ts                |  480 ++++++++-
- src/server/evidence/persist-candidate.ts           |   47 +-
+ src/components/invoice-detail.tsx                  |    7 +-
+ src/lib/i18n/pt-BR.ts                              |    4 +-
+ src/server/database-provisioning.ts                |  480 +++++++-
+ src/server/evidence/persist-candidate.ts           |   56 +-
  src/server/repository.ts                           |   17 +-
  tests-backend/evidence-foundation.test.ts          |   65 +-
- tests-backend/evidence-persistence-r1-contract.test.ts | 1010 ++++++++++----------
+ .../evidence-persistence-r1-contract.test.ts       | 1010 ++++++++--------
  tests-backend/foundation.test.ts                   |   72 +-
- tests-backend/normal-routing-evidence-r1-contract.test.ts | 474 ++++----
+ .../normal-routing-evidence-r1-contract.test.ts    |  474 ++++----
  tests-backend/privilege-boundary.test.ts           |   80 +-
  tests-backend/provisioning.test.ts                 |    4 +-
- tests-backend/routing-lock-provisioning.test.ts    | 1115 ++++++++++++++++++
- tests-backend/routing-orchestration-r1-contract.test.ts | 746 ++++++++-------
- 17 files changed, 4561 insertions(+), 1193 deletions(-)
+ tests-backend/routing-lock-provisioning.test.ts    | 1115 +++++++++++++++++
+ .../routing-orchestration-r1-contract.test.ts      |  746 ++++++------
+ tests/evidence-status.spec.ts                      |    8 +-
+ tests/frontend.spec.ts                             |  200 ++--
+ tests/localization.spec.ts                         |  113 +-
+ tests/setup-database.ts                            |   13 +-
+ 23 files changed, 4738 insertions(+), 1376 deletions(-)
 ```
 
 **Final Git status (`git status --short --branch`):**
@@ -1076,8 +1130,9 @@ recursive inclusion):**
 
 Clean working tree: every Phase 2C.3 change (implementation, tests, this
 package and the review patch) is committed on `phase2c3-routing-lock` and
-pushed to `origin`. `git diff --check` is clean. Nothing is merged,
-deployed, or open as a pull request.
+pushed to `origin`. `git diff --check` is clean. The branch is open as PR
+**#21** (`https://github.com/timmyspurs12/ponte/pull/21`) and is MERGEABLE;
+GitHub Actions run `45994496229` passed. Nothing is merged or deployed.
 
 ---
 
@@ -1088,9 +1143,13 @@ deployed, or open as a pull request.
    (migrations, provisioning, tests) was produced on PostgreSQL 18.6. The
    version guard covers 16+ syntax (`GRANT ... WITH INHERIT/SET`), but
    PG-16-specific behaviour is unverified.
-2. **Playwright browser tests unavailable.** Chromium cannot be downloaded
-   in the sandbox (CDN blocked). All browser-level tests are reported
-   unavailable, not passed.
+2. **Browser tests run on a sandbox fallback Chromium, not a released
+   Playwright browser.** The sandbox CDN blocks `playwright install
+   chromium`, so the suite runs with an explicit Linux fallback Chromium
+   (`PONTE_BROWSER_FALLBACK=1` → `PONTE_CHROMIUM_EXECUTABLE`). All 23
+   browser tests pass against that fallback; a CI run with a standard
+   Playwright Chromium download should behave identically but is not
+   independently verified in this sandbox.
 3. **Clock skew between application and database** affects the call-site
    post-lock expiry re-assertion (`Date.now()` in JS vs `clock_timestamp()`
    in the function). Both checks fail closed, so skew can only cause a
@@ -1251,14 +1310,17 @@ deployed, or open as a pull request.
 |---|---|
 | `npx tsc --noEmit` | Pass (exit 0) |
 | `npx eslint` (all changed files) | Pass (exit 0) |
+| Full browser suite (`npm test`, fallback Chromium) | **23/23 pass** — incl. the three rewritten Routing-persistence tests and the retained provider-unavailable test |
 | Full backend suite (`scripts/run-backend-tests.mjs`) | **240 tests, 230 pass, 0 fail, 10 skipped** (exit 0) |
 | `npm run test:migrations` | Pass (exit 0; run with `DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL` exactly as CI does — the app-login role holds only CONNECT after provisioning) |
+| Production build (`npm run build`) | Pass — compiled successfully; TypeScript checks in the build pass |
 | Fresh disposable DB: Phase 1 → migrate → seed → Phase 2 | All four steps exit 0 |
 | Hardened-schema scenario (PUBLIC USAGE on `public` revoked before provisioning) | Full sequence exits 0; `ponte_routing_lock` USAGE=true / CREATE=false; both functions execute via the app identity; disposable DB dropped |
 | Routing-lock suite (`routing-lock-provisioning.test.ts`) | 9/9 pass (incl. the hardened-schema regression test) |
 | Concurrency-test failure-path cleanup (ad-hoc probe) | B blocked on A (`pg_blocking_pids`); A's backend terminated → rollback fails → cleanup terminates A → B settles in 2 ms; no hang |
 | Shared `ponte` database | Untouched (7 baseline `schema_migrations` rows) |
-| Playwright | Unavailable (sandbox CDN restriction) — not passed |
+| Playwright | Pass — 23/23 browser tests via the sandbox fallback Chromium (`PONTE_BROWSER_FALLBACK=1`); standard Playwright Chromium not independently verified (CDN blocked) |
+| GitHub Actions (PR #21) | Run `45994496229` — **conclusion: success** (previously failing run `45988744382` superseded) |
 | PostgreSQL 16 | Unavailable (no server) — PG 18.6 results only |
 
 **Branch left unmerged and ready for maintainer review.**
