@@ -36,11 +36,17 @@ statement, so a disabled row is never locked.
 
 ### `ponte_lock_routing_quote(uuid, uuid, uuid) RETURNS TABLE (...)`
 
-Locks the exact quote row and returns its persisted fields. The expiry
-predicate (`expires_at > clock_timestamp()`) is evaluated **at lock time**:
-a missing or expired quote returns zero rows and takes no lock, so the caller
-fails closed with `INVOICE_OR_QUOTE_UNAVAILABLE` instead of locking a stale
-row.
+Locks the exact quote row by identity and returns its persisted fields. The
+row is locked first, and the expiry check (`expires_at > clock_timestamp()`)
+is evaluated only **after** the lock is acquired:
+
+- a **missing** quote locks nothing and returns zero rows;
+- a **valid** quote is locked and then returned;
+- an **expired** quote is locked first, rejected by the post-lock expiry
+  check, and returns zero rows.
+
+In the zero-row cases the caller fails closed with
+`INVOICE_OR_QUOTE_UNAVAILABLE` instead of locking or returning a stale row.
 
 ## Security properties (all verified against the catalogue)
 

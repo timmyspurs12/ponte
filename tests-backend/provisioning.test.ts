@@ -530,7 +530,7 @@ describe("two-phase provisioning", { skip: !provisioned ? "PONTE_BOOTSTRAP_DATAB
     }
   });
 
-  test("PROVISIONING_VERSION is the R1 contract marker", () => {
-    assert.equal(PROVISIONING_VERSION, "phase2c2b-r1");
+  test("PROVISIONING_VERSION is the Phase 2C.3 contract marker", () => {
+    assert.equal(PROVISIONING_VERSION, "phase2c3-routing-lock");
   });
 });

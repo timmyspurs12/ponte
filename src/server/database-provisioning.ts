@@ -33,7 +33,14 @@
 import { Pool } from "pg";
 
 /** Marks the provisioning contract; bump only alongside a design change. */
-export const PROVISIONING_VERSION = "phase2c2b-r1";
+/**
+ * Identifies the provisioning contract this code implements. Phase 2C.3
+ * added the `ponte_routing_lock` role, its membership and the lock-function
+ * grants/verification, so the marker is the Phase 2C.3 identifier — the R1
+ * (`phase2c2b-r1`) label it replaced described the earlier base contract
+ * only and no longer describes the provisioned surface.
+ */
+export const PROVISIONING_VERSION = "phase2c3-routing-lock";
 
 /** The only schema this design touches. */
 export const PONTE_SCHEMA = "public";
@@ -50,9 +57,12 @@ export const MIGRATOR_ROLE = "ponte_migrator";
  * The functions run as this role, which holds exactly the minimum
  * column-level SELECT and UPDATE privileges the locks need (granted by
  * migration 008). `ponte_owner` is a member of it WITH INHERIT FALSE, SET
- * TRUE — the SET option is what allows the migration's ownership transfer;
+ * TRUE — an explicitly accepted role relationship under the trusted-migrator
+ * decision. It is NOT required by migration 008's ownership transfer: that
+ * transfer runs as the bootstrap superuser (`SET LOCAL ROLE NONE`), because
+ * `ponte_owner` cannot perform the `ALTER FUNCTION ... OWNER TO` itself.
  * INHERIT FALSE keeps the owner's own privileges from flowing into the lock
- * role (and is irrelevant to the transfer itself).
+ * role.
  */
 export const ROUTING_LOCK_ROLE = "ponte_routing_lock";
 
@@ -564,9 +574,13 @@ END $$;`,
     id: "membership:migrator",
     sql: `GRANT ${OWNER_ROLE} TO ${MIGRATOR_ROLE} WITH INHERIT FALSE, SET TRUE;`,
   });
-  // Phase 2C.3: `ponte_owner` is a member of the lock-owner role. INHERIT
-  // FALSE keeps the owner's privileges out of the lock role; SET TRUE is
-  // what allows the migration's `ALTER FUNCTION ... OWNER TO` transfer.
+  // Phase 2C.3: `ponte_owner` is a member of the lock-owner role. This is an
+  // explicitly accepted role relationship under the trusted-migrator
+  // decision, retained as part of the approved provisioning contract. It is
+  // not required by migration 008's ownership transfer — that transfer runs
+  // as the bootstrap superuser. INHERIT FALSE keeps the owner's privileges
+  // out of the lock role; SET TRUE is part of the approved membership
+  // options and is asserted exactly by the Phase 2 verification step.
   steps.push({
     id: "membership:routing-lock",
     sql: `GRANT ${ROUTING_LOCK_ROLE} TO ${OWNER_ROLE} WITH INHERIT FALSE, SET TRUE;`,
@@ -800,9 +814,10 @@ export function provisioningPlanPhase2(
   //     approved shape; this step proves it from the catalogue and fails
   //     explicitly on any deviation — a name-only check would miss a wrong
   //     signature, a lost SECURITY DEFINER, a wrong owner, or a drifted
-  //     search_path. Membership is checked in both directions as well: the
-  //     lock role must have exactly `ponte_owner` as its member and no
-  //     parent memberships.
+  //     search_path. The `proconfig` must equal the approved security
+  //     configuration exactly (not merely contain the search_path entry),
+  //     and the membership is checked in both directions with its options
+  //     asserted exactly (INHERIT FALSE, SET TRUE, ADMIN FALSE).
   const lockVerification = ROUTING_LOCK_FUNCTIONS.map(
     (fn) => `
       SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args,
@@ -845,8 +860,12 @@ BEGIN
     IF NOT rec.prosecdef THEN
       RAISE EXCEPTION 'lock function % is not SECURITY DEFINER', rec.proname;
     END IF;
-    IF NOT (rec.proconfig IS NOT NULL AND rec.proconfig @> ARRAY[expected_path]::text[]) THEN
-      RAISE EXCEPTION 'lock function % is missing the approved search_path setting', rec.proname;
+    -- The approved security configuration is EXACTLY the pinned search_path
+    -- entry — not merely containing it. Any extra or missing SET entry is a
+    -- drift that must fail explicitly.
+    IF NOT (rec.proconfig IS NOT NULL AND rec.proconfig = ARRAY[expected_path]::text[]) THEN
+      RAISE EXCEPTION 'lock function % has an unexpected security configuration: %, expected exactly [%]',
+        rec.proname, rec.proconfig, ARRAY[expected_path];
     END IF;
     IF rec.public_exec THEN
       RAISE EXCEPTION 'lock function % still grants PUBLIC EXECUTE', rec.proname;
@@ -859,7 +878,9 @@ BEGIN
     RAISE EXCEPTION 'expected 2 routing lock functions, found %', found;
   END IF;
 
-  -- Membership, both directions.
+  -- Membership, both directions, with the member options asserted EXACTLY:
+  -- ponte_owner in ponte_routing_lock must be INHERIT FALSE, SET TRUE,
+  -- ADMIN FALSE.
   IF EXISTS (
     SELECT 1 FROM pg_auth_members am
     WHERE am.roleid = '${ROUTING_LOCK_ROLE}'::regrole
@@ -871,8 +892,11 @@ BEGIN
     SELECT 1 FROM pg_auth_members am
     WHERE am.roleid = '${ROUTING_LOCK_ROLE}'::regrole
       AND am.member = '${OWNER_ROLE}'::regrole
+      AND am.inherit_option = FALSE
+      AND am.set_option = TRUE
+      AND am.admin_option = FALSE
   ) THEN
-    RAISE EXCEPTION 'ponte_owner is not a member of ponte_routing_lock';
+    RAISE EXCEPTION 'ponte_owner membership of ponte_routing_lock must be exactly INHERIT FALSE, SET TRUE, ADMIN FALSE';
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_auth_members am

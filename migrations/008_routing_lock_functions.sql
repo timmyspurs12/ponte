@@ -22,18 +22,23 @@
 -- Execution context (load-bearing):
 --
 -- `applyMigrations()` runs this file inside one transaction with
--- `SET LOCAL ROLE ponte_owner`, so every statement below executes as
--- `ponte_owner` and the migration-ledger INSERT that follows also runs as
--- `ponte_owner`. The file deliberately issues no `SET ROLE` of its own, so
--- the runner's role is never lost and the ledger insert is trivially
--- restored to `ponte_owner`.
+-- `SET LOCAL ROLE ponte_owner`, so the statements that create the functions
+-- and the migration-ledger INSERT that follows execute as `ponte_owner`.
+-- The file DOES issue its own role switches for the ownership transfer:
+-- `SET LOCAL ROLE NONE` drops to the bootstrap superuser for the
+-- `ALTER FUNCTION ... OWNER TO` statements, and `SET LOCAL ROLE ponte_owner`
+-- restores the runner's role immediately afterwards. Both switches are
+-- transaction-scoped (`SET LOCAL`), so the connection is never left
+-- elevated and the ledger INSERT still runs as `ponte_owner`.
 --
 -- `ponte_owner` is a member of `ponte_routing_lock` WITH INHERIT FALSE,
--- SET TRUE (Phase 1 provisioning). The membership is what a *ponte_owner*
--- execution of the ownership transfer would need; this migration performs
--- the transfer as the bootstrap superuser instead (see step 4), so the
--- membership is not exercised by this file. INHERIT FALSE is irrelevant to
--- the transfer and does not grant any object privilege.
+-- SET TRUE (Phase 1 provisioning). This is an explicitly accepted role
+-- relationship (the trusted-migrator decision), retained as part of the
+-- approved provisioning contract. It is NOT what makes the ownership
+-- transfer below possible: the transfer runs as the bootstrap superuser
+-- (see step 4), because `ponte_owner` cannot perform the `ALTER OWNER`
+-- itself. INHERIT FALSE keeps the owner's privileges from flowing into the
+-- lock role and does not grant any object privilege.
 --
 -- No schema-level CREATE is granted to `ponte_routing_lock` here, and none
 -- is needed. `ponte_owner` holds USAGE+CREATE on schema `public` (Phase 1)

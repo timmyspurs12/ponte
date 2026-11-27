@@ -523,11 +523,13 @@ async function persistNewCandidate(
   if (lockedQuote.rowCount !== 1) fail("INVOICE_OR_QUOTE_UNAVAILABLE");
   const quote = lockedQuote.rows[0];
 
-  // Post-lock quote-expiry check. The lock function's predicate already
-  // excluded expired quotes (an expired quote returns zero rows and takes no
-  // lock), but the invariant is re-asserted against the locked row's own
-  // timestamp here so it is explicit at the call site rather than only
-  // implied by the function.
+  // Post-lock quote-expiry re-assertion. The lock function locks the quote
+  // row first and evaluates expiry only after the lock is acquired: a
+  // missing quote locks nothing and returns zero rows; a valid quote is
+  // locked and returned; an expired quote is locked first, rejected by the
+  // post-lock expiry check, and returns zero rows. This call-site check
+  // re-asserts that invariant against the locked row's own timestamp so it
+  // is explicit here rather than only implied by the function.
   if (quote.expires_at.getTime() <= Date.now())
     fail("INVOICE_OR_QUOTE_UNAVAILABLE");
 
