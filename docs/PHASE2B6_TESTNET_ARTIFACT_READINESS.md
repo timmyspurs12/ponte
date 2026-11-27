@@ -15,7 +15,7 @@
 | **Artifact** | [`ponte-stylus-unactivated-candidate-735445f04255ae5ec5d43041d69db8338eba5361-44367877896-1`](https://github.com/timmyspurs12/ponte/actions/runs/44367877896/artifacts/14457443066), artifact ID `14457443066`, 334,403-byte zip, digest `sha256:df20469a2bd1d2d1cf7293706f1de47e4accabadedaa6af094d40c7605c1f739`, expires 2027-02-16 |
 | Confirmation run | [Run 44370571297](https://github.com/timmyspurs12/ponte/actions/runs/44370571297) on the documentation-only commit `0d2a5e610523699ccea52d841bebe2c0b9656165` reproduced every recorded result exactly. Artifact ID `14459786175`, digest `sha256:664698aa89b11f7797f35944d089cff600ace8b2a048c04f9de66e46588c9b31`, expires 2027-02-16 |
 | **Raw WASM (historical, original layout)** | 90,506 bytes, SHA-256 `6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`, measured under the original workspace layout. This hash is a historical measurement; current values after the Phase 2B.6.1 workspace-root change are host `b3574ee3…` and container `42d8a474…` in [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) ([§5](#5-artifact-run-results)) |
-| Configuration change | `rust/stylus-wrapper/Stylus.toml` gains the `[workspace]` table that cargo-stylus 0.10.10 requires, plus a declarative `arbitrum-sepolia` network entry. **Confirmed by the pinned CLI:** `cargo stylus build` succeeds; the former file fails with ``missing field `workspace` `` ([§6](#6-stylustoml-configuration-change)) |
+| Configuration change (historical, original layout) | `rust/stylus-wrapper/Stylus.toml` gained the `[workspace]` table that cargo-stylus 0.10.10 requires, plus a declarative `arbitrum-sepolia` network entry. **Confirmed by the pinned CLI:** `cargo stylus build` succeeds; the former file fails with ``missing field `workspace` `` ([§6](#6-stylustoml-configuration-change)). This describes the original Phase 2B.6.0 layout: Phase 2B.6.1 moved the workspace-level configuration to `rust/Stylus.toml` and left `rust/stylus-wrapper/Stylus.toml` with the minimal `[contract]` configuration ([Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md)) |
 | Reproducible Docker path | **Historical finding:** under the original layout the CLI's container path **failed** on the `../optimizer` path dependency (the base image `offchainlabs/cargo-stylus-base:0.10.10` exists, digest recorded). Phase 2B.6.1 moved the Cargo workspace root to `rust/` and recorded two byte-identical container builds plus a successful offline `get-initcode`; see [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §5.2. Deployment and on-chain verification remain unperformed ([§7](#7-reproducibility-findings)) |
 | Arbitrum Sepolia | **Not checked.** Chain ID `421614`, published RPC `https://sepolia-rollup.arbitrum.io/rpc` ([§8](#8-path-to-arbitrum-sepolia-documented-not-performed)) |
 | Activation | Paused on Arbitrum One and Nova. The pending activation AIP says Arbitrum Sepolia will follow the same audited, signed process. Must be freshly verified ([§9](#9-activation-policy-as-read-on-2026-11-18)) |
@@ -123,7 +123,7 @@ cargo stylus export-abi --output <file>                 # informational; lockfil
 - Rust and Cargo versions, the installed targets and the components present at the release build;
 - SHA-256 of the manifest, lockfile, `Stylus.toml` and toolchain file;
 - every command with exit code and timestamps;
-- raw WASM size and SHA-256, compared with `main`'s `6fd9159d…`;
+- raw WASM size and SHA-256, compared with `main`'s original-layout baseline `6fd9159d…` (historical);
 - exports, `vm_hooks` imports, custom sections and embedded absolute paths;
 - ABI hashes and test outcomes;
 - the reproducibility and Docker results in [§7](#7-reproducibility-findings).
@@ -233,7 +233,7 @@ pub struct TomlNetwork { pub endpoint: String }
 
 `rust/stylus-wrapper` is its own Cargo workspace, and its `Stylus.toml` contained only `[contract]`. Every project command (`build`, `get-initcode`, `check`, `deploy`, `verify`) therefore stopped while loading the project. The SDK's own examples carry the same one-line file, but they sit under the SDK's root `Stylus.toml`, which has the tables.
 
-**Change.** This is the only change under `rust/`:
+**Change.** This was the only change under `rust/` for Phase 2B.6.0:
 
 ```toml
 [workspace]
@@ -244,7 +244,7 @@ endpoint = "https://sepolia-rollup.arbitrum.io/rpc"
 [contract]
 ```
 
-A three-line comment explains its scope. The existing `[contract]` table is preserved.
+A three-line comment explains its scope. The existing `[contract]` table is preserved. This configuration is historical: Phase 2B.6.1 moved the workspace-level configuration to `rust/Stylus.toml` and left `rust/stylus-wrapper/Stylus.toml` with the minimal `[contract]` configuration ([Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md)).
 
 **Checked against the pinned v0.10.10 source and template:**
 - **Shape:** the file deserializes into the types above. Unknown top-level keys such as `[contract]` are ignored, because the types carry no `deny_unknown_fields`. The `ContractManifest` type, whose `deployments` field would be required, is never loaded by any 0.10.10 code path; `[contract]` only marks the package as a contract (`Contract::is_contract` checks that the file exists).
@@ -262,7 +262,7 @@ A three-line comment explains its scope. The existing `[contract]` table is pres
 - **Pinned CLI, candidate run 44367877896:**
   - Against the former one-line file (SHA-256 `6e21fc54…`), `cargo stylus build` exits 1 with ``error: toml read error: TOML parse error at line 1, column 1 … missing field `workspace` ``.
   - With the new file, `cargo stylus build` exits 0 and its WASM is byte-identical to the direct release build. `get-initcode` and `export-abi` also exit 0.
-- **WASM unchanged:** 90,506 bytes, `6fd9159d…`, the same as `main` ([§5](#5-artifact-run-results)). Earlier branch runs agree: [Local Stylus wrapper 44357382168](https://github.com/timmyspurs12/ponte/actions/runs/44357382168) (all 18 steps) and [dependency evidence 44357382273](https://github.com/timmyspurs12/ponte/actions/runs/44357382273) on commit `993b4ed`, whose Cargo graph output was also identical to `main`'s.
+- **WASM unchanged:** 90,506 bytes, `6fd9159d…`, identical to `main`'s baseline at the time (historical; `main`'s current Phase 2B.6.1 hashes are in [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md)) ([§5](#5-artifact-run-results)). Earlier branch runs agree: [Local Stylus wrapper 44357382168](https://github.com/timmyspurs12/ponte/actions/runs/44357382168) (all 18 steps) and [dependency evidence 44357382273](https://github.com/timmyspurs12/ponte/actions/runs/44357382273) on commit `993b4ed`, whose Cargo graph output was also identical to `main`'s at the time.
 
 ## 7. Reproducibility findings
 
@@ -274,7 +274,7 @@ Each of these was measured by the candidate run unless stated otherwise.
    - 5 standard-library paths `/rustc/f8297e351a40c1439a467bbbb6879088047f50b3/library/…`;
    - 3 path fragments such as `/alloc/src/string.rs`.
 
-   Consequences:
+   Consequences (original-layout measurements; the Phase 2B.6.1 layout changed the relocation behaviour described in [§11](#11-limitations) and [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §5.1):
    - The hash matches only when the checkout path, `CARGO_HOME` and toolchain components all match: same path and same toolchain give the same hash across runs and workflows ([§5](#5-artifact-run-results)), and a fresh target directory changes nothing.
    - A relocated checkout gives a different hash (`304e882c…`).
 2. **The `rust-src` component changes the WASM.** With `rust-src` installed, rustc embeds the local library source path (`/home/runner/.rustup/toolchains/1.91.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/…`) instead of `/rustc/<commit>/library/…`. The same build with `rust-src` added gives 90,775 bytes and `d690eb6b…`.
@@ -285,9 +285,9 @@ Each of these was measured by the candidate run unless stated otherwise.
    - **Template:** the derived image uses the template in `reproducible.rs` and installs the toolchain named in `rust-toolchain.toml`, plus `rust-src` and `wasm32-unknown-unknown`.
    - **Container run:** `docker run --network host --workdir /source --volume <cargo workspace root>:/source <image> cargo stylus <cmd> --no-verify`.
    - **What the workflow does:** builds the same image from the CLI's own template and runs the offline `cargo stylus build` with the same mount. It never runs `deploy` or `verify`.
-4. **The CLI's container path fails for this repository layout.** Only the Cargo workspace root is mounted: for this contract that is `rust/stylus-wrapper`, while the path dependency `ponte-optimizer` is `../optimizer`, outside the mount. The CLI-equivalent run fails with ``cargo metadata error: … failed to load manifest for dependency `ponte-optimizer` … failed to read `/optimizer/Cargo.toml` … No such file or directory (os error 2)``.
-   - A reproducible `deploy` or `verify` would fail the same way.
-   - Fixing it needs a separately reviewed layout change, for example a Cargo workspace that contains both crates or a non-path dependency. Either would change lockfile placement or content, and the WASM's embedded paths.
+4. **The CLI's container path failed for this repository layout (historical finding, original layout).** Only the Cargo workspace root was mounted: for this contract that was `rust/stylus-wrapper`, while the path dependency `ponte-optimizer` was `../optimizer`, outside the mount. The CLI-equivalent run failed with ``cargo metadata error: … failed to load manifest for dependency `ponte-optimizer` … failed to read `/optimizer/Cargo.toml` … No such file or directory (os error 2)``. Phase 2B.6.1 moved the Cargo workspace root to `rust/` and recorded successful offline container builds ([Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §5.2).
+   - At the time, a reproducible `deploy` or `verify` would have failed the same way.
+   - The finding recorded that fixing it needed a separately reviewed layout change, for example a Cargo workspace that contains both crates or a non-path dependency; either would change lockfile placement or content, and the WASM's embedded paths. Phase 2B.6.1 performed exactly that workspace-root change ([Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md)).
 5. **Container builds are deterministic, but not equal to host builds.** With the whole repository mounted at `/ponte` (a diagnostic, not a cargo-stylus code path), the container build succeeded and gave `ea7da593…` in both runs, with the same image digest. It differs from the host build because of the path, `CARGO_HOME` and `rust-src` differences above. An auditor rebuilding "with cargo stylus" ([§9](#9-activation-policy-as-read-on-2026-11-18)) would compare container builds with the deployed code, so the deployed program must itself come from the container path.
 6. **The init code is path-dependent.** The `project_hash` section that `cargo-stylus` adds hashes the cargo version string and **absolute** source paths of the current directory (`hash_project`). A host `get-initcode` is therefore not the verifiable deployment payload.
 7. **Size.** The host build's compressed code is 24,126 bytes with prefix, under the 24,576-byte limit at which `cargo-stylus` splits programs into fragments, with 450 bytes to spare.
@@ -316,7 +316,7 @@ cargo stylus check --endpoint https://sepolia-rollup.arbitrum.io/rpc
 ```
 
 - **Always pass `--endpoint`.** The [check/deploy guide](https://developer.arbitrum.io/stylus/cli-tools/check-and-deploy) says `check` defaults to Sepolia, but the pinned 0.10.10 source defaults to `http://localhost:8547`.
-- **It rebuilds on the host.** With the same checkout path, `CARGO_HOME` and component set (no `rust-src`), the rebuild should hash to `6fd9159d…`. Compare before trusting the result.
+- **It rebuilds on the host.** The expected hash depends on which artifact and build path is being checked, so select the intended one before interpreting a mismatch. For the original Phase 2B.6.0 layout (same checkout path, `CARGO_HOME` and component set, no `rust-src`), the rebuild should hash to the historical `6fd9159d…`. For the current Phase 2B.6.1 layout the expected host raw WASM is `b3574ee3ee4c9bbc11c2fe103c101008f5b775b5890ad1fbefe118b8846f3a3f` and the reproducible-container raw WASM is `42d8a474d8762aa37df09c9c415dcec1ff7e904e8bfcdcfa365669ad30cd93d2` ([Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §§5.1–5.2). Do not compare a Phase 2B.6.1 host rebuild against the old Phase 2B.6.0 hash. Compare before trusting the result.
 - **`--wasm-file <artifact>` checks the exact artifact bytes first**, and then still checks the workspace's contracts when run inside the project.
 
 ## 9. Activation policy, as read on 2026-11-18
@@ -360,7 +360,7 @@ These are unsuppressed and unchanged by this branch. They come from `main`'s pos
   - Host-stub WASM tests, native and TestVM tests and import inspection do not reproduce Nitro activation or metering.
   - Results were read from check-run annotations and the REST API, not from an independently downloaded artifact ([§5](#5-artifact-run-results)).
 - **Reproducibility.**
-  - The raw WASM is reproducible only for the same checkout path, `CARGO_HOME` and toolchain components.
+  - Under the original Phase 2B.6.0 layout, the raw WASM was reproducible only for the same checkout path, `CARGO_HOME` and toolchain components. Under the Phase 2B.6.1 layout the host raw WASM (`b3574ee3…`) remains unchanged after checkout relocation, because the compiled binary no longer embeds the checkout-specific path. The container build differs from the host build because the derived image installs `rust-src` and uses `/usr/local/cargo` and `/source` paths (container hash `42d8a474…`). The cargo-stylus project hash and init code remain absolute-path-dependent in both layouts ([Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §§5.1–5.2).
   - The CLI's own reproducible path did not work for the original layout; Phase 2B.6.1 moved the Cargo workspace root and recorded two byte-identical container builds ([§7](#7-reproducibility-findings), [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md)).
   - The CLI binary hash depends on the toolchain components in the same way ([§3](#3-provenance)).
 - **Toolchain.** The CLI image used for reproducible builds comes from Docker Hub by tag. Upstream's base-image `Dockerfile` builds `cargo-stylus` without `--locked` from a floating `rust:1.91` image.
@@ -371,7 +371,7 @@ These are unsuppressed and unchanged by this branch. They come from `main`'s pos
 1. Review the candidate run's provenance and artifact ([§5](#5-artifact-run-results)). The run itself succeeded; the earlier blocker, getting the workflow dispatched, is resolved.
 2. Get explicit approval for a read-only RPC step, including the endpoint and where it runs (for example, a separate manually dispatched job with no keys or secrets).
 3. Freshly verify Sepolia's chain ID, ArbOS and Stylus versions, activation status and size limits, and the endpoint's support for `eth_call` state overrides.
-4. Decide whether to check the exact artifact bytes (`--wasm-file`) or the host rebuild, and compare hashes with `6fd9159d…` first ([§8](#8-path-to-arbitrum-sepolia-documented-not-performed)).
+4. Decide whether to check the exact artifact bytes (`--wasm-file`) or the host rebuild, then select the expected hash for the intended artifact and build path before interpreting a mismatch ([§8](#8-path-to-arbitrum-sepolia-documented-not-performed), [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §§5.1–5.2): compare against `6fd9159d…` only when reviewing the original Phase 2B.6.0 artifact; use `b3574ee3…` for the current Phase 2B.6.1 host rebuild; use `42d8a474…` for the Phase 2B.6.1 reproducible-container build.
 
 **Before an unactivated deployment:**
 1. Get explicit approval for Sepolia transactions, and set a key-management policy: no keys in CI or the repository, plus a funded testnet account for gas and the data-fee balance check.
