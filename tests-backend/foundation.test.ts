@@ -207,41 +207,39 @@ test("cross-tenant reads/mutations rejected even with a valid active membership"
     process.env.PONTE_DEV_BUSINESS_ID = business;
   }
 });
-test("Routing fails closed under R1 while the rest of the state machine is unchanged", async () => {
-  // This is the R1 contract (Phase 2C.2B). Routing is dormant scaffolding in
-  // this phase: the quote row lock needs an UPDATE grant the application
-  // deliberately does not have, so the request is refused with a sanitised
-  // application error and no raw database detail. The remaining state-machine
-  // and quote-expiry coverage lives in the test below.
+test("Routing persists the full effect set while the rest of the state machine is unchanged", async () => {
+  // Phase 2C.3 restores the pre-R1 contract: the Routing transition completes
+  // through the SECURITY DEFINER lock functions and commits the full
+  // final-persistence effect set — settlement, evidence envelope, pending
+  // outbox row, and the Routing invoice state.
   const i = await funded();
   const q = (await request(`/${i.id}/quotes`, {})) as { id: string };
-  await assert.rejects(
-    transition(i.id, "Routing", { route: "split", quoteId: q.id }),
-    error("EVIDENCE_PERSISTENCE_FAILED"),
-  );
+  const routed = (await transition(i.id, "Routing", {
+    route: "split",
+    quoteId: q.id,
+  })) as Invoice;
+  assert.equal(routed.status, "Routing");
 
-  // Nothing was written: the invoice is still Funded and no settlement,
-  // evidence envelope, or outbox row exists.
-  const invoice = (await request(`/${i.id}`)) as Invoice;
-  assert.equal(invoice.status, "Funded");
+  // Exactly one settlement, one evidence envelope, and one outbox row exist
+  // for the invoice (the outbox is keyed by evidence record).
   for (const table of [
     "settlements",
     "route_decision_evidence",
-    "evidence_outbox",
   ]) {
     const rows = await pool.query(
       `SELECT count(*)::int AS n FROM ${table} WHERE invoice_id=$1`,
       [i.id],
-    ).catch(async () => {
-      // `evidence_outbox` is keyed by evidence record, not invoice.
-      const evidence = await pool.query(
-        "SELECT count(*)::int AS n FROM route_decision_evidence WHERE invoice_id=$1",
-        [i.id],
-      );
-      return { rows: [{ n: evidence.rows[0].n }] };
-    });
-    assert.equal(rows.rows[0].n, 0, `${table} must stay empty`);
+    );
+    assert.equal(rows.rows[0].n, 1, `${table} must hold exactly one row`);
   }
+  const outbox = await pool.query(
+    `SELECT count(*)::int AS n
+       FROM evidence_outbox o
+       JOIN route_decision_evidence e ON e.id = o.evidence_record_id
+      WHERE e.invoice_id=$1`,
+    [i.id],
+  );
+  assert.equal(outbox.rows[0].n, 1, "evidence_outbox must hold one row");
 });
 
 test("state machine rejects skipped transitions; server quote locks route and expires", async () => {
@@ -266,31 +264,19 @@ test("state machine rejects skipped transitions; server quote locks route and ex
     "UPDATE quotes SET expires_at=date_trunc('milliseconds',clock_timestamp())-interval '1 second' WHERE id=$1",
     [q.id],
   );
-  // Under R1 the final membership reauthorization (which itself needs a
-  // `memberships` row lock) fails closed *before* the snapshot rejection can be
-  // re-reported, so a quote-expired Routing request also surfaces as the
-  // sanitised persistence error rather than `QUOTE_EXPIRED_OR_MISSING`.
-  // Refusing with a generic failure is the fail-closed direction: it discloses
-  // less than a precise precondition, and no raw database error escapes.
+  // Phase 2C.3: the quote lock function applies the database-time expiry
+  // predicate at lock time, so an expired quote surfaces the precise
+  // `QUOTE_EXPIRED_OR_MISSING` precondition — not the R1 generic failure.
   await assert.rejects(
     transition(i.id, "Routing", { route: "split", quoteId: q.id }),
-    error("EVIDENCE_PERSISTENCE_FAILED"),
+    error("QUOTE_EXPIRED_OR_MISSING"),
   );
 
-  // Routing cannot complete under R1, so the invoice is primed into `Routing`
-  // with the same valid quote. Every settlement assertion below is still
+  // Routing now completes through the application itself (the lock functions
+  // carry the row locks). Every settlement assertion below is still
   // application behaviour: `settlements` carries an app UPDATE grant.
   const fresh = (await request(`/${i.id}/quotes`, {})) as typeof q;
-  const splitRoute = fresh.data.routes.find((r) => r.id === "split")!;
-  await primeRoutedState({
-    businessId: business,
-    invoiceId: i.id,
-    quoteId: fresh.id,
-    userId: process.env.PONTE_DEV_USER_ID!,
-    routeId: "split",
-    expectedMinor: splitRoute.outputMinor,
-    minimumMinor: splitRoute.minimumOutputMinor,
-  });
+  await transition(i.id, "Routing", { route: "split", quoteId: fresh.id });
   await assert.rejects(
     transition(i.id, "Settled", { route: "direct" }),
     error("ROUTE_LOCKED"),

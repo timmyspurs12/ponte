@@ -734,6 +734,7 @@ async function main() {
           "005_local_test_provider_provenance",
           "006_github_external_identities",
           "007_evidence_outbox_pending_default",
+          "008_routing_lock_functions",
         ],
       );
 

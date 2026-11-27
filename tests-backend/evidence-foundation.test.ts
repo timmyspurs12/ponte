@@ -151,31 +151,28 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
   const outboxId = randomUUID();
   const publicEvidenceId = testOnlyEvidenceId();
 
-  // R1 (Phase 2C.2B): the application identity holds SELECT+INSERT on `quotes`
-  // and no UPDATE, and PostgreSQL requires UPDATE on a table for *every* row-lock
-  // mode. `lockValidQuoteForEvidence` therefore fails closed with 42501. Evidence
-  // persistence is dormant scaffolding in this phase; Routing stays unavailable
-  // under the application identity until a separately reviewed lock-only design
-  // exists. See docs/PHASE2C2B_R1_ROUTING_LIMITATION.md.
-  await assert.rejects(
-    transaction(async (db) => {
-      await lockValidQuoteForEvidence(
-        db,
-        context.businessId,
-        context.invoiceId,
-        context.quoteId,
-      );
-    }),
-    (error) => sqlstateOf(error) === "42501",
-  );
+  // Phase 2C.3: the quote row lock is carried by the SECURITY DEFINER
+  // function `ponte_lock_routing_quote`, so the application identity locks the
+  // quote successfully and receives the locked row. The lock is the first
+  // statement in the transaction; nothing is written by the lock itself.
+  await transaction(async (db) => {
+    const lockedQuote = await lockValidQuoteForEvidence(
+      db,
+      context.businessId,
+      context.invoiceId,
+      context.quoteId,
+    );
+    assert.equal(lockedQuote.rowCount, 1);
+    assert.equal(lockedQuote.rows[0].id, context.quoteId);
+    assert.equal(lockedQuote.rows[0].invoice_id, context.invoiceId);
+  });
 
-  // The quote lock is the first statement in the transaction, so the denial
-  // leaves no partial write behind: nothing from that attempt can be visible.
-  const afterDenial = await pool.query(
+  // The lock attempt writes nothing: no evidence row can be visible.
+  const afterLock = await pool.query(
     "SELECT count(*)::int AS n FROM route_decision_evidence WHERE id=$1",
     [evidenceId],
   );
-  assert.equal(afterDenial.rows[0].n, 0);
+  assert.equal(afterLock.rows[0].n, 0);
 
   // What remains reachable for the application is the invoice lock (invoices has
   // a scoped UPDATE grant), and the two writes it is allowed to make: the full
@@ -272,19 +269,19 @@ test("evidence repository helpers lock persisted invoice/quote identity and atom
     "local-test-only/repository/v1",
   );
 
-  // A quote lock naming a quote that does not belong to the tenant fails closed
-  // for the same privilege reason before it could ever report zero rows.
-  await assert.rejects(
-    transaction(async (db) => {
-      await lockValidQuoteForEvidence(
-        db,
-        context.businessId,
-        context.invoiceId,
-        randomUUID(),
-      );
-    }),
-    (error) => sqlstateOf(error) === "42501",
-  );
+  // A quote lock naming a quote that does not exist (or does not belong to the
+  // tenant) succeeds silently with zero rows: the function's predicate is
+  // tenant-scoped and returns nothing rather than disclosing cross-tenant
+  // existence, and no privilege error is raised.
+  await transaction(async (db) => {
+    const missing = await lockValidQuoteForEvidence(
+      db,
+      context.businessId,
+      context.invoiceId,
+      randomUUID(),
+    );
+    assert.equal(missing.rowCount, 0);
+  });
 });
 
 test("evidence preparation snapshot returns the exact persisted invoice and valid quote", async () => {

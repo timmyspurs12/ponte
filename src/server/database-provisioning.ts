@@ -33,7 +33,14 @@
 import { Pool } from "pg";
 
 /** Marks the provisioning contract; bump only alongside a design change. */
-export const PROVISIONING_VERSION = "phase2c2b-r1";
+/**
+ * Identifies the provisioning contract this code implements. Phase 2C.3
+ * added the `ponte_routing_lock` role, its membership and the lock-function
+ * grants/verification, so the marker is the Phase 2C.3 identifier — the R1
+ * (`phase2c2b-r1`) label it replaced described the earlier base contract
+ * only and no longer describes the provisioned surface.
+ */
+export const PROVISIONING_VERSION = "phase2c3-routing-lock";
 
 /** The only schema this design touches. */
 export const PONTE_SCHEMA = "public";
@@ -42,6 +49,55 @@ export const APP_ROLE = "ponte_app";
 export const APP_LOGIN_ROLE = "ponte_app_login";
 export const OWNER_ROLE = "ponte_owner";
 export const MIGRATOR_ROLE = "ponte_migrator";
+
+/**
+ * The dedicated NOLOGIN owner of the Phase 2C.3 SECURITY DEFINER row-lock
+ * functions (`ponte_lock_routing_membership`, `ponte_lock_routing_quote`).
+ *
+ * The functions run as this role, which holds exactly the minimum
+ * column-level SELECT and UPDATE privileges the locks need (granted by
+ * migration 008). `ponte_owner` is a member of it WITH INHERIT FALSE, SET
+ * TRUE — an explicitly accepted role relationship under the trusted-migrator
+ * decision. It is NOT required by migration 008's ownership transfer: that
+ * transfer runs as the bootstrap superuser (`SET LOCAL ROLE NONE`), because
+ * `ponte_owner` cannot perform the `ALTER FUNCTION ... OWNER TO` itself.
+ * INHERIT FALSE keeps the owner's own privileges from flowing into the lock
+ * role.
+ */
+export const ROUTING_LOCK_ROLE = "ponte_routing_lock";
+
+/** The exact identity arguments of the membership lock function. */
+export const ROUTING_LOCK_MEMBERSHIP_ARGS = "p_business_id uuid, p_user_id uuid";
+/** The exact identity arguments of the quote lock function. */
+export const ROUTING_LOCK_QUOTE_ARGS =
+  "p_business_id uuid, p_invoice_id uuid, p_quote_id uuid";
+/** The exact return type of the membership lock function. */
+export const ROUTING_LOCK_MEMBERSHIP_RESULT = "text";
+/** The exact return type of the quote lock function. */
+export const ROUTING_LOCK_QUOTE_RESULT =
+  "TABLE(id uuid, business_id uuid, invoice_id uuid, source text, simulated boolean, data jsonb, expires_at timestamp with time zone)";
+/** The `SET` configuration both lock functions must carry. */
+export const ROUTING_LOCK_SEARCH_PATH = "search_path=pg_catalog, public, pg_temp";
+
+/**
+ * The two Phase 2C.3 lock functions, with their exact signatures. Phase 2
+ * verifies every field of these (existence, identity arguments, return type,
+ * owner, SECURITY DEFINER, search_path, ACLs) and fails explicitly on any
+ * mismatch — a name-only check would miss a wrong signature or a lost
+ * SECURITY DEFINER attribute.
+ */
+export const ROUTING_LOCK_FUNCTIONS = [
+  {
+    name: "ponte_lock_routing_membership",
+    args: ROUTING_LOCK_MEMBERSHIP_ARGS,
+    result: ROUTING_LOCK_MEMBERSHIP_RESULT,
+  },
+  {
+    name: "ponte_lock_routing_quote",
+    args: ROUTING_LOCK_QUOTE_ARGS,
+    result: ROUTING_LOCK_QUOTE_RESULT,
+  },
+] as const;
 
 /**
  * Attribute hardening applied to every managed role on creation and on every
@@ -79,8 +135,10 @@ export const TRIGGER_FUNCTIONS = [
  * Every entry is derived from the SQL the application actually issues. Tables
  * absent from this map get no `UPDATE` at all — including `quotes` and
  * `memberships`, which the application only ever reads and inserts. Their two
- * `FOR UPDATE` row locks therefore fail closed with `42501` under the
- * application identity (R1); see `docs/PHASE2C2B_PRIVILEGE_MODEL.md`.
+ * row locks are carried by the SECURITY DEFINER functions
+ * `ponte_lock_routing_membership` / `ponte_lock_routing_quote` (Phase 2C.3),
+ * owned by `ponte_routing_lock`, so the application never needs UPDATE on
+ * them; see `docs/PHASE2C3_ROUTING_LOCK_FUNCTIONS.md`.
  */
 export const UPDATABLE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   invoices: ["status", "data", "reference", "funding_minor"],
@@ -250,7 +308,74 @@ export type ProvisioningReport = {
       bypassrls: boolean;
     }
   >;
-  memberships: Record<string, { inheritOption: boolean; setOption: boolean }>;
+  memberships: Record<string, { inheritOption: boolean; setOption: boolean; adminOption: boolean }>;
+  /**
+   * Phase 2C.3: the dedicated lock-owner role, read back from the catalogue.
+   * Same shape as a single `roles` entry; `exists` is false only on a
+   * database where Phase 1 has not run.
+   */
+  routingLock: {
+    exists: boolean;
+    canLogin: boolean;
+    superuser: boolean;
+    createdb: boolean;
+    createrole: boolean;
+    replication: boolean;
+    bypassrls: boolean;
+  };
+  /**
+   * Phase 2C.3: the lock owner's EFFECTIVE schema privileges on the app
+   * schema, read with `has_schema_privilege` (direct or inherited). USAGE must
+   * be true — the function bodies' `public.` references must resolve — and
+   * CREATE must be false — the lock role must never create objects. Phase 2
+   * verification fails on either deviation; the report re-reads it so a CI
+   * gate can assert the approved state without trusting the step's exit
+   * status alone.
+   */
+  routingLockSchema: {
+    usage: boolean;
+    create: boolean;
+  };
+  /**
+   * Phase 2C.3: the two directions of the `ponte_routing_lock` membership
+   * graph, read from `pg_auth_members`.
+   *
+   * - `membersOfRoutingLock`: roles that ARE members of `ponte_routing_lock`.
+   *   Expected to be exactly `ponte_owner` with INHERIT FALSE, SET TRUE.
+   * - `routingLockParents`: roles that `ponte_routing_lock` IS itself a
+   *   member of. Expected to be empty — the lock role is a leaf and must not
+   *   inherit anything.
+   *
+   * Any other entry is drift that Phase 1 must have failed on explicitly;
+   * the report surfaces it so a CI gate can assert the exact expected set.
+   */
+  routingLockMemberships: {
+    membersOfRoutingLock: {
+      member: string;
+      inheritOption: boolean;
+      setOption: boolean;
+      adminOption: boolean;
+    }[];
+    routingLockParents: string[];
+  };
+  /**
+   * Phase 2C.3: the exact signature and security properties of the two lock
+   * functions, read back from the catalogue. Every field is checked by the
+   * Phase 2 verification step; the report re-reads it so a CI gate can assert
+   * the approved state without trusting the step's exit status alone.
+   */
+  lockFunctions: {
+    name: string;
+    args: string;
+    result: string;
+    owner: string;
+    securityDefiner: boolean;
+    searchPath: string | null;
+    /** True when PUBLIC still holds EXECUTE — must always be false. */
+    publicExecute: boolean;
+    /** True when `ponte_app` holds EXECUTE — must always be true. */
+    appExecute: boolean;
+  }[];
   databaseAcl: string | null;
   appUpdateColumns: Record<string, string[]>;
   appReadOnlyTables: string[];
@@ -394,6 +519,64 @@ END $$;`,
     sql: `ALTER ROLE ${MIGRATOR_ROLE} RESET ROLE;`,
   });
 
+  // (3b) Phase 2C.3: the dedicated lock-owner role. Created NOLOGIN and
+  //      hardened like every other managed role.
+  steps.push(
+    createRoleStatement(
+      ROUTING_LOCK_ROLE,
+      `NOLOGIN ${ROLE_HARDENING_ATTRIBUTES}`,
+    ),
+  );
+
+  // (3c) Phase 2C.3: existing-role reconciliation. Unlike the other managed
+  //      roles — whose attribute drift is repaired in place — an existing
+  //      `ponte_routing_lock` is never silently altered, dropped, or
+  //      recreated. A role with LOGIN or any superuser-class attribute, an
+  //      unexpected member, or a parent membership is a security-relevant
+  //      drift that must fail explicitly so an operator reconciles it by
+  //      hand. The expected `ponte_owner` membership is not checked here:
+  //      its options are re-stated by the grant below, which corrects drift
+  //      without failing.
+  steps.push({
+    id: "reconcile-role:routing-lock",
+    sql: `
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${ROUTING_LOCK_ROLE}') THEN
+    IF EXISTS (
+      SELECT 1 FROM pg_roles r
+      WHERE r.rolname = '${ROUTING_LOCK_ROLE}'
+        AND (r.rolcanlogin OR r.rolsuper OR r.rolcreatedb
+             OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
+    ) THEN
+      RAISE EXCEPTION
+        'ponte_routing_lock exists with dangerous attributes (LOGIN/superuser/CREATEDB/CREATEROLE/REPLICATION/BYPASSRLS); reconcile the role manually';
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM pg_auth_members am
+      WHERE am.roleid = '${ROUTING_LOCK_ROLE}'::regrole
+        AND am.member <> '${OWNER_ROLE}'::regrole
+    ) THEN
+      RAISE EXCEPTION
+        'ponte_routing_lock has unexpected members; reconcile the role manually';
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM pg_auth_members am
+      WHERE am.member = '${ROUTING_LOCK_ROLE}'::regrole
+    ) THEN
+      RAISE EXCEPTION
+        'ponte_routing_lock must be a leaf role with no parent memberships; reconcile the role manually';
+    END IF;
+  END IF;
+END $$;`,
+  });
+
+  // (3d) Defence in depth: never leave a session-level role on the lock
+  //      owner either.
+  steps.push({
+    id: "alter-role:routing-lock-reset-role",
+    sql: `ALTER ROLE ${ROUTING_LOCK_ROLE} RESET ROLE;`,
+  });
+
   // (4) Membership options, stated on every run. A bare `GRANT` leaves stored
   //     options untouched, and an explicit `GRANT` *corrects* drifted ones.
   steps.push({
@@ -403,6 +586,17 @@ END $$;`,
   steps.push({
     id: "membership:migrator",
     sql: `GRANT ${OWNER_ROLE} TO ${MIGRATOR_ROLE} WITH INHERIT FALSE, SET TRUE;`,
+  });
+  // Phase 2C.3: `ponte_owner` is a member of the lock-owner role. This is an
+  // explicitly accepted role relationship under the trusted-migrator
+  // decision, retained as part of the approved provisioning contract. It is
+  // not required by migration 008's ownership transfer — that transfer runs
+  // as the bootstrap superuser. INHERIT FALSE keeps the owner's privileges
+  // out of the lock role; SET TRUE is part of the approved membership
+  // options and is asserted exactly by the Phase 2 verification step.
+  steps.push({
+    id: "membership:routing-lock",
+    sql: `GRANT ${ROUTING_LOCK_ROLE} TO ${OWNER_ROLE} WITH INHERIT FALSE, SET TRUE;`,
   });
 
   // (5) Database ACL. `REVOKE ALL` first so that a database which still grants
@@ -616,6 +810,126 @@ export function provisioningPlanPhase2(
     });
   }
 
+  // (11) Phase 2C.3: restore the allowlisted EXECUTE on the two SECURITY
+  //     DEFINER lock functions. The drift revocations above removed every
+  //     function privilege from the application, including any grant on the
+  //     lock functions, so the approved call surface is re-applied here —
+  //     exactly these two functions, to the `ponte_app` group only.
+  for (const fn of ROUTING_LOCK_FUNCTIONS) {
+    steps.push({
+      id: `lock-function:${fn.name}`,
+      sql: `GRANT EXECUTE ON FUNCTION ${PONTE_SCHEMA}.${fn.name}(${fn.args}) TO ${app};`,
+    });
+  }
+
+  // (12) Phase 2C.3: exact-signature and security-property verification.
+  //     The grants above assume the migration created the functions with the
+  //     approved shape; this step proves it from the catalogue and fails
+  //     explicitly on any deviation — a name-only check would miss a wrong
+  //     signature, a lost SECURITY DEFINER, a wrong owner, or a drifted
+  //     search_path. The `proconfig` must equal the approved security
+  //     configuration exactly (not merely contain the search_path entry),
+  //     and the membership is checked in both directions with its options
+  //     asserted exactly (INHERIT FALSE, SET TRUE, ADMIN FALSE).
+  const lockVerification = ROUTING_LOCK_FUNCTIONS.map(
+    (fn) => `
+      SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args,
+             pg_get_function_result(p.oid) AS result,
+             p.proowner::regrole::text AS owner, p.prosecdef, p.proconfig,
+             has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
+             has_function_privilege('${APP_ROLE}', p.oid, 'EXECUTE') AS app_exec
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = '${PONTE_SCHEMA}' AND p.proname = '${fn.name}'`,
+  ).join("\n    UNION ALL\n");
+  steps.push({
+    id: "verify:routing-lock-functions",
+    sql: `
+DO $$
+DECLARE
+  rec record;
+  expected_owner text := '${ROUTING_LOCK_ROLE}';
+  expected_path text := '${ROUTING_LOCK_SEARCH_PATH}';
+  found int := 0;
+BEGIN
+  FOR rec IN
+    ${lockVerification}
+  LOOP
+    found := found + 1;
+    IF rec.args <> '${ROUTING_LOCK_MEMBERSHIP_ARGS}' AND
+       rec.args <> '${ROUTING_LOCK_QUOTE_ARGS}' THEN
+      RAISE EXCEPTION 'lock function % has unexpected identity arguments: %',
+        rec.proname, rec.args;
+    END IF;
+    IF rec.result <> '${ROUTING_LOCK_MEMBERSHIP_RESULT}' AND
+       rec.result <> '${ROUTING_LOCK_QUOTE_RESULT}' THEN
+      RAISE EXCEPTION 'lock function % has unexpected return type: %',
+        rec.proname, rec.result;
+    END IF;
+    IF rec.owner <> expected_owner THEN
+      RAISE EXCEPTION 'lock function % is owned by %, expected %',
+        rec.proname, rec.owner, expected_owner;
+    END IF;
+    IF NOT rec.prosecdef THEN
+      RAISE EXCEPTION 'lock function % is not SECURITY DEFINER', rec.proname;
+    END IF;
+    -- The approved security configuration is EXACTLY the pinned search_path
+    -- entry — not merely containing it. Any extra or missing SET entry is a
+    -- drift that must fail explicitly.
+    IF NOT (rec.proconfig IS NOT NULL AND rec.proconfig = ARRAY[expected_path]::text[]) THEN
+      RAISE EXCEPTION 'lock function % has an unexpected security configuration: %, expected exactly [%]',
+        rec.proname, rec.proconfig, ARRAY[expected_path];
+    END IF;
+    IF rec.public_exec THEN
+      RAISE EXCEPTION 'lock function % still grants PUBLIC EXECUTE', rec.proname;
+    END IF;
+    IF NOT rec.app_exec THEN
+      RAISE EXCEPTION 'lock function % does not grant EXECUTE to ${APP_ROLE}', rec.proname;
+    END IF;
+  END LOOP;
+  IF found <> 2 THEN
+    RAISE EXCEPTION 'expected 2 routing lock functions, found %', found;
+  END IF;
+
+  -- Membership, both directions, with the member options asserted EXACTLY:
+  -- ponte_owner in ponte_routing_lock must be INHERIT FALSE, SET TRUE,
+  -- ADMIN FALSE.
+  IF EXISTS (
+    SELECT 1 FROM pg_auth_members am
+    WHERE am.roleid = '${ROUTING_LOCK_ROLE}'::regrole
+      AND am.member <> '${OWNER_ROLE}'::regrole
+  ) THEN
+    RAISE EXCEPTION 'ponte_routing_lock has unexpected members';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_auth_members am
+    WHERE am.roleid = '${ROUTING_LOCK_ROLE}'::regrole
+      AND am.member = '${OWNER_ROLE}'::regrole
+      AND am.inherit_option = FALSE
+      AND am.set_option = TRUE
+      AND am.admin_option = FALSE
+  ) THEN
+    RAISE EXCEPTION 'ponte_owner membership of ponte_routing_lock must be exactly INHERIT FALSE, SET TRUE, ADMIN FALSE';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_auth_members am
+    WHERE am.member = '${ROUTING_LOCK_ROLE}'::regrole
+  ) THEN
+    RAISE EXCEPTION 'ponte_routing_lock must be a leaf role with no parent memberships';
+  END IF;
+
+  -- The lock owner's effective schema privileges: USAGE on the schema is
+  -- required (the function bodies' public. references must resolve), CREATE
+  -- is forbidden (the lock role must never be able to create objects).
+  IF NOT has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'USAGE') THEN
+    RAISE EXCEPTION 'ponte_routing_lock must have USAGE on schema ${PONTE_SCHEMA}';
+  END IF;
+  IF has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'CREATE') THEN
+    RAISE EXCEPTION 'ponte_routing_lock must not have CREATE on schema ${PONTE_SCHEMA}';
+  END IF;
+END $$;`,
+  });
+
   // `database` is unused in Phase 2 but kept in the signature so both phases
   // share one options type.
   void database;
@@ -665,6 +979,37 @@ export async function verifyExpectedObjects(
   );
   for (const fn of TRIGGER_FUNCTIONS) {
     if (!present.has(fn.replace("()", ""))) missingFunctions.push(fn);
+  }
+
+  // Phase 2C.3: the two SECURITY DEFINER lock functions are matched by exact
+  // signature (identity arguments and return type), not by name. A function
+  // with the right name but the wrong signature would pass a name-only check
+  // and then fail the call site; reporting it as missing here is the
+  // explicit, early failure the two-phase design promises.
+  const lockFunctions = ((
+    await client.query(
+      `SELECT p.proname,
+              pg_get_function_identity_arguments(p.oid) AS args,
+              pg_get_function_result(p.oid) AS result
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = '${PONTE_SCHEMA}'
+          AND p.proname = ANY(${arrayLiteral([
+            ...ROUTING_LOCK_FUNCTIONS.map((fn) => fn.name),
+          ])})`,
+    )
+  ) as { rows: { proname: string; args: string; result: string }[] }).rows;
+  for (const expected of ROUTING_LOCK_FUNCTIONS) {
+    const found = lockFunctions.find((row) => row.proname === expected.name);
+    if (
+      !found ||
+      found.args !== expected.args ||
+      found.result !== expected.result
+    ) {
+      missingFunctions.push(
+        `${expected.name}(${expected.args}) returns ${expected.result}`,
+      );
+    }
   }
 
   return { missingTables, missingFunctions };
@@ -752,6 +1097,7 @@ export async function readProvisioningReport(
         APP_ROLE,
         MIGRATOR_ROLE,
         APP_LOGIN_ROLE,
+        ROUTING_LOCK_ROLE,
       ])})`,
   )) as {
     rows: {
@@ -767,24 +1113,103 @@ export async function readProvisioningReport(
 
   const memberships = (await client.query(
     `SELECT m.rolname AS member, g.rolname AS granted,
-            am.inherit_option, am.set_option
+            am.inherit_option, am.set_option, am.admin_option
        FROM pg_auth_members am
        JOIN pg_roles m ON m.oid = am.member
        JOIN pg_roles g ON g.oid = am.roleid
       WHERE (m.rolname = '${APP_LOGIN_ROLE}' AND g.rolname = '${APP_ROLE}')
-         OR (m.rolname = '${MIGRATOR_ROLE}' AND g.rolname = '${OWNER_ROLE}')`,
+         OR (m.rolname = '${MIGRATOR_ROLE}' AND g.rolname = '${OWNER_ROLE}')
+         OR (m.rolname = '${OWNER_ROLE}' AND g.rolname = '${ROUTING_LOCK_ROLE}')
+      ORDER BY member, granted`,
   )) as {
     rows: {
       member: string;
       granted: string;
       inherit_option: boolean;
       set_option: boolean;
+      admin_option: boolean;
     }[];
   };
 
   const acl = (await client.query(
     `SELECT datacl::text AS datacl FROM pg_database WHERE datname = current_database()`,
   )) as { rows: { datacl: string | null }[] };
+
+  /**
+   * Phase 2C.3: the two directions of the `ponte_routing_lock` membership
+   * graph, read from `pg_auth_members` directly.
+   *
+   * - members of the lock role (expected: exactly `ponte_owner`, INHERIT
+   *   FALSE, SET TRUE)
+   * - roles the lock role is itself a member of (expected: none — it is a
+   *   leaf and inherits nothing)
+   */
+  const routingLockMembers = (await client.query(
+    `SELECT m.rolname AS member, am.inherit_option, am.set_option, am.admin_option
+       FROM pg_auth_members am
+       JOIN pg_roles m ON m.oid = am.member
+       JOIN pg_roles g ON g.oid = am.roleid
+      WHERE g.rolname = '${ROUTING_LOCK_ROLE}'
+      ORDER BY m.rolname`,
+  )) as {
+    rows: {
+      member: string;
+      inherit_option: boolean;
+      set_option: boolean;
+      admin_option: boolean;
+    }[];
+  };
+  const routingLockParents = (await client.query(
+    `SELECT r.rolname AS parent
+       FROM pg_auth_members am
+       JOIN pg_roles r ON r.oid = am.roleid
+      WHERE am.member = '${ROUTING_LOCK_ROLE}'::regrole
+      ORDER BY r.rolname`,
+  )) as { rows: { parent: string }[] };
+
+  /**
+   * Phase 2C.3: the lock owner's effective schema privileges (direct or
+   * inherited) on the app schema.
+   */
+  const routingLockSchema = (await client.query(
+    `SELECT has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'USAGE') AS usage,
+            has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'CREATE') AS create`,
+  )) as { rows: { usage: boolean; create: boolean }[] };
+
+  /**
+   * Phase 2C.3: the exact signature and security properties of the two lock
+   * functions, read back from the catalogue. `proconfig` is the function's
+   * `SET` list; `pg_get_function_identity_arguments` / `pg_get_function_result`
+   * give the canonical signature text the verification step compares against.
+   */
+  const lockFunctions = (await client.query(
+    `SELECT p.proname,
+            pg_get_function_identity_arguments(p.oid) AS args,
+            pg_get_function_result(p.oid) AS result,
+            p.proowner::regrole::text AS owner,
+            p.prosecdef,
+            p.proconfig,
+            has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
+            has_function_privilege('${APP_ROLE}', p.oid, 'EXECUTE') AS app_exec
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = '${PONTE_SCHEMA}'
+        AND p.proname = ANY(${arrayLiteral([
+          ...ROUTING_LOCK_FUNCTIONS.map((fn) => fn.name),
+        ])})
+      ORDER BY p.proname`,
+  )) as {
+    rows: {
+      proname: string;
+      args: string;
+      result: string;
+      owner: string;
+      prosecdef: boolean;
+      proconfig: string[] | null;
+      public_exec: boolean;
+      app_exec: boolean;
+    }[];
+  };
 
   const appUpdate = (await client.query(
     `SELECT table_name, column_name
@@ -889,9 +1314,50 @@ export async function readProvisioningReport(
     memberships: Object.fromEntries(
       memberships.rows.map((row) => [
         `${row.member}<-${row.granted}`,
-        { inheritOption: row.inherit_option, setOption: row.set_option },
+        {
+          inheritOption: row.inherit_option,
+          setOption: row.set_option,
+          adminOption: row.admin_option,
+        },
       ]),
     ),
+    routingLock: (() => {
+      const found = roles.rows.find((row) => row.rolname === ROUTING_LOCK_ROLE);
+      return {
+        exists: Boolean(found),
+        canLogin: found?.rolcanlogin ?? false,
+        superuser: found?.rolsuper ?? false,
+        createdb: found?.rolcreatedb ?? false,
+        createrole: found?.rolcreaterole ?? false,
+        replication: found?.rolreplication ?? false,
+        bypassrls: found?.rolbypassrls ?? false,
+      };
+    })(),
+    routingLockSchema: {
+      usage: routingLockSchema.rows[0]?.usage ?? false,
+      create: routingLockSchema.rows[0]?.create ?? false,
+    },
+    routingLockMemberships: {
+      membersOfRoutingLock: routingLockMembers.rows.map((row) => ({
+        member: row.member,
+        inheritOption: row.inherit_option,
+        setOption: row.set_option,
+        adminOption: row.admin_option,
+      })),
+      routingLockParents: routingLockParents.rows.map((row) => row.parent),
+    },
+    lockFunctions: lockFunctions.rows.map((row) => ({
+      name: row.proname,
+      args: row.args,
+      result: row.result,
+      owner: row.owner,
+      securityDefiner: row.prosecdef,
+      searchPath:
+        row.proconfig?.find((entry) => entry.startsWith("search_path=")) ??
+        null,
+      publicExecute: row.public_exec,
+      appExecute: row.app_exec,
+    })),
     databaseAcl: acl.rows[0]?.datacl ?? null,
     appUpdateColumns,
     appReadOnlyTables: [...READ_ONLY_TABLES],

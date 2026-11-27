@@ -70,7 +70,9 @@ export interface LockedEvidenceInvoiceRow extends EvidencePreparationInvoiceRow 
 
 /**
  * Final-transaction quote view. It shares the preparation row shape but is
- * selected with a database-time expiry predicate and FOR UPDATE.
+ * locked through the SECURITY DEFINER function `ponte_lock_routing_quote`,
+ * which locks the exact quote row by identity and applies the database-time
+ * expiry check only after the lock is acquired.
  */
 export interface LockedEvidenceQuoteRow extends EvidencePreparationQuoteRow {}
 
@@ -444,6 +446,17 @@ export function lockInvoiceForEvidence(
 /**
  * Locks the exact persisted quote fields needed by future evidence creation.
  * This helper does not create evidence or alter the current Routing lifecycle.
+ *
+ * Phase 2C.3: the row lock is carried by the SECURITY DEFINER function
+ * `ponte_lock_routing_quote`, owned by `ponte_routing_lock`. The application
+ * identity holds no UPDATE on `quotes`, so a direct `FOR UPDATE` here fails
+ * with 42501 (the R1 dormancy); the function takes the lock with its own
+ * column-level privileges and returns the same locked row. The function's
+ * expiry semantics: a missing quote locks nothing and returns zero rows; a
+ * valid quote is locked and then returned; an expired quote is locked
+ * first, rejected by the post-lock expiry check, and returns zero rows — the
+ * caller fails closed with `INVOICE_OR_QUOTE_UNAVAILABLE` on a zero-row
+ * result.
  */
 export function lockValidQuoteForEvidence(
   db: PoolClient,
@@ -452,7 +465,7 @@ export function lockValidQuoteForEvidence(
   quoteId: string,
 ) {
   return db.query<LockedEvidenceQuoteRow>(
-    "SELECT id,business_id,invoice_id,source,simulated,expires_at,data FROM quotes WHERE business_id=$1 AND invoice_id=$2 AND id=$3 AND expires_at>clock_timestamp() FOR UPDATE",
+    "SELECT id,business_id,invoice_id,source,simulated,expires_at,data FROM public.ponte_lock_routing_quote($1,$2,$3)",
     [businessId, invoiceId, quoteId],
   );
 }

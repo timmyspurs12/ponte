@@ -34,11 +34,9 @@ test("invoice evidence panel renders real loading, empty, and persisted local-te
     (invoice) => invoice.status === "Pending payment",
   );
   // The Routing invoice is an admin-primed synthetic fixture (see
-  // primeRoutedState in tests/setup-database.ts). R1 makes Routing evidence
-  // persistence dormant and fail-closed, so the application identity cannot
-  // generate this evidence. The fixture is pre-seeded test data used to
-  // exercise the evidence-status panel UI, not evidence produced by a
-  // successful application Routing operation.
+  // primeRoutedState in tests/setup-database.ts). The fixture is pre-seeded
+  // test data used to exercise the evidence-status panel UI, not evidence
+  // produced by a successful application Routing operation.
   const persisted = invoices.find((invoice) => invoice.status === "Routing");
   expect(empty).toBeTruthy();
   expect(persisted).toBeTruthy();

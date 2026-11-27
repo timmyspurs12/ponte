@@ -1,9 +1,11 @@
 # Phase 2C.2B R1 — Routing persistence is dormant (fail-closed)
 
-Status: **implemented and intentional**. This document records why
-`POST /api/v1/invoices/:id/transitions` (the Routing transition) cannot activate
-`persistPreparedEvidenceCandidate()` under the Phase 2C.2B role separation, and
-how the behaviour is verified.
+Status: **superseded by Phase 2C.3** (see
+[`PHASE2C3_ROUTING_LOCK.md`](./PHASE2C3_ROUTING_LOCK.md)). This document
+records why `POST /api/v1/invoices/:id/transitions` (the Routing transition)
+could not activate `persistPreparedEvidenceCandidate()` under the Phase 2C.2B
+role separation, how the fail-closed behaviour was verified, and how Phase
+2C.3 resolved it without widening the application's table privileges.
 
 ## What is dormant
 
@@ -107,9 +109,16 @@ The full backend suite exits `0` (218 tests / 208 pass / 0 fail / 10 skipped).
 
 ## Re-enabling Routing persistence
 
-Routing becomes reachable only when the privilege model is widened deliberately:
-grant the application identity `UPDATE` on `quotes` and `memberships` (or move
-the row locks to tables the application may update). That is a separate,
-security-reviewed change — it expands the application's write surface and must
-not be bundled with this limitation. Until then, Routing persistence remains
-dormant and fail-closed by design.
+**Resolved by Phase 2C.3** — see
+[`PHASE2C3_ROUTING_LOCK.md`](./PHASE2C3_ROUTING_LOCK.md). The application
+identity's table privileges are **not** widened: the two row locks moved into
+`SECURITY DEFINER` functions (`ponte_lock_routing_membership`,
+`ponte_lock_routing_quote`) owned by the dedicated `NOLOGIN` role
+`ponte_routing_lock`, which holds only the minimum column-level
+`SELECT`/`UPDATE` the locks need. The application `EXECUTE`s the functions
+(Phase 2 provisioning) and still holds no `UPDATE` on `quotes` or
+`memberships`, so the privilege boundary this document describes is
+preserved — the lock privilege now lives inside the functions, never on the
+application role. The three `*-r1-contract.test.ts` files were rewritten from
+the fail-closed assertions above back to successful-persistence contracts
+against the lock functions.
