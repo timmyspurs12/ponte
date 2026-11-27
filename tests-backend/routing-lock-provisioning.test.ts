@@ -38,7 +38,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { Client, Pool } from "pg";
+import { Client, Pool, PoolClient } from "pg";
 import { applyMigrations } from "../scripts/migrate";
 import {
   APP_ROLE,
@@ -638,15 +638,21 @@ describe("routing lock function contracts", {
       [quoteId, businessId, invoiceId, JSON.stringify({})],
     );
 
-    // Both client lifecycles are managed unconditionally: the body runs in
-    // a try/finally so Transaction A is rolled back if an assertion fails
-    // before its commit, and both clients are released even on failure.
-    const sessionA = await app!.connect();
-    const sessionB = await app!.connect();
+    // Both client lifecycles are managed unconditionally: both clients are
+    // acquired INSIDE the protected try/finally, Transaction A is rolled
+    // back if an assertion fails before its commit, and both clients are
+    // released even on failure. If the rollback itself fails, B's backend
+    // is terminated so its lock wait can never hang the suite indefinitely.
+    let sessionA: PoolClient | undefined;
+    let sessionB: PoolClient | undefined;
+    let backendB: number | undefined;
     let committedA = false;
     let settledB = false;
     let lockB: Promise<unknown> | undefined;
     try {
+      sessionA = await app!.connect();
+      sessionB = await app!.connect();
+
       // (1) Transaction A acquires the row lock on a valid quote and holds it.
       await sessionA.query("BEGIN");
       const lockedA = await sessionA.query(
@@ -661,9 +667,9 @@ describe("routing lock function contracts", {
       // `pg_stat_activity` are queried to show B holds an ungranted lock
       // request while A holds the granted lock, and B's wait_event_type is
       // "Lock" — the server itself is reporting B is waiting on a lock.
-      const backendB = (
+      backendB = (
         await sessionB.query("SELECT pg_backend_pid() AS pid")
-      ).rows[0] as { pid: number };
+      ).rows[0].pid;
       const backendA = (
         await sessionA.query("SELECT pg_backend_pid() AS pid")
       ).rows[0] as { pid: number };
@@ -688,7 +694,7 @@ describe("routing lock function contracts", {
         const blockerProbe = await superuser(
           bootstrap,
           `SELECT unnest(pg_blocking_pids($1)) AS pid`,
-          [backendB.pid],
+          [backendB],
         );
         lastBlockers = (blockerProbe.rows as { pid: number }[])
           .map((row) => Number(row.pid));
@@ -714,7 +720,7 @@ describe("routing lock function contracts", {
            FROM pg_locks
           WHERE pid = $1
           ORDER BY granted`,
-        [backendB.pid],
+        [backendB],
       );
       const bLockRows = bLocks.rows as { granted: boolean; locktype: string }[];
       assert.ok(
@@ -727,7 +733,7 @@ describe("routing lock function contracts", {
         `SELECT wait_event_type, wait_event, state
            FROM pg_stat_activity
           WHERE pid = $1`,
-        [backendB.pid],
+        [backendB],
       );
       const bActRow = bActivity.rows[0] as {
         wait_event_type: string | null;
@@ -811,14 +817,27 @@ describe("routing lock function contracts", {
       // Unconditional cleanup: roll back A if the commit never happened
       // (an assertion failed mid-test), let B's in-flight lock query settle,
       // and release both clients.
-      if (!committedA) {
-        await sessionA.query("ROLLBACK").catch(() => {});
+      if (sessionA && !committedA) {
+        try {
+          await sessionA.query("ROLLBACK");
+        } catch {
+          // The rollback failed: A's row lock may still be held, which would
+          // leave B blocked indefinitely. Terminate B's backend so its lock
+          // wait is cancelled and the suite cannot hang.
+          if (backendB !== undefined) {
+            await superuser(
+              bootstrap,
+              `SELECT pg_terminate_backend($1)`,
+              [backendB],
+            ).catch(() => {});
+          }
+        }
       }
       if (lockB) {
         await lockB.catch(() => {});
       }
-      sessionB.release();
-      sessionA.release();
+      sessionB?.release();
+      sessionA?.release();
     }
   });
 });

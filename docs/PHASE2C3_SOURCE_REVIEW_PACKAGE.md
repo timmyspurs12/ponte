@@ -16,17 +16,20 @@ self-review of the seven requested review areas.
 
 ---
 
-## 1. Migration 008 — `migrations/008_routing_lock_functions.sql` (new, 183 lines)
+## 1. Migration 008 — `migrations/008_routing_lock_functions.sql` (new, 200 lines)
 
 Complete file content (both SECURITY DEFINER functions and all grants).
-Final-review correction: the temporary
+Final-review corrections: (a) the temporary
 `GRANT CREATE ON SCHEMA public` / `REVOKE ...` pair previously in this file
 was removed after verification showed it was a silent no-op — `ponte_owner`
 holds schema CREATE without grant option, so the GRANT neither errors nor
 changes the schema ACL, and the ownership transfer (performed by the
-bootstrap superuser) needs no target-side schema privilege. The requirement
-that `ponte_routing_lock` holds no effective CREATE on `public` is
-unaffected (it never held any):
+bootstrap superuser) needs no target-side CREATE privilege; (b) the lock
+owner's schema reachability is now granted EXPLICITLY —
+`GRANT USAGE ON SCHEMA public TO ponte_routing_lock` runs inside the
+`SET LOCAL ROLE NONE` section alongside the ownership transfer, so the
+function bodies' `public.` references resolve even where the default PUBLIC
+USAGE has been revoked. CREATE is never granted to the lock role:
 
 ```sql
 -- Phase 2C.3: SECURITY DEFINER row-lock functions for the Routing path.
@@ -53,18 +56,23 @@ unaffected (it never held any):
 -- Execution context (load-bearing):
 --
 -- `applyMigrations()` runs this file inside one transaction with
--- `SET LOCAL ROLE ponte_owner`, so every statement below executes as
--- `ponte_owner` and the migration-ledger INSERT that follows also runs as
--- `ponte_owner`. The file deliberately issues no `SET ROLE` of its own, so
--- the runner's role is never lost and the ledger insert is trivially
--- restored to `ponte_owner`.
+-- `SET LOCAL ROLE ponte_owner`, so the statements that create the functions
+-- and the migration-ledger INSERT that follows execute as `ponte_owner`.
+-- The file DOES issue its own role switches for the ownership transfer:
+-- `SET LOCAL ROLE NONE` drops to the bootstrap superuser for the
+-- `ALTER FUNCTION ... OWNER TO` statements, and `SET LOCAL ROLE ponte_owner`
+-- restores the runner's role immediately afterwards. Both switches are
+-- transaction-scoped (`SET LOCAL`), so the connection is never left
+-- elevated and the ledger INSERT still runs as `ponte_owner`.
 --
 -- `ponte_owner` is a member of `ponte_routing_lock` WITH INHERIT FALSE,
--- SET TRUE (Phase 1 provisioning). The membership is what a *ponte_owner*
--- execution of the ownership transfer would need; this migration performs
--- the transfer as the bootstrap superuser instead (see step 4), so the
--- membership is not exercised by this file. INHERIT FALSE is irrelevant to
--- the transfer and does not grant any object privilege.
+-- SET TRUE (Phase 1 provisioning). This is an explicitly accepted role
+-- relationship (the trusted-migrator decision), retained as part of the
+-- approved provisioning contract. It is NOT what makes the ownership
+-- transfer below possible: the transfer runs as the bootstrap superuser
+-- (see step 4), because `ponte_owner` cannot perform the `ALTER OWNER`
+-- itself. INHERIT FALSE keeps the owner's privileges from flowing into the
+-- lock role and does not grant any object privilege.
 --
 -- No schema-level CREATE is granted to `ponte_routing_lock` here, and none
 -- is needed. `ponte_owner` holds USAGE+CREATE on schema `public` (Phase 1)
@@ -73,10 +81,14 @@ unaffected (it never held any):
 -- (it neither errors nor changes the schema ACL), so such a grant could not
 -- make the ownership transfer legal anyway. The transfer is performed by
 -- the bootstrap superuser (step 4), which needs no target-side schema
--- privilege. `ponte_routing_lock` therefore never holds CREATE on `public`;
--- its schema reachability is the default PUBLIC USAGE on `public` (verified
--- effective), which is exactly what the function bodies' `public.`
--- references need.
+-- privilege. `ponte_routing_lock` therefore never holds CREATE on `public`.
+--
+-- Schema reachability is granted EXPLICITLY, not relied upon from the
+-- default PUBLIC USAGE on `public`: step 4 grants `USAGE ON SCHEMA public`
+-- to `ponte_routing_lock` (as the bootstrap superuser, alongside the
+-- ownership transfer), so the function bodies' `public.` references resolve
+-- even on a database where PUBLIC USAGE has been revoked. Only USAGE is
+-- granted — never CREATE.
 --
 -- Sequence (order is load-bearing):
 --
@@ -92,13 +104,16 @@ unaffected (it never held any):
 --      The functions never issue UPDATE; the grant exists only to make the
 --      lock legal, and it is column-scoped so the write surface stays
 --      minimal.
---   4. Transfer ownership to `ponte_routing_lock`. This runs as the
---      bootstrap superuser (`SET LOCAL ROLE NONE`): as `ponte_owner` this
---      ALTER fails with 42501 `permission denied for schema public`
---      (the ALTER OWNER privilege check does not observe schema grants, and
---      the superuser performs the transfer instead). The superuser runs in
---      the same transaction, so the ledger INSERT after this file still
---      executes as `ponte_owner` once the role context is restored.
+--   4. Grant `ponte_routing_lock` explicit `USAGE ON SCHEMA public` and
+--      transfer ownership to it. Both run as the bootstrap superuser
+--      (`SET LOCAL ROLE NONE`): as `ponte_owner` the ALTER fails with
+--      42501 `permission denied for schema public` (the ALTER OWNER
+--      privilege check does not observe schema grants, and the superuser
+--      performs the transfer instead). The USAGE grant is permanent and
+--      direct — it does not depend on the default PUBLIC USAGE; CREATE is
+--      never granted. The superuser runs in the same transaction, so the
+--      ledger INSERT after this file still executes as `ponte_owner` once
+--      the role context is restored.
 --
 -- Atomicity: the runner applies this file inside its single migration
 -- transaction; any failure rolls back the whole file, so a half-applied
@@ -197,14 +212,19 @@ GRANT UPDATE (status) ON memberships TO ponte_routing_lock;
 GRANT SELECT (id, business_id, invoice_id, source, simulated, data, expires_at) ON quotes TO ponte_routing_lock;
 GRANT UPDATE (expires_at) ON quotes TO ponte_routing_lock;
 
--- (4) Ownership transfer. The bootstrap superuser performs the transfer
--- (`SET LOCAL ROLE NONE`): as `ponte_owner` this ALTER fails with
--- 42501 `permission denied for schema public` (the ALTER OWNER privilege
--- check does not observe schema grants, and `ponte_owner` holds no grant
--- option to grant CREATE to the target anyway). The superuser runs in the
--- same transaction, so the ledger INSERT after this file still executes as
+-- (4) Ownership transfer and explicit schema USAGE. The bootstrap superuser
+-- performs both statements (`SET LOCAL ROLE NONE`): as `ponte_owner` the
+-- ALTER fails with 42501 `permission denied for schema public` (the ALTER
+-- OWNER privilege check does not observe schema grants, and `ponte_owner`
+-- holds no grant option to grant CREATE to the target anyway). The explicit
+-- `GRANT USAGE ON SCHEMA public` gives the lock owner a permanent, direct
+-- schema reachability that does not depend on the default PUBLIC USAGE —
+-- CREATE is deliberately NOT granted. The superuser runs in the same
+-- transaction, so the ledger INSERT after this file still executes as
 -- `ponte_owner` once the role context is restored.
 SET LOCAL ROLE NONE;
+
+GRANT USAGE ON SCHEMA public TO ponte_routing_lock;
 
 ALTER FUNCTION ponte_lock_routing_membership(uuid, uuid) OWNER TO ponte_routing_lock;
 ALTER FUNCTION ponte_lock_routing_quote(uuid, uuid, uuid) OWNER TO ponte_routing_lock;
@@ -270,9 +290,13 @@ drift without failing.
 GRANT ponte_routing_lock TO ponte_owner WITH INHERIT FALSE, SET TRUE;
 ```
 
-`INHERIT FALSE` keeps the owner's privileges out of the lock role; `SET
-TRUE` is what allows the migration's `ALTER FUNCTION ... OWNER TO`
-transfer. `admin_option=false` is intentional (a plain `GRANT` defaults to
+`INHERIT FALSE` keeps the owner's privileges out of the lock role. This
+membership is an explicitly accepted role relationship under the
+trusted-migrator decision, retained as part of the approved provisioning
+contract — it is NOT what makes migration 008's ownership transfer possible:
+that transfer runs as the bootstrap superuser (`SET LOCAL ROLE NONE`),
+because `ponte_owner` cannot perform the `ALTER FUNCTION ... OWNER TO`
+itself. `admin_option=false` is intentional (a plain `GRANT` defaults to
 false and no administrative membership is needed). The report and
 `scripts/provision-roles.ts` now read and display all three options
 (`INHERIT`, `SET`, `ADMIN`).
@@ -301,11 +325,15 @@ GRANT EXECUTE ON FUNCTION ponte.ponte_lock_routing_quote(p_business_id uuid, p_i
 **Step (12) — exact-signature and security-property verification.** A `DO`
 block reads both functions from `pg_proc` and fails explicitly on any of:
 wrong identity arguments, wrong return type, wrong owner (must be
-`ponte_routing_lock`), missing `SECURITY DEFINER`, missing/drifted
-`search_path` (`proconfig @> ARRAY['search_path=pg_catalog, public, pg_temp']`),
-PUBLIC still holding EXECUTE, or `ponte_app` missing EXECUTE — plus exactly
-two lock functions found, and the membership graph in both directions (only
-`ponte_owner` as member, no parents).
+`ponte_routing_lock`), missing `SECURITY DEFINER`, an `proconfig` that is
+not EXACTLY the approved security configuration (`proconfig =
+ARRAY['search_path=pg_catalog, public, pg_temp']` — equality, not mere
+containment), PUBLIC still holding EXECUTE, or `ponte_app` missing EXECUTE —
+plus exactly two lock functions found, the membership graph in both
+directions with the member options asserted EXACTLY (`ponte_owner` as the
+only member, INHERIT FALSE, SET TRUE, ADMIN FALSE, no parents), and the
+lock owner's effective schema privileges (`USAGE` required, `CREATE`
+forbidden via `has_schema_privilege`).
 
 **`verifyExpectedObjects()`** now matches the two lock functions by exact
 signature (identity arguments + return type), not by name: a function with
@@ -336,9 +364,11 @@ table directly).
 +  );
 ```
 
-The row lock (and the database-time expiry predicate) moved into the
-SECURITY DEFINER function; the helper, its signature and its return shape
-are unchanged.
+The row lock moved into the SECURITY DEFINER function; the helper, its
+signature and its return shape are unchanged. The function's expiry
+semantics: a missing quote locks nothing and returns zero rows; a valid
+quote is locked and then returned; an expired quote is locked first,
+rejected by the post-lock expiry check, and returns zero rows.
 
 ### `persist-candidate.ts` — `assertActiveMutationMembership()`
 
@@ -367,8 +397,12 @@ Semantics are unchanged: no active membership (NULL) or a `viewer` role →
     fail("INVOICE_OR_QUOTE_UNAVAILABLE");
 ```
 
-The function's own post-lock check is authoritative (database time); this
-call-site assertion makes the invariant explicit and fails closed in the
+The function locks the quote row first and evaluates expiry only after the
+lock is acquired (missing quote: nothing locked, zero rows; valid quote:
+locked then returned; expired quote: locked first, rejected by the
+post-lock check, zero rows). The function's own post-lock check is
+authoritative (database time); this call-site assertion re-asserts the
+invariant against the locked row's own timestamp and fails closed in the
 other direction too (both checks fail closed, so clock skew between app and
 database cannot produce a stale lock).
 
@@ -444,131 +478,207 @@ while a concurrent session blocks on the lock yields zero rows on resumption"**
       [quoteId, businessId, invoiceId, JSON.stringify({})],
     );
 
-    // (1) Transaction A acquires the row lock on a valid quote and holds it.
-    const sessionA = await app!.connect();
-    await sessionA.query("BEGIN");
-    const lockedA = await sessionA.query(
-      `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
-      [businessId, invoiceId, quoteId],
-    );
-    assert.equal(lockedA.rowCount, 1, "session A must lock the valid quote");
-
-    // (2) Transaction B calls the actual quote-lock function BEFORE expiry.
-    // It blocks on A's row lock. The block is proven at the PostgreSQL level,
-    // not only by a JavaScript promise remaining unsettled: `pg_locks` and
-    // `pg_stat_activity` are queried to show B holds an ungranted lock
-    // request while A holds the granted lock, and B's wait_event_type is
-    // "Lock" — the server itself is reporting B is waiting on a lock.
-    const sessionB = await app!.connect();
-    const backendB = (
-      await sessionB.query("SELECT pg_backend_pid() AS pid")
-    ).rows[0] as { pid: number };
+    // Both client lifecycles are managed unconditionally: both clients are
+    // acquired INSIDE the protected try/finally, Transaction A is rolled
+    // back if an assertion fails before its commit, and both clients are
+    // released even on failure. If the rollback itself fails, B's backend
+    // is terminated so its lock wait can never hang the suite indefinitely.
+    let sessionA: PoolClient | undefined;
+    let sessionB: PoolClient | undefined;
+    let backendB: number | undefined;
+    let committedA = false;
     let settledB = false;
-    const lockB = sessionB
-      .query(
+    let lockB: Promise<unknown> | undefined;
+    try {
+      sessionA = await app!.connect();
+      sessionB = await app!.connect();
+
+      // (1) Transaction A acquires the row lock on a valid quote and holds it.
+      await sessionA.query("BEGIN");
+      const lockedA = await sessionA.query(
         `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
         [businessId, invoiceId, quoteId],
-      )
-      .then((result) => {
-        settledB = true;
-        return result;
-      });
+      );
+      assert.equal(lockedA.rowCount, 1, "session A must lock the valid quote");
 
-    // Give B time to reach the lock and block.
-    await new Promise((resolve) => setTimeout(resolve, 500));
+      // (2) Transaction B calls the actual quote-lock function BEFORE expiry.
+      // It blocks on A's row lock. The block is proven at the PostgreSQL level,
+      // not only by a JavaScript promise remaining unsettled: `pg_locks` and
+      // `pg_stat_activity` are queried to show B holds an ungranted lock
+      // request while A holds the granted lock, and B's wait_event_type is
+      // "Lock" — the server itself is reporting B is waiting on a lock.
+      backendB = (
+        await sessionB.query("SELECT pg_backend_pid() AS pid")
+      ).rows[0].pid;
+      const backendA = (
+        await sessionA.query("SELECT pg_backend_pid() AS pid")
+      ).rows[0] as { pid: number };
+      lockB = sessionB
+        .query(
+          `SELECT * FROM ${PONTE_SCHEMA}.ponte_lock_routing_quote($1,$2,$3)`,
+          [businessId, invoiceId, quoteId],
+        )
+        .then((result) => {
+          settledB = true;
+          return result;
+        });
 
-    // Prove B is genuinely waiting on a PostgreSQL lock held by A. The
-    // `pg_locks` view shows B's ungranted lock request (the lock B is
-    // waiting for), and `pg_stat_activity` reports B's wait_event_type as
-    // "Lock". A holds the same lock type as granted, confirming the two
-    // backends are contending for the same lock.
-    const bLocks = await superuser(
-      bootstrap,
-      `SELECT granted, locktype
-         FROM pg_locks
-        WHERE pid = $1
-        ORDER BY granted`,
-      [backendB.pid],
-    );
-    const bLockRows = bLocks.rows as { granted: boolean; locktype: string }[];
-    assert.ok(
-      bLockRows.some((row) => row.granted === false),
-      `session B must hold an ungranted (waiting) lock request; got ${JSON.stringify(bLockRows)}`,
-    );
+      // Bounded polling for the actual lock-wait state — not a fixed delay.
+      // The loop waits until the database itself reports B blocked on A's
+      // backend (pg_blocking_pids includes A's PID) while B's promise is
+      // still unsettled, bounded at 4 s.
+      let blocked = false;
+      let lastBlockers: number[] = [];
+      const pollDeadline = Date.now() + 4000;
+      while (Date.now() < pollDeadline) {
+        const blockerProbe = await superuser(
+          bootstrap,
+          `SELECT unnest(pg_blocking_pids($1)) AS pid`,
+          [backendB],
+        );
+        lastBlockers = (blockerProbe.rows as { pid: number }[])
+          .map((row) => Number(row.pid));
+        if (!settledB && lastBlockers.includes(backendA.pid)) {
+          blocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.ok(
+        blocked,
+        `session B must be waiting on session A's row lock (pg_blocking_pids must include A's backend PID ${backendA.pid}); last probe: ${JSON.stringify(lastBlockers)}`,
+      );
 
-    const bActivity = await superuser(
-      bootstrap,
-      `SELECT wait_event_type, wait_event, state
-         FROM pg_stat_activity
-        WHERE pid = $1`,
-      [backendB.pid],
-    );
-    const bActRow = bActivity.rows[0] as {
-      wait_event_type: string | null;
-      wait_event: string | null;
-      state: string;
-    };
-    assert.equal(
-      bActRow.wait_event_type,
-      "Lock",
-      `session B's wait_event_type must be "Lock" (waiting on a PostgreSQL lock), got ${bActRow.wait_event_type}`,
-    );
-    assert.equal(
-      bActRow.state,
-      "active",
-      "session B must be in active state while waiting for the lock",
-    );
+      // Prove B is genuinely waiting on a PostgreSQL lock held by A. The
+      // `pg_locks` view shows B's ungranted lock request (the lock B is
+      // waiting for), and `pg_stat_activity` reports B's wait_event_type as
+      // "Lock". A holds the same lock type as granted, confirming the two
+      // backends are contending for the same lock.
+      const bLocks = await superuser(
+        bootstrap,
+        `SELECT granted, locktype
+           FROM pg_locks
+          WHERE pid = $1
+          ORDER BY granted`,
+        [backendB],
+      );
+      const bLockRows = bLocks.rows as { granted: boolean; locktype: string }[];
+      assert.ok(
+        bLockRows.some((row) => row.granted === false),
+        `session B must hold an ungranted (waiting) lock request; got ${JSON.stringify(bLockRows)}`,
+      );
 
-    // A holds the granted lock that B is waiting on.
-    const backendA = (
-      await sessionA.query("SELECT pg_backend_pid() AS pid")
-    ).rows[0] as { pid: number };
-    const aLocks = await superuser(
-      bootstrap,
-      `SELECT granted, locktype
-         FROM pg_locks
-        WHERE pid = $1
-        ORDER BY granted`,
-      [backendA.pid],
-    );
-    const aLockRows = aLocks.rows as { granted: boolean; locktype: string }[];
-    const waitingType = bLockRows.find((row) => row.granted === false)!.locktype;
-    assert.ok(
-      aLockRows.some(
-        (row) => row.granted === true && row.locktype === waitingType,
-      ),
-      `session A must hold the granted ${waitingType} lock that B is waiting on; got ${JSON.stringify(aLockRows)}`,
-    );
+      const bActivity = await superuser(
+        bootstrap,
+        `SELECT wait_event_type, wait_event, state
+           FROM pg_stat_activity
+          WHERE pid = $1`,
+        [backendB],
+      );
+      const bActRow = bActivity.rows[0] as {
+        wait_event_type: string | null;
+        wait_event: string | null;
+        state: string;
+      };
+      assert.equal(
+        bActRow.wait_event_type,
+        "Lock",
+        `session B's wait_event_type must be "Lock" (waiting on a PostgreSQL lock), got ${bActRow.wait_event_type}`,
+      );
+      assert.equal(
+        bActRow.state,
+        "active",
+        "session B must be in active state while waiting for the lock",
+      );
 
-    assert.equal(
-      settledB,
-      false,
-      "session B must still be blocked on session A's row lock before expiry",
-    );
+      // A holds the granted lock that B is waiting on.
+      const aLocks = await superuser(
+        bootstrap,
+        `SELECT granted, locktype
+           FROM pg_locks
+          WHERE pid = $1
+          ORDER BY granted`,
+        [backendA.pid],
+      );
+      const aLockRows = aLocks.rows as { granted: boolean; locktype: string }[];
+      const waitingType = bLockRows.find((row) => row.granted === false)!.locktype;
+      assert.ok(
+        aLockRows.some(
+          (row) => row.granted === true && row.locktype === waitingType,
+        ),
+        `session A must hold the granted ${waitingType} lock that B is waiting on; got ${JSON.stringify(aLockRows)}`,
+      );
 
-    // (3) The quote expires naturally while B is still waiting. Transaction A
-    // commits without modifying the quote, releasing the lock.
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    await sessionA.query("COMMIT");
+      assert.equal(
+        settledB,
+        false,
+        "session B must still be blocked on session A's row lock before expiry",
+      );
 
-    // (4) Transaction B resumes. The post-lock expiry check (evaluated after
-    // the lock is acquired, not at scan time) must reject the now-expired
-    // quote: B returns zero rows, not the stale row it would have scanned
-    // before the wait.
-    const resultB = await lockB;
-    assert.equal(
-      settledB,
-      true,
-      "session B must resume after session A commits",
-    );
-    assert.equal(
-      resultB.rowCount,
-      0,
-      "a quote that expired while B waited for the lock must yield zero rows on resumption",
-    );
+      // (3) The quote expires naturally while B is still waiting. Wait for
+      // the natural deadline with bounded polling (no fixed sleep), then
+      // Transaction A commits without modifying the quote, releasing the lock.
+      let expired = false;
+      const expiryDeadline = Date.now() + 6000;
+      while (Date.now() < expiryDeadline) {
+        const expiryProbe = await superuser(
+          bootstrap,
+          `SELECT expires_at <= clock_timestamp() AS expired
+             FROM ${PONTE_SCHEMA}.quotes
+            WHERE id = $1`,
+          [quoteId],
+        );
+        if (expiryProbe.rows[0]?.expired) {
+          expired = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.ok(expired, "the quote must expire naturally while session B waits");
+      await sessionA.query("COMMIT");
+      committedA = true;
 
-    await sessionB.release();
-    await sessionA.release();
+      // (4) Transaction B resumes. The post-lock expiry check (evaluated after
+      // the lock is acquired, not at scan time) must reject the now-expired
+      // quote: B returns zero rows, not the stale row it would have scanned
+      // before the wait.
+      const resultB = (await lockB) as { rowCount: number };
+      assert.equal(
+        settledB,
+        true,
+        "session B must resume after session A commits",
+      );
+      assert.equal(
+        resultB.rowCount,
+        0,
+        "a quote that expired while B waited for the lock must yield zero rows on resumption",
+      );
+    } finally {
+      // Unconditional cleanup: roll back A if the commit never happened
+      // (an assertion failed mid-test), let B's in-flight lock query settle,
+      // and release both clients.
+      if (sessionA && !committedA) {
+        try {
+          await sessionA.query("ROLLBACK");
+        } catch {
+          // The rollback failed: A's row lock may still be held, which would
+          // leave B blocked indefinitely. Terminate B's backend so its lock
+          // wait is cancelled and the suite cannot hang.
+          if (backendB !== undefined) {
+            await superuser(
+              bootstrap,
+              `SELECT pg_terminate_backend($1)`,
+              [backendB],
+            ).catch(() => {});
+          }
+        }
+      }
+      if (lockB) {
+        await lockB.catch(() => {});
+      }
+      sessionB?.release();
+      sessionA?.release();
+    }
   });
 ```
 
@@ -738,31 +848,30 @@ UPDATE).
 
 ## 9. Diff statistics and final Git status
 
-**Tracked diff (12 files, 1765 insertions, 1190 deletions):**
+**Complete implementation diff against the starting commit
+`f7a5bde0d109131e64596dab92879f024719a453` (17 files, 4130 insertions,
+1193 deletions; the review patch file itself is excluded to avoid
+recursive inclusion):**
 
 ```
  docs/PHASE2C2B_R1_ROUTING_LIMITATION.md            |   29 +-
+ docs/PHASE2C3_ROUTING_LOCK.md                      |  148 +++
+ docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md             | 1072 +++++++++++++++++++
+ migrations/008_routing_lock_functions.sql          |  200 +++
  scripts/provision-roles.ts                         |    2 +-
  scripts/test-migrations.ts                         |    1 +
- src/server/database-provisioning.ts                |  418 +++++++-
- src/server/evidence/persist-candidate.ts           |   45 +-
- src/server/repository.ts                           |   13 +-
+ src/server/database-provisioning.ts                |  480 ++++++++-
+ src/server/evidence/persist-candidate.ts           |   47 +-
+ src/server/repository.ts                           |   17 +-
  tests-backend/evidence-foundation.test.ts          |   65 +-
  tests-backend/evidence-persistence-r1-contract.test.ts | 1010 ++++++++++----------
  tests-backend/foundation.test.ts                   |   72 +-
- tests-backend/normal-routing-evidence-r1-contract.test.ts | 474 ++++-----
+ tests-backend/normal-routing-evidence-r1-contract.test.ts | 474 ++++----
  tests-backend/privilege-boundary.test.ts           |   80 +-
+ tests-backend/provisioning.test.ts                 |    4 +-
+ tests-backend/routing-lock-provisioning.test.ts    |  876 +++++++++++++++++
  tests-backend/routing-orchestration-r1-contract.test.ts | 746 ++++++++-------
- 12 files changed, 1765 insertions(+), 1190 deletions(-)
-```
-
-**New (untracked) files:**
-
-```
- docs/PHASE2C3_ROUTING_LOCK.md                      | 136 lines
- migrations/008_routing_lock_functions.sql          | 183 lines
- tests-backend/routing-lock-provisioning.test.ts    | 797 lines
- docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md             | this package
+ 17 files changed, 4130 insertions(+), 1193 deletions(-)
 ```
 
 **Final Git status (`git status --short --branch`):**
@@ -819,6 +928,14 @@ or deployed.
    FOR UPDATE privilege check; neither function ever issues an `UPDATE`.
    If the functions are ever modified to write, these grants must be
    revisited with the same scrutiny.
+7. **Schema USAGE is granted explicitly, not via PUBLIC.** Migration 008
+   grants `ponte_routing_lock` `USAGE ON SCHEMA public` directly (as the
+   bootstrap superuser) so the function bodies resolve even where the
+   default PUBLIC USAGE has been revoked; CREATE is never granted. Both
+   effective privileges are asserted by the Phase 2 verification step and
+   surfaced in the provisioning report (`routingLockSchema`), and the
+   hardened-schema scenario (PUBLIC USAGE revoked before provisioning) is
+   verified end-to-end.
 
 ---
 
@@ -839,8 +956,10 @@ or deployed.
 - `ponte_routing_lock` is **NOLOGIN**, hardened (no superuser-class
   attributes), a **leaf** (no parent memberships — enforced by Phase 1
   reconciliation and Phase 2 verification), and holds only column-scoped
-  SELECT + one-column UPDATE per table. Its privileges are reachable only
-  through the two functions' fixed SQL.
+  SELECT + one-column UPDATE per table plus explicit schema USAGE (no
+  CREATE). Its privileges are reachable only through the two functions'
+  fixed SQL; the effective schema privileges (USAGE true, CREATE false)
+  are verified by the Phase 2 step and surfaced in the report.
 - `ponte_owner`'s membership carries **INHERIT FALSE**, so the owner's
   privileges do not flow into the lock role; the lock role inherits nothing
   from anyone.
@@ -954,6 +1073,7 @@ or deployed.
 | Full backend suite (`scripts/run-backend-tests.mjs`) | **239 tests, 229 pass, 0 fail, 10 skipped** (exit 0) |
 | `npm run test:migrations` | Pass (exit 0) |
 | Fresh disposable DB: Phase 1 → migrate → seed → Phase 2 | All four steps exit 0 |
+| Hardened-schema scenario (PUBLIC USAGE on `public` revoked before provisioning) | Full sequence exits 0; `ponte_routing_lock` USAGE=true / CREATE=false; both functions execute via the app identity; disposable DB dropped |
 | Routing-lock suite (`routing-lock-provisioning.test.ts`) | 8/8 pass |
 | Shared `ponte` database | Untouched (7 baseline `schema_migrations` rows) |
 | Playwright | Unavailable (sandbox CDN restriction) — not passed |

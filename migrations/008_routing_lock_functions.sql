@@ -47,10 +47,14 @@
 -- (it neither errors nor changes the schema ACL), so such a grant could not
 -- make the ownership transfer legal anyway. The transfer is performed by
 -- the bootstrap superuser (step 4), which needs no target-side schema
--- privilege. `ponte_routing_lock` therefore never holds CREATE on `public`;
--- its schema reachability is the default PUBLIC USAGE on `public` (verified
--- effective), which is exactly what the function bodies' `public.`
--- references need.
+-- privilege. `ponte_routing_lock` therefore never holds CREATE on `public`.
+--
+-- Schema reachability is granted EXPLICITLY, not relied upon from the
+-- default PUBLIC USAGE on `public`: step 4 grants `USAGE ON SCHEMA public`
+-- to `ponte_routing_lock` (as the bootstrap superuser, alongside the
+-- ownership transfer), so the function bodies' `public.` references resolve
+-- even on a database where PUBLIC USAGE has been revoked. Only USAGE is
+-- granted — never CREATE.
 --
 -- Sequence (order is load-bearing):
 --
@@ -66,13 +70,16 @@
 --      The functions never issue UPDATE; the grant exists only to make the
 --      lock legal, and it is column-scoped so the write surface stays
 --      minimal.
---   4. Transfer ownership to `ponte_routing_lock`. This runs as the
---      bootstrap superuser (`SET LOCAL ROLE NONE`): as `ponte_owner` this
---      ALTER fails with 42501 `permission denied for schema public`
---      (the ALTER OWNER privilege check does not observe schema grants, and
---      the superuser performs the transfer instead). The superuser runs in
---      the same transaction, so the ledger INSERT after this file still
---      executes as `ponte_owner` once the role context is restored.
+--   4. Grant `ponte_routing_lock` explicit `USAGE ON SCHEMA public` and
+--      transfer ownership to it. Both run as the bootstrap superuser
+--      (`SET LOCAL ROLE NONE`): as `ponte_owner` the ALTER fails with
+--      42501 `permission denied for schema public` (the ALTER OWNER
+--      privilege check does not observe schema grants, and the superuser
+--      performs the transfer instead). The USAGE grant is permanent and
+--      direct — it does not depend on the default PUBLIC USAGE; CREATE is
+--      never granted. The superuser runs in the same transaction, so the
+--      ledger INSERT after this file still executes as `ponte_owner` once
+--      the role context is restored.
 --
 -- Atomicity: the runner applies this file inside its single migration
 -- transaction; any failure rolls back the whole file, so a half-applied
@@ -171,14 +178,19 @@ GRANT UPDATE (status) ON memberships TO ponte_routing_lock;
 GRANT SELECT (id, business_id, invoice_id, source, simulated, data, expires_at) ON quotes TO ponte_routing_lock;
 GRANT UPDATE (expires_at) ON quotes TO ponte_routing_lock;
 
--- (4) Ownership transfer. The bootstrap superuser performs the transfer
--- (`SET LOCAL ROLE NONE`): as `ponte_owner` this ALTER fails with
--- 42501 `permission denied for schema public` (the ALTER OWNER privilege
--- check does not observe schema grants, and `ponte_owner` holds no grant
--- option to grant CREATE to the target anyway). The superuser runs in the
--- same transaction, so the ledger INSERT after this file still executes as
+-- (4) Ownership transfer and explicit schema USAGE. The bootstrap superuser
+-- performs both statements (`SET LOCAL ROLE NONE`): as `ponte_owner` the
+-- ALTER fails with 42501 `permission denied for schema public` (the ALTER
+-- OWNER privilege check does not observe schema grants, and `ponte_owner`
+-- holds no grant option to grant CREATE to the target anyway). The explicit
+-- `GRANT USAGE ON SCHEMA public` gives the lock owner a permanent, direct
+-- schema reachability that does not depend on the default PUBLIC USAGE —
+-- CREATE is deliberately NOT granted. The superuser runs in the same
+-- transaction, so the ledger INSERT after this file still executes as
 -- `ponte_owner` once the role context is restored.
 SET LOCAL ROLE NONE;
+
+GRANT USAGE ON SCHEMA public TO ponte_routing_lock;
 
 ALTER FUNCTION ponte_lock_routing_membership(uuid, uuid) OWNER TO ponte_routing_lock;
 ALTER FUNCTION ponte_lock_routing_quote(uuid, uuid, uuid) OWNER TO ponte_routing_lock;

@@ -324,6 +324,19 @@ export type ProvisioningReport = {
     bypassrls: boolean;
   };
   /**
+   * Phase 2C.3: the lock owner's EFFECTIVE schema privileges on the app
+   * schema, read with `has_schema_privilege` (direct or inherited). USAGE must
+   * be true — the function bodies' `public.` references must resolve — and
+   * CREATE must be false — the lock role must never create objects. Phase 2
+   * verification fails on either deviation; the report re-reads it so a CI
+   * gate can assert the approved state without trusting the step's exit
+   * status alone.
+   */
+  routingLockSchema: {
+    usage: boolean;
+    create: boolean;
+  };
+  /**
    * Phase 2C.3: the two directions of the `ponte_routing_lock` membership
    * graph, read from `pg_auth_members`.
    *
@@ -904,6 +917,16 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'ponte_routing_lock must be a leaf role with no parent memberships';
   END IF;
+
+  -- The lock owner's effective schema privileges: USAGE on the schema is
+  -- required (the function bodies' public. references must resolve), CREATE
+  -- is forbidden (the lock role must never be able to create objects).
+  IF NOT has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'USAGE') THEN
+    RAISE EXCEPTION 'ponte_routing_lock must have USAGE on schema ${PONTE_SCHEMA}';
+  END IF;
+  IF has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'CREATE') THEN
+    RAISE EXCEPTION 'ponte_routing_lock must not have CREATE on schema ${PONTE_SCHEMA}';
+  END IF;
 END $$;`,
   });
 
@@ -1145,6 +1168,15 @@ export async function readProvisioningReport(
   )) as { rows: { parent: string }[] };
 
   /**
+   * Phase 2C.3: the lock owner's effective schema privileges (direct or
+   * inherited) on the app schema.
+   */
+  const routingLockSchema = (await client.query(
+    `SELECT has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'USAGE') AS usage,
+            has_schema_privilege('${ROUTING_LOCK_ROLE}', '${PONTE_SCHEMA}', 'CREATE') AS create`,
+  )) as { rows: { usage: boolean; create: boolean }[] };
+
+  /**
    * Phase 2C.3: the exact signature and security properties of the two lock
    * functions, read back from the catalogue. `proconfig` is the function's
    * `SET` list; `pg_get_function_identity_arguments` / `pg_get_function_result`
@@ -1301,6 +1333,10 @@ export async function readProvisioningReport(
         bypassrls: found?.rolbypassrls ?? false,
       };
     })(),
+    routingLockSchema: {
+      usage: routingLockSchema.rows[0]?.usage ?? false,
+      create: routingLockSchema.rows[0]?.create ?? false,
+    },
     routingLockMemberships: {
       membersOfRoutingLock: routingLockMembers.rows.map((row) => ({
         member: row.member,
