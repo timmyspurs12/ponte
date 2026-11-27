@@ -86,9 +86,9 @@ export function InvoiceDetail({
       );
     } catch (e) {
       // A Routing attempt can fail either because the evidence provider is
-      // unavailable (503 EVIDENCE_PROVIDER_UNAVAILABLE) or because the
-      // persistence-path row locks are denied (500 EVIDENCE_PERSISTENCE_FAILED).
-      // In both cases present the documented limitation clearly rather than a
+      // unavailable (503 EVIDENCE_PROVIDER_UNAVAILABLE) or because persisting
+      // the prepared evidence failed (500 EVIDENCE_PERSISTENCE_FAILED). In
+      // both cases present the documented limitation clearly rather than a
       // generic save error that could imply a partial or successful operation.
       if (
         status === "Routing" &&
