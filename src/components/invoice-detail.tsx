@@ -85,9 +85,8 @@ export function InvoiceDetail({
               : "Payment request ready.",
       );
     } catch (e) {
-      // R1: Routing evidence persistence is dormant and fail-closed. The
-      // backend rejects a Routing attempt either because the evidence provider
-      // is unavailable (503 EVIDENCE_PROVIDER_UNAVAILABLE) or because the
+      // A Routing attempt can fail either because the evidence provider is
+      // unavailable (503 EVIDENCE_PROVIDER_UNAVAILABLE) or because the
       // persistence-path row locks are denied (500 EVIDENCE_PERSISTENCE_FAILED).
       // In both cases present the documented limitation clearly rather than a
       // generic save error that could imply a partial or successful operation.

@@ -34,11 +34,12 @@ export async function clearDevelopmentRateLimit() {
  * Primes pre-existing Routing and Settled fixture state through the
  * administrative helper.
  *
- * R1 makes Routing evidence persistence dormant and fail-closed by design: the
- * application identity holds no `UPDATE` on `quotes`/`memberships`, so every
- * Routing attempt is rejected at the membership lock with
- * `EVIDENCE_PERSISTENCE_FAILED`. The application seeder therefore cannot create
- * Routing or Settled fixtures.
+ * Routing persistence is enabled in the local test configuration
+ * (`PONTE_LOCAL_EVIDENCE_TEST_PROVIDER`), so the application can create
+ * Routing state through the normal UI. These fixtures still exist so the
+ * browser suite can exercise the Routing-state and Settled UI against stable,
+ * known pre-existing state (and Settled fixtures, which the application UI
+ * creates only by completing a settlement, are still primed here).
  *
  * These fixtures are **synthetic pre-seeded test data**, not evidence generated
  * by a successful application Routing operation. They are inserted directly by
@@ -260,6 +261,6 @@ export async function resetFixtures() {
     { env: process.env, stdio: "pipe" },
   );
   // After application seeding succeeds, prime the Routing/Settled fixtures
-  // that R1 prevents the application identity from creating.
+  // that the browser suite uses as stable pre-existing Routing-state data.
   await primeRoutedState();
 }
