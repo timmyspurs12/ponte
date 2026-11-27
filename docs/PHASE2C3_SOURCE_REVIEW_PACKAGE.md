@@ -1091,7 +1091,7 @@ privilege model was changed to silence the tests.
 ## 10. Diff statistics and final Git status
 
 **Complete implementation diff against the starting commit
-`f7a5bde0d109131e64596dab92879f024719a453` (23 files, 4732 insertions,
+`f7a5bde0d109131e64596dab92879f024719a453` (23 files, 4794 insertions,
 1376 deletions; the review patch file itself is excluded to avoid
 recursive inclusion):**
 
@@ -1119,7 +1119,7 @@ recursive inclusion):**
  tests/frontend.spec.ts                             |  200 ++--
  tests/localization.spec.ts                         |  113 +-
  tests/setup-database.ts                            |   13 +-
- 23 files changed, 4738 insertions(+), 1376 deletions(-)
+ 23 files changed, 4794 insertions(+), 1376 deletions(-)
 ```
 
 **Final Git status (`git status --short --branch`):**
