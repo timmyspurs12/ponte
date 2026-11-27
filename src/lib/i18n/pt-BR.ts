@@ -471,8 +471,8 @@ export const ptBR: Record<string, string> = {
   "Payment request ready.": "Solicitação de pagamento pronta.",
   "Could not save demo state. Please try again.":
     "Não foi possível salvar a demonstração. Tente novamente.",
-  "Routing is unavailable in this demo. Evidence persistence is dormant and fail-closed by design, so this invoice remains funded.":
-    "O roteamento não está disponível nesta demonstração. A persistência de evidência está inativa e recusada por design, portanto esta fatura permanece financiada.",
+  "The Routing attempt failed because the evidence could not be persisted, so this invoice remains funded.":
+    "A tentativa de roteamento falhou porque a evidência não pôde ser persistida, portanto esta fatura permanece financiada.",
   "Routing is unavailable in this environment. The evidence provider is not available, so this invoice remains funded.":
     "O roteamento não está disponível neste ambiente. O provedor de evidência não está disponível, portanto esta fatura permanece financiada.",
   "Demo payment link copied.": "Link de pagamento demonstrativo copiado.",

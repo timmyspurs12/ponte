@@ -99,7 +99,7 @@ export function InvoiceDetail({
         setError(
           e.code === "EVIDENCE_PROVIDER_UNAVAILABLE"
             ? "Routing is unavailable in this environment. The evidence provider is not available, so this invoice remains funded."
-            : "Routing is unavailable in this demo. Evidence persistence is dormant and fail-closed by design, so this invoice remains funded.",
+            : "The Routing attempt failed because the evidence could not be persisted, so this invoice remains funded.",
         );
       } else {
         setError(

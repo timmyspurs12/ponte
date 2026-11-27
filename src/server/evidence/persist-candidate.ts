@@ -651,8 +651,13 @@ async function persistNewCandidate(
 
 /**
  * Persists an already-prepared candidate through one authoritative PostgreSQL
- * transaction. It does not call a provider, preparation routine, service, or
- * external network and remains unreachable from normal Routing/API flows.
+ * transaction. It is the final state authority for Routing persistence:
+ * `orchestratePreparedRoutingCandidate()` — the normal Routing/API flow used
+ * by the service entrypoint — delegates every successful Routing write here,
+ * and `recheckBeforeSnapshotRejection()` uses it candidate-free for idempotent
+ * replay/conflict decisions after a preflight miss. It does not call a
+ * provider, preparation routine, or external network; candidates are prepared
+ * by the caller and verified before this transaction begins.
  */
 export async function persistPreparedEvidenceCandidate(
   input: PersistPreparedEvidenceCandidateInput,
