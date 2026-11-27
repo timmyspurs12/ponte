@@ -1,5 +1,7 @@
 # Phase 2B.6.0 — Reproducible Stylus testnet artifact readiness
 
+> **Follow-up:** [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) moves the Cargo workspace root to `rust/`, fixes the CLI's reproducible-container path and re-measures the artifact. The measurements below describe the **original** layout and remain historical.
+
 > **Build and packaging only.** This phase prepares a locally built, **unactivated candidate artifact** of the existing synthetic-only PONTE Stylus wrapper and documents a controlled path toward Arbitrum Sepolia. Nothing was deployed or activated. No `cargo stylus check` ran against any RPC endpoint, and no transaction or signature was requested. No wallet, key, funding, payment, settlement or hosting deployment was involved, and nobody was contacted on PONTE's behalf.
 
 ## Status
@@ -12,9 +14,9 @@
 | **Candidate artifact run** | **Succeeded.** [Run 44367877896](https://github.com/timmyspurs12/ponte/actions/runs/44367877896), `workflow_dispatch` on `arena/7643001c-ponte` at commit `735445f04255ae5ec5d43041d69db8338eba5361`: all 17 steps passed and the provenance record is `complete` ([§5](#5-artifact-run-results)) |
 | **Artifact** | [`ponte-stylus-unactivated-candidate-735445f04255ae5ec5d43041d69db8338eba5361-44367877896-1`](https://github.com/timmyspurs12/ponte/actions/runs/44367877896/artifacts/14457443066), artifact ID `14457443066`, 334,403-byte zip, digest `sha256:df20469a2bd1d2d1cf7293706f1de47e4accabadedaa6af094d40c7605c1f739`, expires 2027-02-16 |
 | Confirmation run | [Run 44370571297](https://github.com/timmyspurs12/ponte/actions/runs/44370571297) on the documentation-only commit `0d2a5e610523699ccea52d841bebe2c0b9656165` reproduced every recorded result exactly. Artifact ID `14459786175`, digest `sha256:664698aa89b11f7797f35944d089cff600ace8b2a048c04f9de66e46588c9b31`, expires 2027-02-16 |
-| **Raw WASM** | 90,506 bytes, SHA-256 **`6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`**: identical to `main`'s baseline, to this branch's dependency-evidence build and to the pinned CLI's own `cargo stylus build` ([§5](#5-artifact-run-results)) |
+| **Raw WASM (historical, original layout)** | 90,506 bytes, SHA-256 `6fd9159dfa148837be88249deaf1cb8f04f0c4787d05b5340790051cf2c8fefd`, measured under the original workspace layout. This hash is a historical measurement; current values after the Phase 2B.6.1 workspace-root change are host `b3574ee3…` and container `42d8a474…` in [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) ([§5](#5-artifact-run-results)) |
 | Configuration change | `rust/stylus-wrapper/Stylus.toml` gains the `[workspace]` table that cargo-stylus 0.10.10 requires, plus a declarative `arbitrum-sepolia` network entry. **Confirmed by the pinned CLI:** `cargo stylus build` succeeds; the former file fails with ``missing field `workspace` `` ([§6](#6-stylustoml-configuration-change)) |
-| Reproducible Docker path | The base image `offchainlabs/cargo-stylus-base:0.10.10` exists (digest recorded), but the CLI's container path **fails for the current layout** on the `../optimizer` path dependency. This blocks a verified `deploy` ([§7](#7-reproducibility-findings)) |
+| Reproducible Docker path | **Historical finding:** under the original layout the CLI's container path **failed** on the `../optimizer` path dependency (the base image `offchainlabs/cargo-stylus-base:0.10.10` exists, digest recorded). Phase 2B.6.1 moved the Cargo workspace root to `rust/` and recorded two byte-identical container builds plus a successful offline `get-initcode`; see [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §5.2. Deployment and on-chain verification remain unperformed ([§7](#7-reproducibility-findings)) |
 | Arbitrum Sepolia | **Not checked.** Chain ID `421614`, published RPC `https://sepolia-rollup.arbitrum.io/rpc` ([§8](#8-path-to-arbitrum-sepolia-documented-not-performed)) |
 | Activation | Paused on Arbitrum One and Nova. The pending activation AIP says Arbitrum Sepolia will follow the same audited, signed process. Must be freshly verified ([§9](#9-activation-policy-as-read-on-2026-11-18)) |
 
@@ -303,7 +305,7 @@ Each of these was measured by the candidate run unless stated otherwise.
 | Operation | What it does | Needs | Changes chain state? |
 | --- | --- | --- | --- |
 | **Read-only `cargo stylus check`** | Builds and processes on the host. Then `eth_call`s ArbWasm `activateProgram` (`0x…71`) with a state override that spoofs the code and a funded sender, to validate activation and estimate the data fee. Reports `ActivationsPaused` when activation gas is raised | An RPC that supports `eth_call` state overrides. No key | No |
-| **Unactivated deployment** (`cargo stylus deploy --no-activate`) | Runs the same check first, checks the balance against the estimated data fee, then sends a contract-creation transaction with the init code (plus fragment transactions if fragmented). The program **cannot be called until activated** | A funded key; by default the reproducible Docker path, which fails for the current layout ([§7](#7-reproducibility-findings)) | **Yes**, one or more transactions |
+| **Unactivated deployment** (`cargo stylus deploy --no-activate`) | Runs the same check first, checks the balance against the estimated data fee, then sends a contract-creation transaction with the init code (plus fragment transactions if fragmented). The program **cannot be called until activated** | A funded key; by default the reproducible Docker path, which failed for the original layout (now fixed by [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md); see [§7](#7-reproducibility-findings)) | **Yes**, one or more transactions |
 | **Activation** (`cargo stylus activate --address …`) | A transaction to ArbWasm `activateProgram` paying the data fee. It compiles the program onchain and makes it callable for a limited period (365 days by default, renewable with `codehashKeepalive`) | A funded key and **whatever activation policy applies on Sepolia at that time** ([§9](#9-activation-policy-as-read-on-2026-11-18)) | **Yes** |
 
 **Later read-only check.** This is a separate step that needs approval:
@@ -359,7 +361,7 @@ These are unsuppressed and unchanged by this branch. They come from `main`'s pos
   - Results were read from check-run annotations and the REST API, not from an independently downloaded artifact ([§5](#5-artifact-run-results)).
 - **Reproducibility.**
   - The raw WASM is reproducible only for the same checkout path, `CARGO_HOME` and toolchain components.
-  - The CLI's own reproducible path does not work for the current layout ([§7](#7-reproducibility-findings)).
+  - The CLI's own reproducible path did not work for the original layout; Phase 2B.6.1 moved the Cargo workspace root and recorded two byte-identical container builds ([§7](#7-reproducibility-findings), [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md)).
   - The CLI binary hash depends on the toolchain components in the same way ([§3](#3-provenance)).
 - **Toolchain.** The CLI image used for reproducible builds comes from Docker Hub by tag. Upstream's base-image `Dockerfile` builds `cargo-stylus` without `--locked` from a floating `rust:1.91` image.
 
@@ -374,7 +376,7 @@ These are unsuppressed and unchanged by this branch. They come from `main`'s pos
 **Before an unactivated deployment:**
 1. Get explicit approval for Sepolia transactions, and set a key-management policy: no keys in CI or the repository, plus a funded testnet account for gas and the data-fee balance check.
 2. A successful, reviewed read-only check.
-3. **A working reproducible build.** The CLI's container path fails for the current layout ([§7](#7-reproducibility-findings), finding 4), and `--no-verify` would bypass reproducibility, which is not acceptable here. This needs a separately reviewed layout change, after which the artifact, its hashes and its size must be re-measured.
+3. **A working reproducible build.** The CLI's container path failed for the original layout; Phase 2B.6.1 moved the Cargo workspace root and recorded two byte-identical container builds plus a successful offline `get-initcode` ([§7](#7-reproducibility-findings), finding 4; [Phase 2B.6.1](PHASE2B6_1_WORKSPACE_LAYOUT.md) §5.2). Before any deployment the artifact, its hashes and its size must still be freshly re-measured, and `--no-verify` would bypass reproducibility, which is not acceptable.
 4. Pin the base image by the recorded digest, or record the digest at deployment time and compare it.
 5. Re-measure the compressed size for the container build. The host build fits the single-contract limit by 450 bytes; plan multi-transaction deployment if a later build does not.
 6. Sepolia activations are not paused. If they are, the pinned CLI stops before deploying even with `--no-activate`.
