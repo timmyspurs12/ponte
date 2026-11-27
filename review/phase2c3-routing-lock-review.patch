@@ -197,7 +197,7 @@ index 0000000..6fd00fd
 +the row locks**, not what the persistence path writes.
 diff --git a/docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md b/docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md
 new file mode 100644
-index 0000000..c81194f
+index 0000000..9f98acc
 --- /dev/null
 +++ b/docs/PHASE2C3_SOURCE_REVIEW_PACKAGE.md
 @@ -0,0 +1,1326 @@
@@ -1294,7 +1294,7 @@ index 0000000..c81194f
 +## 10. Diff statistics and final Git status
 +
 +**Complete implementation diff against the starting commit
-+`f7a5bde0d109131e64596dab92879f024719a453` (23 files, 4732 insertions,
++`f7a5bde0d109131e64596dab92879f024719a453` (23 files, 4794 insertions,
 +1376 deletions; the review patch file itself is excluded to avoid
 +recursive inclusion):**
 +
@@ -1322,7 +1322,7 @@ index 0000000..c81194f
 + tests/frontend.spec.ts                             |  200 ++--
 + tests/localization.spec.ts                         |  113 +-
 + tests/setup-database.ts                            |   13 +-
-+ 23 files changed, 4738 insertions(+), 1376 deletions(-)
++ 23 files changed, 4794 insertions(+), 1376 deletions(-)
 +```
 +
 +**Final Git status (`git status --short --branch`):**
