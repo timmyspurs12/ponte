@@ -294,8 +294,15 @@ function assertGcpUnwrappingInput(
  * repository file, and relies solely on the Google SDK's Application Default
  * Credentials when a future composition root deliberately chooses to use it.
  */
-export function createGoogleCloudKmsClient(): GcpKmsClient {
-  const client = new KeyManagementServiceClient();
+/**
+ * Wraps one existing official `KeyManagementServiceClient` in the narrow
+ * adapter boundary. Wrapping is a pure, side-effect-free adaptation: the
+ * official client instance is reused as-is, and no credential discovery or
+ * network work occurs here.
+ */
+export function wrapKeyManagementServiceClient(
+  client: KeyManagementServiceClient,
+): GcpKmsClient {
   return Object.freeze({
     async encrypt(request: GcpKmsEncryptRequest) {
       const [response] = await client.encrypt({
@@ -320,6 +327,10 @@ export function createGoogleCloudKmsClient(): GcpKmsClient {
       return [response] as const;
     },
   });
+}
+
+export function createGoogleCloudKmsClient(): GcpKmsClient {
+  return wrapKeyManagementServiceClient(new KeyManagementServiceClient());
 }
 
 /**

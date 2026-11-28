@@ -5,9 +5,12 @@ import path from "node:path";
 import test from "node:test";
 import {
   PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV,
+  PRODUCTION_RESOLVER_TEST_SEAM_ERROR,
+  assertOperatorScopedReaderConfig,
   isLocalEvidenceRuntime,
   resolveEvidencePreparationDependencies,
   resolveProductionRoutingEvidencePreparationDependencies,
+  resolveProductionRoutingEvidencePreparationDependenciesForTest,
 } from "../../src/server/evidence/production-routing-config";
 import { EvidenceCandidatePreparationError } from "../../src/server/evidence/errors";
 import {
@@ -28,10 +31,20 @@ import { resolveTrustedReaderConfig } from "../../src/server/evidence/trusted-re
 import { issueTestConfig } from "./helpers/test-config-bridge";
 import { harnessConfigInput } from "./helpers/test-reader-factory";
 
-// Exact immutable CryptoKeyVersion resource form accepted by the adapter.
-const VALID_CRYPTO_KEY_VERSION =
+// Exact immutable CryptoKeyVersion resource forms accepted by the adapter.
+const KEY_VERSION_A =
   "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/7";
-const VALID_CRYPTO_KEY_REFERENCE =
+const KEY_VERSION_1 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/11";
+const KEY_VERSION_2 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/12";
+const KEY_VERSION_3 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/13";
+const KEY_VERSION_4 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/14";
+const KEY_VERSION_5 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/15";
+const KEY_REFERENCE =
   "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence";
 const TEST_REGISTRY = "0x1111111111111111111111111111111111111111";
 const TEST_CIPHERTEXT = Buffer.from(
@@ -87,7 +100,7 @@ function withProductionRuntime(): void {
 class MockKmsClient implements GcpKmsClient {
   readonly encryptRequests: GcpKmsEncryptRequest[] = [];
 
-  async encrypt(request: Parameters<GcpKmsClient["encrypt"]>[0]) {
+  async encrypt(request: GcpKmsEncryptRequest) {
     this.encryptRequests.push(request);
     const response: GcpKmsEncryptResponse = {
       name: request.name,
@@ -138,14 +151,14 @@ test("malformed KMS key resources fail closed", () => {
   withProductionRuntime();
   const malformed = [
     // CryptoKey parent, not an immutable CryptoKeyVersion.
-    VALID_CRYPTO_KEY_REFERENCE,
+    KEY_REFERENCE,
     // Alias instead of a resource path.
     "aliases/ponte-evidence",
     // Wrong region.
-    VALID_CRYPTO_KEY_VERSION.replace("africa-south1", "us-east1"),
+    KEY_VERSION_A.replace("africa-south1", "us-east1"),
     // Malformed version segment.
-    VALID_CRYPTO_KEY_VERSION.replace("/7", "/0"),
-    VALID_CRYPTO_KEY_VERSION.replace("/7", "/abc"),
+    KEY_VERSION_A.replace("/7", "/0"),
+    KEY_VERSION_A.replace("/7", "/abc"),
     // Malformed resource shape.
     "not-a-kms-resource",
     "projects//locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/7",
@@ -166,7 +179,7 @@ test("malformed KMS key resources fail closed", () => {
 
 test("missing Registry deployment configuration fails closed even with valid KMS configuration", () => {
   withProductionRuntime();
-  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = VALID_CRYPTO_KEY_VERSION;
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_A;
   try {
     // The production configuration source takes no input and reports
     // CONFIG_MISSING until a reviewed deployment manifest exists. No
@@ -189,47 +202,81 @@ test("missing Registry deployment configuration fails closed even with valid KMS
   }
 });
 
-test("production configuration selects the GCP provider through the service dependency-selection path", () => {
+test("production-facing functions are option-free", () => {
+  // The production resolver and the service selector accept no arguments:
+  // no caller-injected Registry configuration and no caller-injected KMS
+  // client factory can reach the production path.
+  assert.equal(
+    resolveProductionRoutingEvidencePreparationDependencies.length,
+    0,
+  );
+  assert.equal(resolveEvidencePreparationDependencies.length, 0);
+});
+
+test("the test-only seam rejects use outside the test environment", () => {
   withProductionRuntime();
-  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = VALID_CRYPTO_KEY_VERSION;
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_A;
+  try {
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: testScopedReaderConfig(),
+          clientFactory: () => new MockKmsClient(),
+        }),
+      (error: unknown) =>
+        error instanceof Error && error.message === PRODUCTION_RESOLVER_TEST_SEAM_ERROR,
+    );
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("a test-scoped Registry brand is never production deployment authority", () => {
+  // The operator-scope guard rejects a test-scoped brand outright; the
+  // production path applies it to whatever the server-controlled source
+  // returns.
+  assert.throws(
+    () => assertOperatorScopedReaderConfig(testScopedReaderConfig().config),
+    isProviderFailure,
+  );
+});
+
+test("production configuration selects the GCP provider through the test-only seam", () => {
+  withLocalGuards();
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_1;
   const client = new MockKmsClient();
   let factoryInvocations = 0;
   try {
     // Mocked test fixture: a test-scoped Registry configuration and an
     // injected mocked KMS client. This exercises the composition function
     // only — it is not a real Registry deployment or real KMS operation.
-    const dependencies = resolveEvidencePreparationDependencies({
-      readerConfig: testScopedReaderConfig(),
-      clientFactory: () => {
-        factoryInvocations += 1;
-        return client;
-      },
-    });
+    const dependencies =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest({
+        readerConfig: testScopedReaderConfig(),
+        clientFactory: () => {
+          factoryInvocations += 1;
+          return client;
+        },
+      });
     assert.equal(dependencies.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
     assert.ok(dependencies.provider instanceof GcpKmsDekProvider);
     assert.equal(dependencies.registryAddress, TEST_REGISTRY);
     assert.equal(factoryInvocations, 1);
-
-    const direct = resolveProductionRoutingEvidencePreparationDependencies({
-      readerConfig: testScopedReaderConfig(),
-      clientFactory: () => new MockKmsClient(),
-    });
-    assert.equal(direct.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
-    assert.equal(direct.registryAddress, TEST_REGISTRY);
   } finally {
     restoreEnvironment();
   }
 });
 
 test("the selected GCP provider executes the preparation contract with an injected mocked KMS client", async () => {
-  withProductionRuntime();
-  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = VALID_CRYPTO_KEY_VERSION;
+  withLocalGuards();
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_2;
   const client = new MockKmsClient();
   try {
-    const { provider } = resolveEvidencePreparationDependencies({
-      readerConfig: testScopedReaderConfig(),
-      clientFactory: () => client,
-    });
+    const { provider } =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest({
+        readerConfig: testScopedReaderConfig(),
+        clientFactory: () => client,
+      });
     const result = await provider.createAndWrapDek({
       canonicalContext: Buffer.alloc(96),
     });
@@ -238,7 +285,7 @@ test("the selected GCP provider executes the preparation contract with an inject
     // mock. The output is the deterministic mock fixture: mocked test-only
     // ciphertext, explicitly not real Cloud KMS ciphertext.
     assert.equal(client.encryptRequests.length, 1);
-    assert.equal(client.encryptRequests[0].name, VALID_CRYPTO_KEY_VERSION);
+    assert.equal(client.encryptRequests[0].name, KEY_VERSION_2);
     assert.equal(result.kmsProvider, KMS_PROVIDER.GCP_CLOUD_KMS);
     assert.equal(
       result.wrappedDekAlgorithm,
@@ -248,10 +295,153 @@ test("the selected GCP provider executes the preparation contract with an inject
       result.wrappedDekFormat,
       WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
     );
-    assert.equal(result.kmsKeyReference, VALID_CRYPTO_KEY_REFERENCE);
-    assert.equal(result.kmsKeyVersion, VALID_CRYPTO_KEY_VERSION);
+    assert.equal(result.kmsKeyReference, KEY_REFERENCE);
+    assert.equal(result.kmsKeyVersion, KEY_VERSION_2);
     assert.deepEqual(result.wrappedDek, TEST_CIPHERTEXT);
     assert.equal(isLocalTestOnlyDekWrappingMetadata(result), false);
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("two valid dependency resolutions reuse one KMS client", async () => {
+  withLocalGuards();
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_3;
+  const client = new MockKmsClient();
+  let factoryInvocations = 0;
+  const options = {
+    readerConfig: testScopedReaderConfig(),
+    clientFactory: () => {
+      factoryInvocations += 1;
+      return client;
+    },
+  };
+  try {
+    const first =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest(options);
+    const second =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest(options);
+
+    // The client factory ran once: the second resolution reused the client
+    // created for the first instead of constructing a fresh one.
+    assert.equal(factoryInvocations, 1);
+
+    // Both providers share the same underlying mocked client: both
+    // preparation calls land on the same recorded request list.
+    await first.provider.createAndWrapDek({ canonicalContext: Buffer.alloc(96) });
+    await second.provider.createAndWrapDek({ canonicalContext: Buffer.alloc(96) });
+    assert.equal(client.encryptRequests.length, 2);
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("a changed KMS configuration replaces the cached client instead of reusing stale configuration", () => {
+  withLocalGuards();
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_4;
+  const clientA = new MockKmsClient();
+  let factoryA = 0;
+  const clientB = new MockKmsClient();
+  let factoryB = 0;
+  try {
+    const first =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest({
+        readerConfig: testScopedReaderConfig(),
+        clientFactory: () => {
+          factoryA += 1;
+          return clientA;
+        },
+      });
+    assert.equal(first.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
+
+    // Effective KMS configuration changes within the process: the second
+    // resolution must not silently reuse the client bound to key version 4.
+    process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_5;
+    const second =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest({
+        readerConfig: testScopedReaderConfig(),
+        clientFactory: () => {
+          factoryB += 1;
+          return clientB;
+        },
+      });
+    assert.equal(second.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
+    assert.equal(factoryA, 1);
+    assert.equal(factoryB, 1);
+
+    // Resolving the same (version 5) configuration again reuses the
+    // cached client: the third closure is never invoked.
+    let factoryThird = 0;
+    const third =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest({
+        readerConfig: testScopedReaderConfig(),
+        clientFactory: () => {
+          factoryThird += 1;
+          return clientB;
+        },
+      });
+    assert.equal(third.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
+    assert.equal(factoryB, 1);
+    assert.equal(factoryThird, 0);
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("missing or invalid KMS configuration does not construct a client", () => {
+  withLocalGuards();
+  const client = new MockKmsClient();
+  let factoryInvocations = 0;
+  try {
+    delete process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV];
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: testScopedReaderConfig(),
+          clientFactory: () => {
+            factoryInvocations += 1;
+            return client;
+          },
+        }),
+      isProviderFailure,
+    );
+    process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_REFERENCE;
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: testScopedReaderConfig(),
+          clientFactory: () => {
+            factoryInvocations += 1;
+            return client;
+          },
+        }),
+      isProviderFailure,
+    );
+    assert.equal(factoryInvocations, 0);
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("missing Registry configuration does not construct a client", () => {
+  withLocalGuards();
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_A;
+  const client = new MockKmsClient();
+  let factoryInvocations = 0;
+  try {
+    // Configuration validation completes before any client construction.
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: resolveTrustedReaderConfig(),
+          clientFactory: () => {
+            factoryInvocations += 1;
+            return client;
+          },
+        }),
+      isProviderFailure,
+    );
+    assert.equal(factoryInvocations, 0);
   } finally {
     restoreEnvironment();
   }
@@ -262,18 +452,12 @@ test("local synthetic provider behavior remains unchanged and KMS settings are i
   // A valid KMS environment setting exists, but development/test execution
   // must not instantiate ADC or contact Google Cloud: the selector resolves
   // the guarded local provider and never reaches the production resolver.
-  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = VALID_CRYPTO_KEY_VERSION;
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_A;
   const client = new MockKmsClient();
   let factoryInvocations = 0;
   try {
     assert.equal(isLocalEvidenceRuntime(), true);
-    const dependencies = resolveEvidencePreparationDependencies({
-      readerConfig: testScopedReaderConfig(),
-      clientFactory: () => {
-        factoryInvocations += 1;
-        return client;
-      },
-    });
+    const dependencies = resolveEvidencePreparationDependencies();
     assert.equal(dependencies.provider.provider, KMS_PROVIDER.LOCAL_TEST_ONLY);
     assert.equal(dependencies.registryAddress, TEST_REGISTRY);
     assert.equal(factoryInvocations, 0);
@@ -322,7 +506,7 @@ test("production never falls back to the synthetic provider", () => {
     PONTE_LOCAL_EVIDENCE_TEST_PROVIDER: "1",
     PONTE_LOCAL_EVIDENCE_TEST_REGISTRY_ADDRESS: TEST_REGISTRY,
   });
-  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = VALID_CRYPTO_KEY_VERSION;
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_A;
   try {
     assert.equal(isLocalEvidenceRuntime(), false);
     assert.throws(
@@ -337,7 +521,10 @@ test("production never falls back to the synthetic provider", () => {
 test("no KMS client or ADC lookup occurs at module-import time", () => {
   const here = fileURLToPath(new URL(".", import.meta.url));
   const repoRoot = path.resolve(here, "../..");
-  const preload = path.resolve(here, "helpers/count-kms-client-constructions.mjs");
+  const preload = path.resolve(
+    here,
+    "helpers/count-kms-client-constructions.mjs",
+  );
   const target = path.resolve(
     repoRoot,
     "src/server/evidence/production-routing-config.ts",
@@ -363,7 +550,7 @@ test("no KMS client or ADC lookup occurs at module-import time", () => {
       env: {
         ...process.env,
         NODE_ENV: "production",
-        [PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV]: VALID_CRYPTO_KEY_VERSION,
+        [PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV]: KEY_VERSION_A,
       },
     },
   );
