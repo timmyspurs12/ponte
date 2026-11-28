@@ -194,7 +194,10 @@ different version is rejected, not silently re-decrypted. A single
 current-version provider therefore does **not** support multi-version
 historical decryption. Future rotation and DEK-rewrapping work must include a
 trusted resolver for previously approved key versions; until that work
-exists, rotation is not available and must not be claimed.
+exists, rotation is not available and must not be claimed. The server-controlled
+trust boundary for approved historical versions is established in
+[`PHASE2D2_2_KMS_KEY_LIFECYCLE.md`](PHASE2D2_2_KMS_KEY_LIFECYCLE.md)
+(Phase 2D.2.2, PR A); it enables no historical decryption or rewrapping yet.
 
 ## Composition status
 
