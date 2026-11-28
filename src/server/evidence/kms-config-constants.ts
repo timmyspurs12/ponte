@@ -2,8 +2,9 @@
 //
 // This module exists so that configuration-policy modules (such as the
 // approved KMS key-version configuration) do not depend on the production
-// composition root that will eventually consume them. It deliberately
-// contains no imports, no provider logic, and no cloud access.
+// composition root that will eventually consume them. Its only import is
+// the `server-only` marker; it has no application-module dependencies,
+// no provider logic, and no cloud access.
 import "server-only";
 
 /**
