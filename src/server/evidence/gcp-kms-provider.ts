@@ -20,6 +20,7 @@ import {
   type DekUnwrappingInput,
   type DekWrappingContext,
 } from "./kms";
+import type { ApprovedKmsKeyVersions } from "./approved-kms-key-versions";
 
 /** Approved initial regional policy for explicitly version-pinned KMS keys. */
 export const APPROVED_GCP_KMS_LOCATION = "africa-south1";
@@ -94,8 +95,13 @@ export interface GcpKmsClient {
 }
 
 export interface GcpKmsDekProviderOptions {
-  /** Exact immutable CryptoKeyVersion resource; aliases and CryptoKey parents fail. */
-  readonly cryptoKeyVersion: string;
+  /**
+   * Immutable approved-version configuration: the stable parent `CryptoKey`,
+   * the single current write `CryptoKeyVersion`, and zero or more approved
+   * historical `CryptoKeyVersion` resources. Validated again at the provider
+   * boundary; aliases and `CryptoKey` parents fail.
+   */
+  readonly approvedVersions: ApprovedKmsKeyVersions;
   /** Explicitly injected official-client adapter; no implicit client creation. */
   readonly client: GcpKmsClient;
 }
@@ -260,10 +266,76 @@ function assertWrappingContext(value: DekWrappingContext): Buffer {
   return value.canonicalContext;
 }
 
+/**
+ * Validates an `ApprovedKmsKeyVersions` configuration at the provider
+ * boundary. The approved-version resolver already validates configuration
+ * from its source; this is defense-in-depth: the provider must never trust
+ * constructor input. It never contacts Cloud KMS and never determines
+ * whether a version is enabled at runtime.
+ */
+function assertApprovedVersions(config: unknown): ApprovedKmsKeyVersions {
+  if (!config || typeof config !== "object" || Array.isArray(config))
+    return providerFailure();
+  // Exact configuration field set; nothing else is accepted at this
+  // boundary either.
+  const actualKeys = Object.keys(config).sort();
+  const expectedKeys = [
+    "approvedHistoricalVersions",
+    "cryptoKeyReference",
+    "currentWriteVersion",
+  ].sort();
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    return providerFailure();
+  }
+  const {
+    cryptoKeyReference,
+    currentWriteVersion,
+    approvedHistoricalVersions,
+  } = config as Record<string, unknown>;
+
+  const parent = parseGcpCryptoKey(cryptoKeyReference);
+  const writeVersion = parseGcpCryptoKeyVersion(currentWriteVersion);
+  if (writeVersion.cryptoKeyReference !== parent.cryptoKeyReference)
+    return providerFailure();
+
+  if (!Array.isArray(approvedHistoricalVersions)) return providerFailure();
+  const historical: string[] = [];
+  for (const entry of approvedHistoricalVersions) {
+    const parsed = parseGcpCryptoKeyVersion(entry);
+    if (parsed.cryptoKeyReference !== parent.cryptoKeyReference)
+      return providerFailure();
+    if (parsed.cryptoKeyVersion === writeVersion.cryptoKeyVersion)
+      return providerFailure();
+    if (historical.includes(parsed.cryptoKeyVersion)) return providerFailure();
+    historical.push(parsed.cryptoKeyVersion);
+  }
+
+  return Object.freeze({
+    cryptoKeyReference: parent.cryptoKeyReference,
+    currentWriteVersion: writeVersion.cryptoKeyVersion,
+    approvedHistoricalVersions: Object.freeze(historical),
+  });
+}
+
+/**
+ * Validates one persisted unwrapping input against the immutable approved
+ * configuration. The stored provider, algorithm and format must match the
+ * supported GCP combination; the stored `kms_key_reference` must equal the
+ * configured parent `CryptoKey` exactly; the stored `kms_key_version` must
+ * parse as an exact immutable `CryptoKeyVersion`, derive to that same
+ * parent, and belong to the effective approved set
+ * (`currentWriteVersion ∪ approvedHistoricalVersions`). Malformed,
+ * unknown, unapproved, or cross-parent metadata fails closed before any
+ * Cloud KMS request. Stored `kms_key_version` is trusted application
+ * provenance; approved-set membership is the application authorization
+ * policy — the Decrypt response does not identify the version used.
+ */
 function assertGcpUnwrappingInput(
   input: DekUnwrappingInput,
-  expectedCryptoKeyReference: string,
-  expectedCryptoKeyVersion: string,
+  approvedVersions: ApprovedKmsKeyVersions,
 ): Readonly<{ wrappedDek: Buffer; canonicalContext: Buffer }> {
   if (!input || typeof input !== "object") return providerFailure();
   if (
@@ -282,11 +354,17 @@ function assertGcpUnwrappingInput(
   if (
     storedCryptoKey.cryptoKeyReference !==
       storedCryptoKeyVersion.cryptoKeyReference ||
-    input.kmsKeyReference !== expectedCryptoKeyReference ||
-    input.kmsKeyVersion !== expectedCryptoKeyVersion
+    input.kmsKeyReference !== approvedVersions.cryptoKeyReference ||
+    storedCryptoKeyVersion.cryptoKeyReference !==
+      approvedVersions.cryptoKeyReference
   ) {
     return providerFailure();
   }
+  const approvedSet = new Set<string>([
+    approvedVersions.currentWriteVersion,
+    ...approvedVersions.approvedHistoricalVersions,
+  ]);
+  if (!approvedSet.has(input.kmsKeyVersion)) return providerFailure();
   const canonicalContext = assertWrappingContext({
     canonicalContext: input.canonicalContext,
   });
@@ -350,35 +428,49 @@ export function createGoogleCloudKmsClient(): GcpKmsClient {
  * factory, so it remains an opt-in entry point rather than a default.
  */
 export function createGcpKmsDekProviderWithApplicationDefaultCredentials(
-  cryptoKeyVersion: string,
+  approvedVersions: ApprovedKmsKeyVersions,
 ): GcpKmsDekProvider {
   return new GcpKmsDekProvider({
-    cryptoKeyVersion,
+    approvedVersions,
     client: createGoogleCloudKmsClient(),
   });
 }
 
 /**
- * Genuine Google Cloud KMS Encrypt/Decrypt adapter, pinned to one immutable
- * version. It has no key-management methods, no fallback, no environment
- * lookup, and no network/credential side effect until an operation is called.
+ * Genuine Google Cloud KMS Encrypt/Decrypt adapter bound to one immutable
+ * approved-version configuration: the stable parent `CryptoKey`, the single
+ * current write `CryptoKeyVersion`, and zero or more approved historical
+ * `CryptoKeyVersion` resources.
+ *
+ * - Fresh DEK wrapping (`createAndWrapDek`) is pinned to the single
+ *   immutable `currentWriteVersion`: Encrypt targets exactly that version
+ *   resource and the response name must equal it.
+ * - DEK unwrapping (`unwrapDek`) accepts only stored versions in the
+ *   immutable approved configuration: the current write version plus the
+ *   approved historical versions. Historical versions are decrypt-only and
+ *   are never used for fresh wrapping.
+ *
+ * It has no key-management methods, no fallback, no environment lookup, and
+ * no network/credential side effect until an operation is called.
  */
 export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
   readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;
-  readonly cryptoKeyVersion: string;
-  readonly cryptoKeyReference: string;
+  readonly approvedVersions: Readonly<ApprovedKmsKeyVersions>;
+  private readonly currentWriteVersion: string;
+  private readonly cryptoKeyReference: string;
   private readonly client: GcpKmsClient;
 
   constructor(options: GcpKmsDekProviderOptions) {
-    const parsed = parseGcpCryptoKeyVersion(options?.cryptoKeyVersion);
+    const approvedVersions = assertApprovedVersions(options?.approvedVersions);
     if (
       !options?.client ||
       typeof options.client.encrypt !== "function" ||
       typeof options.client.decrypt !== "function"
     )
       providerFailure();
-    this.cryptoKeyVersion = parsed.cryptoKeyVersion;
-    this.cryptoKeyReference = parsed.cryptoKeyReference;
+    this.approvedVersions = approvedVersions;
+    this.currentWriteVersion = approvedVersions.currentWriteVersion;
+    this.cryptoKeyReference = approvedVersions.cryptoKeyReference;
     this.client = options.client;
   }
 
@@ -394,7 +486,7 @@ export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
         return providerFailure();
 
       const request: GcpKmsEncryptRequest = Object.freeze({
-        name: this.cryptoKeyVersion,
+        name: this.currentWriteVersion,
         plaintext: plaintextDek,
         additionalAuthenticatedData: canonicalContext,
         plaintextCrc32c: Object.freeze({ value: crc32c(plaintextDek) }),
@@ -407,7 +499,7 @@ export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
       const ciphertextChecksum = responseCrc32c(response?.ciphertextCrc32c);
       if (
         !ciphertext ||
-        response?.name !== this.cryptoKeyVersion ||
+        response?.name !== this.currentWriteVersion ||
         response.verifiedPlaintextCrc32c !== true ||
         response.verifiedAdditionalAuthenticatedDataCrc32c !== true ||
         ciphertextChecksum === undefined ||
@@ -422,7 +514,7 @@ export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
         wrappedDek: ciphertext,
         kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
         kmsKeyReference: this.cryptoKeyReference,
-        kmsKeyVersion: this.cryptoKeyVersion,
+        kmsKeyVersion: this.currentWriteVersion,
         wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
         wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
       };
@@ -444,8 +536,7 @@ export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
     try {
       const { wrappedDek, canonicalContext } = assertGcpUnwrappingInput(
         input,
-        this.cryptoKeyReference,
-        this.cryptoKeyVersion,
+        this.approvedVersions,
       );
       const request: GcpKmsDecryptRequest = Object.freeze({
         // Google KMS Decrypt intentionally takes the CryptoKey parent. KMS
