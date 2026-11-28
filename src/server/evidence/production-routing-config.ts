@@ -61,13 +61,17 @@
 // configuration is treated as **immutable** once initialized:
 //
 // - The first valid production resolution initializes the client and
-//   records the configured key version.
-// - Later resolutions with the same key version reuse that client.
-// - If the configured key version changes after initialization, resolution
-//   fails closed with the existing `PROVIDER_FAILURE` boundary and the
-//   change requires a process restart. The resolver never closes or
-//   replaces the active client, because earlier requests may still hold
-//   providers backed by it.
+//   records the complete immutable configuration unit: the parent
+//   `CryptoKey`, the current write version, and the approved
+//   historical-version set.
+// - Later resolutions whose configuration unit is identical reuse that
+//   client.
+// - If any part of the configuration unit changes after initialization —
+//   the parent, the current write version, or the approved historical-version
+//   set — resolution fails closed with the existing `PROVIDER_FAILURE`
+//   boundary and the change requires a process restart. The resolver never
+//   closes or replaces the active client, because earlier requests may still
+//   hold providers backed by it.
 // - A failed configuration change never corrupts the existing cache: the
 //   cache is only written once, atomically, on successful initialization.
 //
@@ -184,14 +188,16 @@ function isSameApprovedVersions(
 
 /**
  * Process-scoped lazy client cache. The configuration is immutable once
- * initialized: the first valid production resolution records the configured
- * key version and the initialized client. A later resolution whose
- * configured key version differs fails closed — the active client is never
- * closed or replaced from the request-resolution path, because earlier
- * requests may still hold providers backed by it. The cache is written only
- * once, atomically, on successful initialization; a failed attempt leaves
- * no partially replaced entry. A process restart resets the cache and
- * allows the new immutable deployment configuration to initialize normally.
+ * initialized: the first valid production resolution records the complete
+ * configuration unit — the parent `CryptoKey`, the current write version,
+ * and the approved historical-version set — along with the initialized
+ * client. A later resolution whose configuration unit differs in any part
+ * fails closed — the active client is never closed or replaced from the
+ * request-resolution path, because earlier requests may still hold
+ * providers backed by it. The cache is written only once, atomically, on
+ * successful initialization; a failed attempt leaves no partially replaced
+ * entry. A process restart resets the cache and allows the new immutable
+ * deployment configuration to initialize normally.
  */
 let kmsClientCache: KmsClientCacheEntry | undefined;
 

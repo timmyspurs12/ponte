@@ -437,9 +437,21 @@ export function createGcpKmsDekProviderWithApplicationDefaultCredentials(
 }
 
 /**
- * Genuine Google Cloud KMS Encrypt/Decrypt adapter, pinned to one immutable
- * version. It has no key-management methods, no fallback, no environment
- * lookup, and no network/credential side effect until an operation is called.
+ * Genuine Google Cloud KMS Encrypt/Decrypt adapter bound to one immutable
+ * approved-version configuration: the stable parent `CryptoKey`, the single
+ * current write `CryptoKeyVersion`, and zero or more approved historical
+ * `CryptoKeyVersion` resources.
+ *
+ * - Fresh DEK wrapping (`createAndWrapDek`) is pinned to the single
+ *   immutable `currentWriteVersion`: Encrypt targets exactly that version
+ *   resource and the response name must equal it.
+ * - DEK unwrapping (`unwrapDek`) accepts only stored versions in the
+ *   immutable approved configuration: the current write version plus the
+ *   approved historical versions. Historical versions are decrypt-only and
+ *   are never used for fresh wrapping.
+ *
+ * It has no key-management methods, no fallback, no environment lookup, and
+ * no network/credential side effect until an operation is called.
  */
 export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
   readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;

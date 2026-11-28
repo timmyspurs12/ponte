@@ -133,11 +133,36 @@ Cloud KMS `Decrypt` is invoked against the parent `CryptoKey`; the server
 selects the version identified by the ciphertext. The `DecryptResponse`
 schema carries no version-identifying field (only `plaintext`,
 `plaintextCrc32c`, `usedPrimary`, and `protectionLevel`). Therefore the
-`kms_key_version` stored in `route_decision_evidence` is **trusted
-application provenance, not independently verified by the Decrypt
-response**. The approved-version contract is a policy control on top of
-that provenance; the wrapping context AAD and CRC32C checks remain the
-cryptographic integrity guarantees.
+`kms_key_version` stored in `route_decision_evidence` is **provenance
+recorded by the application during successful wrapping** — it is not a
+version independently identified by the Cloud KMS `Decrypt` response, and
+the `Decrypt` response alone neither confirms nor attests the stored
+version.
+
+This distinction matters because the stored version label is **not
+cryptographically bound** by the persisted evidence: the canonical AAD v1
+and the wrapping context authenticate the wrapped DEK ciphertext and the
+wrapping context, but they do **not** cryptographically bind the stored
+KMS version field. Approved-set membership is therefore an **application
+authorization policy**, not a cryptographic proof of the version used.
+It relies on:
+
+- trusted record insertion: the application writes the `kms_key_version`
+  it actually used when wrapping, and that write is the only legitimate
+  source of the label;
+- the database's evidence immutability and access controls, which protect
+  the persisted row from modification after insertion.
+
+A sufficiently privileged database operator capable of modifying evidence
+metadata or bypassing the immutability controls could alter the stored
+version label without changing the wrapped ciphertext. Because the
+ciphertext is unchanged, the `Decrypt` response would still succeed and
+would not detect that the stored version label was altered. The
+cryptographic guarantees provided by KMS and the wrapping-context AAD
+(plaintext confidentiality, ciphertext and plaintext CRC32C integrity,
+AAD binding) remain intact and are unaffected by this label; the stored
+version label itself is an application trust assumption, not a
+cryptographic attestation.
 
 ## What remains blocked (preserved limitations)
 
