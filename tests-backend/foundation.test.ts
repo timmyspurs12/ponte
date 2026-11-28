@@ -637,10 +637,11 @@ test("database constraints, real PostgreSQL UTF8 and rollback protect financial 
     "SELECT version(),current_setting('server_encoding') AS encoding,current_setting('server_version_num') AS version_num",
   );
   // Phase 2D.1.1: the suite runs on the PostgreSQL 16 + 18 CI matrix, so the
-  // assertion checks the declared minimum (16+) instead of the CI version.
-  assert.match(version.rows[0].version, /^PostgreSQL (16|17|18|19)\./);
+  // version check expresses the declared minimum (16+) numerically, with no
+  // artificial upper bound on the server version.
+  const serverVersionNum = Number(version.rows[0].version_num);
   assert.ok(
-    Number(version.rows[0].version_num) >= 160000,
+    Number.isInteger(serverVersionNum) && serverVersionNum >= 160000,
     `expected PostgreSQL 16+ (found ${version.rows[0].version})`,
   );
   assert.equal(version.rows[0].encoding, "UTF8");

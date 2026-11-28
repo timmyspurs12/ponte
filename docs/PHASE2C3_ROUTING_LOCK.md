@@ -140,10 +140,11 @@ Workflow run evidence: [run #88](https://github.com/timmyspurs12/ponte/actions/r
 
 One incidental assertion was adjusted for the matrix: the foundation
 test previously matched `/PostgreSQL 18/` against `version()`, hard-coding
-the CI version. It now asserts the declared minimum — the version string
-starts with PostgreSQL 16–19 and `server_version_num >= 160000` — so the
-same test passes on both legs. All other tests in the suite are
-unchanged and run identically on 16 and 18.
+the CI version. It now asserts the declared minimum numerically: it parses
+`server_version_num` once with `Number(...)` and requires
+`Number.isInteger(serverVersionNum) && serverVersionNum >= 160000`, with no
+artificial upper bound on the server version. All other tests in the suite
+are unchanged and run identically on 16 and 18.
 
 ## Verification
 
