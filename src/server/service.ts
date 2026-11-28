@@ -20,7 +20,7 @@ import {
   type RoutingPreparationDependencies,
 } from "./evidence/routing-orchestration";
 import { mapEvidenceError } from "./evidence/error-boundary";
-import { resolveLocalRoutingEvidencePreparationDependencies } from "./evidence/local-routing-config";
+import { resolveEvidencePreparationDependencies } from "./evidence/production-routing-config";
 import { invoiceEvidenceStatus } from "./evidence/status";
 const uuid = z.uuid();
 const input = z
@@ -100,7 +100,7 @@ interface ExecuteTestDependencies {
   authenticate?: (request: Request) => Promise<Context>;
 }
 
-/** Normal API entrypoint: Routing uses only the guarded local configuration. */
+/** Normal API entrypoint: Routing selects preparation dependencies through the fail-closed evidence composition point. */
 export async function execute(request: Request, parts: string[]) {
   return executeWithDependencies(request, parts);
 }
@@ -291,7 +291,7 @@ async function executeWithDependencies(
           selectedRouteId: routingCommand.data.route,
           resolvePreparationDependencies:
             dependencies?.resolveRoutingPreparationDependencies ??
-            resolveLocalRoutingEvidencePreparationDependencies,
+            resolveEvidencePreparationDependencies,
         },
         dependencies?.routingOrchestrationHooks,
       );

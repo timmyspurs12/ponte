@@ -1,7 +1,11 @@
-// This is the only application-level evidence dependency selection point. It
-// intentionally has no cloud SDK, credentials, production KMS, or plaintext
-// fallback. Its synthetic provider is available only for an explicitly opted-in
-// loopback database in local development or automated tests.
+// This resolves the guarded local synthetic provider only. The service-level
+// evidence dependency-selection point is resolveEvidencePreparationDependencies()
+// in production-routing-config.ts, which dispatches here for development/test
+// runtimes and to the fail-closed production resolver everywhere else. This
+// module intentionally has no cloud SDK, credentials, production KMS, or
+// plaintext fallback. Its synthetic provider is available only for an
+// explicitly opted-in loopback database in local development or automated
+// tests.
 import "server-only";
 
 import { randomBytes } from "node:crypto";

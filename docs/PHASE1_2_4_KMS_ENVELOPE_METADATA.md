@@ -168,5 +168,41 @@ No AWS SDK, dependency, KMS call, or AWS selection is introduced here. See
 - The final insertion cannot omit provider, algorithm, format, key reference,
   key version, wrapped DEK, nonce, tag, or other existing required envelope
   fields.
-- This phase does not call `DekProvider` from `src/server/service.ts` and does
-  not enable evidence generation in the normal application flow.
+
+## Production IAM permissions
+
+A production service account used by the composition root must hold exactly
+the KMS permissions the adapter actually performs. The adapter issues
+`Encrypt` (to wrap a fresh DEK) and `Decrypt` (to unwrap a DEK), so the
+required permission identifiers are:
+
+- `cloudkms.cryptoKeyVersions.useToEncrypt`
+- `cloudkms.cryptoKeyVersions.useToDecrypt`
+
+Do not grant `cloudkms.cryptoKeys.encryptTo`-style or broadly named
+`decrypt` permissions that do not exist in the Cloud KMS IAM reference; the
+identifiers above are the actual ones. The account must not hold key
+administration permissions (`cloudkms.cryptoKeys.*` management roles) — the
+adapter has no key-creation, rotation, listing, or deletion surface.
+
+## Version pinning and the unwrap boundary
+
+The adapter pins one exact immutable `CryptoKeyVersion` resource for wrapping.
+`unwrapDek()` requires the **stored** key version recorded in the persisted
+metadata to match the **configured** provider version: a row wrapped under a
+different version is rejected, not silently re-decrypted. A single
+current-version provider therefore does **not** support multi-version
+historical decryption. Future rotation and DEK-rewrapping work must include a
+trusted resolver for previously approved key versions; until that work
+exists, rotation is not available and must not be claimed.
+
+## Composition status
+
+Phase 2D.2.1 added the fail-closed production composition root
+(`src/server/evidence/production-routing-config.ts`) selected by the service.
+Production resolution requires both a valid pinned `CryptoKeyVersion` and a
+server-controlled Registry deployment configuration; until the reviewed
+deployment manifest exists, production resolution fails closed. This phase
+does not perform real KMS calls in CI and does not activate production
+evidence delivery — see
+[`PHASE2D2_1_PRODUCTION_KMS_COMPOSITION.md`](PHASE2D2_1_PRODUCTION_KMS_COMPOSITION.md).

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import type { Invoice } from "../src/lib/models";
 import { resolveLocalRoutingEvidencePreparationDependencies } from "../src/server/evidence/local-routing-config";
+import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "../src/server/evidence/production-routing-config";
 import { EvidenceCandidatePreparationError } from "../src/server/evidence/errors";
 import {
   isLocalTestOnlyDekWrappingMetadata,
@@ -383,5 +384,39 @@ test("local test-provider metadata is explicit and configuration fails closed ou
       process.env.DATABASE_URL = previousDatabaseUrl;
     }
     setNodeEnvironment(previousNodeEnv);
+  }
+});
+
+test("service default dependency selection keeps local synthetic evidence when KMS configuration exists", async () => {
+  // A valid production KMS configuration exists, but the test runtime must
+  // not instantiate ADC or contact Google Cloud: the service default
+  // dependency-selection point resolves the guarded local synthetic provider
+  // and the full Routing flow persists explicitly local-test-only evidence.
+  const previousKey = process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV];
+  try {
+    process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] =
+      "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/7";
+    const { invoice, quoteId } = await createFundedInvoiceWithQuote();
+    const key = randomUUID();
+    const result = (await call(
+      `/${invoice.id}/transitions`,
+      routingBody(quoteId),
+      key,
+    )) as Invoice;
+    assert.equal(result.status, "Routing");
+    const counts = await routingCounts(invoice.id, key);
+    assert.equal(counts.evidence, "1");
+    assert.equal(counts.outbox, "1");
+
+    const evidence = await pool.query<{ kms_provider: string }>(
+      "SELECT kms_provider FROM route_decision_evidence WHERE business_id=$1 AND invoice_id=$2",
+      [business, invoice.id],
+    );
+    assert.equal(evidence.rows[0].kms_provider, KMS_PROVIDER.LOCAL_TEST_ONLY);
+  } finally {
+    if (previousKey === undefined)
+      delete process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV];
+    else
+      process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = previousKey;
   }
 });
