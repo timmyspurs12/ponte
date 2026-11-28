@@ -8,7 +8,7 @@ import {
   validateApprovedKmsKeyVersions,
   type ApprovedKmsKeyVersions,
 } from "../../src/server/evidence/approved-kms-key-versions";
-import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "../../src/server/evidence/production-routing-config";
+import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "../../src/server/evidence/kms-config-constants";
 
 // Exact immutable GCP resource forms accepted by the adapter's parser.
 const PARENT =

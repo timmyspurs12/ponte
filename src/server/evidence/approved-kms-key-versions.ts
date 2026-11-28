@@ -64,7 +64,7 @@ import {
   parseGcpCryptoKeyVersion,
   type ParsedGcpCryptoKeyVersion,
 } from "./gcp-kms-provider";
-import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "./production-routing-config";
+import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "./kms-config-constants";
 
 /** Stable failure codes for the approved KMS key-version configuration. */
 export type ApprovedKmsKeyVersionsFailure =

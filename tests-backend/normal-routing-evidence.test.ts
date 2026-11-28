@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import type { Invoice } from "../src/lib/models";
 import { resolveLocalRoutingEvidencePreparationDependencies } from "../src/server/evidence/local-routing-config";
-import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "../src/server/evidence/production-routing-config";
+import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "../src/server/evidence/kms-config-constants";
 import { EvidenceCandidatePreparationError } from "../src/server/evidence/errors";
 import {
   isLocalTestOnlyDekWrappingMetadata,

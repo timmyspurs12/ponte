@@ -79,6 +79,7 @@ import {
 } from "./gcp-kms-provider";
 import { EvidenceCandidatePreparationError } from "./errors";
 import { resolveLocalRoutingEvidencePreparationDependencies } from "./local-routing-config";
+import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "./kms-config-constants";
 import type { RoutingPreparationDependencies } from "./routing-orchestration";
 import {
   isBrandedReaderConfig,
@@ -86,12 +87,6 @@ import {
   type OperatorTrustedReaderConfig,
   type TrustedReaderConfigResult,
 } from "./trusted-reader-config";
-
-/**
- * The exact immutable `CryptoKeyVersion` resource supplied by the
- * deployment. It is server-controlled configuration, never request data.
- */
-export const PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV = "PONTE_KMS_CRYPTO_KEY_VERSION";
 
 /** Stable message for the test-only seam's production rejection. */
 export const PRODUCTION_RESOLVER_TEST_SEAM_ERROR =
