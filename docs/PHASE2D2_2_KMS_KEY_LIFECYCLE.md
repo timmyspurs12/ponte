@@ -1,11 +1,12 @@
 # PONTE Phase 2D.2.2 — KMS key lifecycle: approved historical versions
 
-**Status:** approved historical-version recovery is implemented in the
-GCP KMS provider. This phase establishes a fail-closed, server-controlled
-configuration contract for the approved versions of the existing GCP
-symmetric Cloud KMS key, and the provider recovers DEKs wrapped by any
-version in the effective approved set. It does **not** implement DEK
-rewrapping, does **not** change the `DekProvider` write contract, and does
+**Status:** approved historical-version recovery and cryptographic DEK
+rewrapping are implemented in the GCP KMS provider. This phase establishes
+a fail-closed, server-controlled configuration contract for the approved
+versions of the existing GCP symmetric Cloud KMS key; the provider recovers
+DEKs wrapped by any version in the effective approved set and can rewrap an
+existing DEK under the current write version. It does **not** change the
+`DekProvider` write contract, does **not** mutate the database, and does
 **not** activate production KMS or production evidence delivery.
 
 ## What this phase adds
@@ -45,8 +46,10 @@ is a deployment prerequisite, not a code task.
   authorizes a stored version by **approved-set membership**: the stored
   `kms_key_version` must belong to the effective approved set
   `{ currentWriteVersion } ∪ approvedHistoricalVersions`. Historical
-  versions are **decrypt-only**: they are never used for fresh DEK
-  wrapping, and no rewrapping is performed.
+  versions are **decrypt-only**: they are accepted for recovery (including
+  by `DekRewrapper.rewrapDek()`), but they are never used for the Encrypt
+  step of fresh wrapping or rewrapping — that step always targets the
+  exact `currentWriteVersion`.
 - The current write version belongs to the approved set by construction:
   it is validated with the same exact-resource rules as every historical
   version, and the effective approved set is the union
@@ -127,6 +130,60 @@ never uses a historical version for `createAndWrapDek()`: fresh wrapping
 remains pinned to the exact `currentWriteVersion` resource, with the
 `EncryptResponse.name` equality, CRC32C, and size-budget checks intact.
 
+## DEK rewrapping (cryptographic primitive)
+
+`src/server/evidence/kms.ts` defines a separate `DekRewrapper` contract
+with `rewrapDek(input: DekUnwrappingInput): Promise<RewrappedDek>`, and
+`GcpKmsDekProvider` implements it alongside its existing `DekProvider` and
+`DekUnwrapper` contracts. The rewrapping capability is **not** part of the
+`DekProvider` interface.
+
+The operation is a cryptographic primitive only:
+
+1. **Validate and recover.** The existing `unwrapDek()` path is used, so
+   every approved-version membership, same-parent, provider, algorithm,
+   format, canonical-context, request-size and CRC32C validation remains
+   enforced before any KMS request. An approved historical version is
+   accepted for recovery.
+2. **Rewrap the same DEK.** The recovered 32-byte plaintext DEK itself is
+   used as the Encrypt plaintext — **no new DEK is generated**. Encrypt
+   targets only the exact immutable `currentWriteVersion`, never a
+   historical version, and the exact original canonical wrapping context is
+   reused as additional authenticated data. The existing request-size and
+   CRC32C checks are preserved.
+3. **Validate the new wrapped result.** A valid non-empty ciphertext,
+   `EncryptResponse.name` exactly equal to `currentWriteVersion`, verified
+   plaintext CRC32C, verified additional-authenticated-data CRC32C, and a
+   valid ciphertext CRC32C matching the returned bytes are all required.
+   Any failure maps to the existing fixed `PROVIDER_FAILURE` boundary; no
+   partial metadata or ciphertext is returned.
+4. **Clear the plaintext.** The recovered DEK is cleared best effort inside
+   `rewrapDek()` using `finally` — after successful encryption and on
+   every failure path. The caller never owns or sees the plaintext; it is
+   never logged, included in errors, or exposed in the result.
+
+The result metadata (`RewrappedDek`) accurately identifies the GCP
+provider, the same parent `CryptoKey`, the current write
+`CryptoKeyVersion`, and the existing supported wrapping algorithm and
+wrapped-DEK format. Only the new opaque wrapped DEK and its metadata are
+returned — no plaintext DEK, raw KMS response, SDK client, or
+key-management capability.
+
+**Same-DEK preservation and evidence identity.** The rewrapper operates
+only on the wrapped DEK. It does not modify or regenerate the evidence
+ciphertext, AES-GCM nonce, authentication tag, canonical private-evidence
+AAD, KMS wrapping context, payload hash, canonical AAD digest,
+wrapping-context digest, or evidence identity / public evidence ID. The
+original canonical wrapping context is supplied unchanged to both Decrypt
+and Encrypt. AAD v1 and the evidence envelope format are unchanged.
+
+**No database mutation.** This is a cryptographic-only operation: it
+performs no database update, no persisted rewrapping, no evidence-row
+mutation, and no rewrap audit table. **No production KMS activation or
+actual key rotation has occurred** — the reviewed KMS configuration source
+remains missing, so production resolution still fails closed with
+`CONFIG_MISSING` translated through the existing provider boundary.
+
 ## Stored `kms_key_version` is application provenance
 
 Cloud KMS `Decrypt` is invoked against the parent `CryptoKey`; the server
@@ -166,10 +223,10 @@ cryptographic attestation.
 
 ## What remains blocked (preserved limitations)
 
-- **No DEK rewrapping.** No `DekRewrapper` capability exists, and no
-  rewrap audit table or persisted rewrap operation is defined here.
-  Historical versions are decrypt-only; existing wrapped DEK values are
-  never rewritten.
+- **No persisted rewrapping.** `DekRewrapper.rewrapDek()` is a
+  cryptographic primitive only: it performs no database update, no
+  evidence-row mutation, and no rewrap audit table. Applying a rewrapped
+  DEK to existing evidence is a separate, future operation.
 - **No reviewed KMS deployment configuration and no provisioned
   production key.** The resolver fails closed until a reviewed
   configuration exists; no real KMS call is made in CI, and no cloud
