@@ -634,9 +634,16 @@ test("Route Handler returns stable envelopes, safe errors and correct status cod
 test("database constraints, real PostgreSQL UTF8 and rollback protect financial records", async () => {
   const { transaction } = await import("../src/server/repository");
   const version = await pool.query(
-    "SELECT version(),current_setting('server_encoding') AS encoding",
+    "SELECT version(),current_setting('server_encoding') AS encoding,current_setting('server_version_num') AS version_num",
   );
-  assert.match(version.rows[0].version, /PostgreSQL 18/);
+  // Phase 2D.1.1: the suite runs on the PostgreSQL 16 + 18 CI matrix, so the
+  // version check expresses the declared minimum (16+) numerically, with no
+  // artificial upper bound on the server version.
+  const serverVersionNum = Number(version.rows[0].version_num);
+  assert.ok(
+    Number.isInteger(serverVersionNum) && serverVersionNum >= 160000,
+    `expected PostgreSQL 16+ (found ${version.rows[0].version})`,
+  );
   assert.equal(version.rows[0].encoding, "UTF8");
   const i = await create();
   await assert.rejects(

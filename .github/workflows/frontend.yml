@@ -13,9 +13,19 @@ jobs:
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      # Phase 2D.1.1: the declared minimum is PostgreSQL 16+, so the full
+      # suite must run on both the minimum (16) and the current CI version
+      # (18). fail-fast: false keeps a failure on one version from cancelling
+      # the other, so both legs always report.
+      fail-fast: false
+      matrix:
+        postgres-version: ['16', '18']
     services:
       postgres:
-        image: postgres:18
+        # Separate service container per matrix leg, each on its own
+        # disposable PostgreSQL server and database.
+        image: postgres:${{ matrix.postgres-version }}
         env:
           POSTGRES_USER: ponte
           POSTGRES_PASSWORD: ci-only-password
@@ -66,6 +76,23 @@ jobs:
           node-version: '24.22.1'
           cache: npm
       - run: npm ci
+      # Phase 2D.1.1: record the exact server version this leg runs against, so
+      # the matrix evidence is unambiguous in the run logs.
+      - name: Print PostgreSQL server version
+        run: |
+          node -e "
+            const { Pool } = require('pg');
+            (async () => {
+              const client = new Pool({ connectionString: process.env.PONTE_BOOTSTRAP_DATABASE_URL, max: 1 });
+              const result = await client.query(
+                'SELECT version() AS version, current_setting(\'server_version_num\') AS server_version_num'
+              );
+              const row = result.rows[0];
+              console.log('PostgreSQL server_version: ' + row.version);
+              console.log('PostgreSQL server_version_num: ' + row.server_version_num);
+              await client.end();
+            })().catch((error) => { console.error(error); process.exit(1); });
+          "
       # Phase 2C.2B two-phase provisioning. Phase 1 is the pre-migration
       # bootstrap: roles, memberships, ACL/CONNECT, owner schema privileges,
       # test-only CREATE, default-function hardening. None of it references
@@ -95,9 +122,76 @@ jobs:
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
-          name: application-test-results
+          name: application-test-results-postgres-${{ matrix.postgres-version }}
           path: |
             playwright-report/
             test-results/
           retention-days: 14
           if-no-files-found: ignore
+
+  # Phase 2D.1.1: PostgreSQL 15 is intentionally unsupported. This isolated job
+  # proves the Phase 1 version guard rejects it with the explicit
+  # `PostgreSQL 16+ required` error, before any PostgreSQL 16-only SQL
+  # (`GRANT ... WITH INHERIT/SET`) is parsed or executed: the guard is the
+  # first statement of the Phase 1 plan and the plan is executed statement by
+  # statement (src/server/database-provisioning.ts). It runs ONLY the Phase 1
+  # provisioning command — never the migration, backend or browser suites.
+  pg15-version-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ponte
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: ponte_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ponte -d ponte_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      PONTE_BOOTSTRAP_DATABASE_URL: postgres://ponte:ci-only-password@localhost:5432/ponte_test
+    steps:
+      # actions/checkout v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      # actions/setup-node v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - run: npm ci
+      - name: Print PostgreSQL server version
+        run: |
+          node -e "
+            const { Pool } = require('pg');
+            (async () => {
+              const client = new Pool({ connectionString: process.env.PONTE_BOOTSTRAP_DATABASE_URL, max: 1 });
+              const result = await client.query(
+                'SELECT version() AS version, current_setting(\'server_version_num\') AS server_version_num'
+              );
+              const row = result.rows[0];
+              console.log('PostgreSQL server_version: ' + row.version);
+              console.log('PostgreSQL server_version_num: ' + row.server_version_num);
+              await client.end();
+            })().catch((error) => { console.error(error); process.exit(1); });
+          "
+      - name: Assert Phase 1 provisioning rejects PostgreSQL 15
+        run: |
+          set +e
+          DATABASE_URL=$PONTE_BOOTSTRAP_DATABASE_URL npm run db:provision -- --phase 1 --test > /tmp/pg15-provision.log 2>&1
+          code=$?
+          set -e
+          echo "Phase 1 provisioning exit code on PostgreSQL 15: ${code}"
+          cat /tmp/pg15-provision.log
+          if [ "${code}" -eq 0 ]; then
+            echo "::error::Phase 1 provisioning unexpectedly succeeded on PostgreSQL 15; the version guard did not fire"
+            exit 1
+          fi
+          if ! grep -q "PostgreSQL 16+ required" /tmp/pg15-provision.log; then
+            echo "::error::Expected the explicit 'PostgreSQL 16+ required' error was not found in the provisioning output"
+            exit 1
+          fi
+          echo "Guard correctly rejected PostgreSQL 15 with the explicit 'PostgreSQL 16+ required' error."
