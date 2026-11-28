@@ -100,7 +100,7 @@ export interface GcpKmsDekProviderOptions {
   readonly client: GcpKmsClient;
 }
 
-interface ParsedGcpCryptoKey {
+export interface ParsedGcpCryptoKey {
   readonly cryptoKeyReference: string;
   readonly project: string;
   readonly location: typeof APPROVED_GCP_KMS_LOCATION;
@@ -159,7 +159,13 @@ export function crc32c(value: Uint8Array): number {
   return (checksum ^ 0xffffffff) >>> 0;
 }
 
-function parseGcpCryptoKey(resourceName: unknown): ParsedGcpCryptoKey {
+/**
+ * Validates the exact immutable `CryptoKey` parent resource form, including
+ * the approved location restriction. Exported for the approved KMS
+ * key-version configuration validator; it never contacts Cloud KMS and
+ * determines nothing about a version's runtime state.
+ */
+export function parseGcpCryptoKey(resourceName: unknown): ParsedGcpCryptoKey {
   if (typeof resourceName !== "string") return providerFailure();
   const match = GCP_CRYPTO_KEY_RESOURCE.exec(resourceName);
   if (!match?.groups || match.groups.location !== APPROVED_GCP_KMS_LOCATION)

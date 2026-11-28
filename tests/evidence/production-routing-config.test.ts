@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
+import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "../../src/server/evidence/kms-config-constants";
 import {
-  PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV,
   PRODUCTION_RESOLVER_TEST_SEAM_ERROR,
   assertOperatorScopedReaderConfig,
   isLocalEvidenceRuntime,
