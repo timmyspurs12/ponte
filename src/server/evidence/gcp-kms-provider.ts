@@ -16,9 +16,11 @@ import {
   WRAPPED_DEK_FORMAT,
   type CreatedAndWrappedDek,
   type DekProvider,
+  type DekRewrapper,
   type DekUnwrapper,
   type DekUnwrappingInput,
   type DekWrappingContext,
+  type RewrappedDek,
 } from "./kms";
 import type { ApprovedKmsKeyVersions } from "./approved-kms-key-versions";
 
@@ -453,7 +455,7 @@ export function createGcpKmsDekProviderWithApplicationDefaultCredentials(
  * It has no key-management methods, no fallback, no environment lookup, and
  * no network/credential side effect until an operation is called.
  */
-export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
+export class GcpKmsDekProvider implements DekProvider, DekUnwrapper, DekRewrapper {
   readonly provider = KMS_PROVIDER.GCP_CLOUD_KMS;
   readonly approvedVersions: Readonly<ApprovedKmsKeyVersions>;
   private readonly currentWriteVersion: string;
@@ -574,6 +576,107 @@ export class GcpKmsDekProvider implements DekProvider, DekUnwrapper {
       // received, return a caller-owned Buffer copy and clear the source.
       if (rawRecoveredDek && rawRecoveredDek !== recoveredDek)
         clearBytesBestEffort(rawRecoveredDek);
+    }
+  }
+
+  /**
+   * Cryptographically rewraps one existing DEK under the current write
+   * version. The existing DEK is recovered through the approved-version
+   * unwrap path (approved-set membership, same-parent, provider, algorithm,
+   * format, canonical context, request-size and CRC32C validations all
+   * enforced before any KMS request), then the exact same 32-byte DEK is
+   * wrapped by Encrypt against the immutable `currentWriteVersion` using
+   * the exact original canonical wrapping context as additional
+   * authenticated data. The recovered plaintext is cleared best effort
+   * inside this method on success and every failure path; the caller only
+   * ever receives the new opaque wrapped DEK and its metadata. No database
+   * mutation is performed.
+   */
+  async rewrapDek(input: DekUnwrappingInput): Promise<RewrappedDek> {
+    let recoveredDek: Buffer | undefined;
+    try {
+      // Snapshot the caller-owned mutable buffers synchronously, before
+      // the first await: validate the input shape and create private
+      // Buffer copies of the wrapped DEK and the canonical wrapping
+      // context. The caller could otherwise mutate those buffers while
+      // Decrypt is in flight, changing the bytes this operation uses.
+      if (!input || typeof input !== "object") return providerFailure();
+      const wrappedDek = Buffer.isBuffer(input.wrappedDek)
+        ? Buffer.from(input.wrappedDek)
+        : undefined;
+      const canonicalContext = Buffer.isBuffer(input.canonicalContext)
+        ? Buffer.from(input.canonicalContext)
+        : undefined;
+      if (!wrappedDek || !canonicalContext) return providerFailure();
+
+      // A. Validate and recover through the existing unwrapDek() path
+      // using a stable input built from the private copies, so every
+      // approved-version membership, same-parent, provider, algorithm,
+      // format, canonical-context, request-size and CRC32C validation
+      // remains enforced. An approved historical version is accepted for
+      // recovery.
+      const stableInput: DekUnwrappingInput = {
+        ...input,
+        wrappedDek,
+        canonicalContext,
+      };
+      recoveredDek = await this.unwrapDek(stableInput);
+
+      // B. Rewrap the exact same 32-byte DEK under the current write
+      // version. No new DEK is generated and the exact original
+      // canonical wrapping context (the private copy, never the
+      // caller-owned buffer after the first await) is reused as
+      // additional authenticated data.
+      const canonicalContextForEncrypt = assertWrappingContext({
+        canonicalContext,
+      });
+      const request: GcpKmsEncryptRequest = Object.freeze({
+        name: this.currentWriteVersion,
+        plaintext: recoveredDek,
+        additionalAuthenticatedData: canonicalContextForEncrypt,
+        plaintextCrc32c: Object.freeze({ value: crc32c(recoveredDek) }),
+        additionalAuthenticatedDataCrc32c: Object.freeze({
+          value: crc32c(canonicalContextForEncrypt),
+        }),
+      });
+      const [response] = await this.client.encrypt(request);
+
+      // C. Validate the new wrapped result. Any failure maps to the fixed
+      // provider boundary; no partial metadata or ciphertext is returned.
+      const ciphertext = responseCiphertext(response?.ciphertext);
+      const ciphertextChecksum = responseCrc32c(response?.ciphertextCrc32c);
+      if (
+        !ciphertext ||
+        response?.name !== this.currentWriteVersion ||
+        response.verifiedPlaintextCrc32c !== true ||
+        response.verifiedAdditionalAuthenticatedDataCrc32c !== true ||
+        ciphertextChecksum === undefined ||
+        ciphertextChecksum !== crc32c(ciphertext)
+      ) {
+        return providerFailure();
+      }
+
+      return {
+        wrappedDek: ciphertext,
+        kmsProvider: KMS_PROVIDER.GCP_CLOUD_KMS,
+        kmsKeyReference: this.cryptoKeyReference,
+        kmsKeyVersion: this.currentWriteVersion,
+        wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
+        wrappedDekFormat: WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+      };
+    } catch {
+      return providerFailure();
+    } finally {
+      // D. Clear the recovered plaintext DEK best effort on success and
+      // every failure path; the caller never owns or sees it.
+      if (recoveredDek) {
+        try {
+          clearDekBestEffort(recoveredDek);
+        } catch {
+          // Best effort only. Cleanup must not replace the fixed provider
+          // error or leak the plaintext in an error.
+        }
+      }
     }
   }
 }

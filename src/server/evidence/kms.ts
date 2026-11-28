@@ -105,6 +105,28 @@ export interface DekUnwrapper {
   unwrapDek(input: DekUnwrappingInput): Promise<Buffer>;
 }
 
+/**
+ * Result of one provider operation that rewraps an existing DEK under the
+ * provider's current write version. The opaque wrapped bytes are the only
+ * secret-bearing content; no plaintext DEK is returned.
+ */
+export interface RewrappedDek extends DekWrappingMetadata {
+  readonly wrappedDek: Buffer;
+}
+
+/**
+ * Narrow cryptographic rewrapping boundary. A provider implementation
+ * recovers an existing DEK through the approved-version unwrap path,
+ * rewraps the exact same 32-byte DEK under its current write version using
+ * the original canonical wrapping context, validates the new wrapped result,
+ * and clears the recovered plaintext internally on success and every
+ * failure path. It performs no database mutation and returns no plaintext.
+ */
+export interface DekRewrapper {
+  readonly provider: KmsProviderIdentifier;
+  rewrapDek(input: DekUnwrappingInput): Promise<RewrappedDek>;
+}
+
 export class DekProviderContractError extends Error {
   constructor(message: string) {
     super(message);

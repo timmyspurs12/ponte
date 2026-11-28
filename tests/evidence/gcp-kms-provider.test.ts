@@ -22,7 +22,11 @@ import { EvidenceCandidatePreparationError } from "../../src/server/evidence/err
 import {
   isLocalTestOnlyDekWrappingMetadata,
   KMS_PROVIDER,
+  type DekProvider,
+  type DekRewrapper,
+  type DekUnwrapper,
   type DekUnwrappingInput,
+  type RewrappedDek,
   WRAPPED_DEK_ALGORITHM,
   WRAPPED_DEK_FORMAT,
 } from "../../src/server/evidence/kms";
@@ -705,4 +709,420 @@ test("a mocked recovered DEK can hand off to AES-256-GCM decryption and authenti
     // Successful unwrap callers own this buffer and must clear it after use.
     recoveredDek.fill(0);
   }
+});
+
+test("the provider implements the separate DekRewrapper contract without changing DekProvider or DekUnwrapper", () => {
+  const instance = provider(new MockKmsClient(() => successfulResponse()));
+  // The provider exposes the three separate capabilities.
+  assert.ok(instance instanceof GcpKmsDekProvider);
+  assert.equal(typeof (instance as unknown as DekProvider).createAndWrapDek, "function");
+  assert.equal(typeof (instance as unknown as DekUnwrapper).unwrapDek, "function");
+  assert.equal(typeof (instance as unknown as DekRewrapper).rewrapDek, "function");
+  // Type-level: DekProvider declares no rewrapping method. That absence is
+  // a compile-time contract (a runtime check cannot inspect an interface);
+  // the interface is unchanged in this PR and tsc enforces that callers
+  // holding a DekProvider cannot invoke rewrapDek.
+  const providerContract: DekProvider = instance;
+  assert.equal(providerContract.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
+});
+
+test("rewrapping recovers a DEK wrapped by the current write version and rewraps it under the same version", async () => {
+  const client = new MockKmsClient(
+    () => successfulResponse(),
+    () => successfulDecryptResponse(),
+  );
+  const result = await provider(client).rewrapDek(unwrapInput());
+
+  assert.equal(client.decryptRequests.length, 1);
+  assert.equal(client.decryptRequests[0].name, CRYPTO_KEY_REFERENCE);
+  assert.equal(client.requests.length, 1);
+  assert.equal(client.requests[0].name, CRYPTO_KEY_VERSION);
+  assert.deepEqual(result.wrappedDek, TEST_CIPHERTEXT);
+  assert.equal(result.kmsProvider, KMS_PROVIDER.GCP_CLOUD_KMS);
+  assert.equal(result.kmsKeyReference, CRYPTO_KEY_REFERENCE);
+  assert.equal(result.kmsKeyVersion, CRYPTO_KEY_VERSION);
+  assert.equal(
+    result.wrappedDekAlgorithm,
+    WRAPPED_DEK_ALGORITHM.GOOGLE_SYMMETRIC_ENCRYPTION,
+  );
+  assert.equal(
+    result.wrappedDekFormat,
+    WRAPPED_DEK_FORMAT.GCP_KMS_ENCRYPT_CIPHERTEXT_V1,
+  );
+  assert.equal(
+    (result as unknown as Record<string, unknown>).plaintextDek,
+    undefined,
+  );
+  result.wrappedDek.fill(0);
+});
+
+test("rewrapping recovers an approved historical version and rewraps it under the current write version", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1],
+  });
+  for (const storedVersion of [HISTORICAL_VERSION_1, CRYPTO_KEY_VERSION]) {
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
+    const result = await provider(client, versions).rewrapDek(
+      unwrapInput({ kmsKeyVersion: storedVersion }),
+    );
+    // The Decrypt request targets the parent; the Encrypt request targets
+    // the exact current write version regardless of the recovered version.
+    assert.equal(client.decryptRequests[0].name, CRYPTO_KEY_REFERENCE);
+    assert.equal(client.requests[0].name, CRYPTO_KEY_VERSION);
+    assert.equal(result.kmsKeyVersion, CRYPTO_KEY_VERSION);
+    result.wrappedDek.fill(0);
+  }
+});
+
+test("rewrapping works with multiple approved historical versions", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1, HISTORICAL_VERSION_2],
+  });
+  for (const storedVersion of [
+    HISTORICAL_VERSION_1,
+    HISTORICAL_VERSION_2,
+    CRYPTO_KEY_VERSION,
+  ]) {
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
+    const result = await provider(client, versions).rewrapDek(
+      unwrapInput({ kmsKeyVersion: storedVersion }),
+    );
+    assert.equal(client.requests[0].name, CRYPTO_KEY_VERSION);
+    assert.equal(result.kmsKeyVersion, CRYPTO_KEY_VERSION);
+    result.wrappedDek.fill(0);
+  }
+});
+
+test("the DEK passed to Encrypt is byte-for-byte identical to the mocked Decrypt plaintext", async () => {
+  const decryptPlaintext = Buffer.from(TEST_RECOVERED_DEK);
+  let encryptPlaintextSnapshot: Buffer | undefined;
+  const client = new MockKmsClient(
+    () => {
+      // Snapshot the plaintext at call time, before the rewrapper clears
+      // the recovered buffer.
+      encryptPlaintextSnapshot = Buffer.from(
+        client.requests[client.requests.length - 1].plaintext,
+      );
+      return successfulResponse();
+    },
+    () => ({
+      plaintext: decryptPlaintext,
+      plaintextCrc32c: { value: crc32c(decryptPlaintext) },
+    }),
+  );
+  const result = await provider(client).rewrapDek(unwrapInput());
+
+  assert.ok(encryptPlaintextSnapshot);
+  // The snapshot was taken at call time, before the rewrapper cleared the
+  // recovered buffer; compare against the original known bytes.
+  assert.deepEqual(encryptPlaintextSnapshot, TEST_RECOVERED_DEK);
+  assert.equal(encryptPlaintextSnapshot.length, 32);
+  result.wrappedDek.fill(0);
+  decryptPlaintext.fill(0);
+});
+
+test("the recovered DEK buffer is cleared after successful rewrapping", async () => {
+  const decryptPlaintext = Buffer.from(TEST_RECOVERED_DEK);
+  const client = new MockKmsClient(
+    () => successfulResponse(),
+    () => ({
+      plaintext: decryptPlaintext,
+      plaintextCrc32c: { value: crc32c(decryptPlaintext) },
+    }),
+  );
+  const result = await provider(client).rewrapDek(unwrapInput());
+
+  assert.deepEqual(decryptPlaintext, Buffer.alloc(32));
+  result.wrappedDek.fill(0);
+});
+
+test("the recovered DEK buffer is cleared after Encrypt failure", async () => {
+  const decryptPlaintext = Buffer.from(TEST_RECOVERED_DEK);
+  const client = new MockKmsClient(
+    () => {
+      throw new Error("mocked Encrypt RPC failure");
+    },
+    () => ({
+      plaintext: decryptPlaintext,
+      plaintextCrc32c: { value: crc32c(decryptPlaintext) },
+    }),
+  );
+  await assert.rejects(provider(client).rewrapDek(unwrapInput()), isProviderFailure);
+  assert.deepEqual(decryptPlaintext, Buffer.alloc(32));
+});
+
+test("the recovered DEK buffer is cleared after an invalid Encrypt response", async () => {
+  const decryptPlaintext = Buffer.from(TEST_RECOVERED_DEK);
+  const client = new MockKmsClient(
+    () => successfulResponse({ name: HISTORICAL_VERSION_1 }),
+    () => ({
+      plaintext: decryptPlaintext,
+      plaintextCrc32c: { value: crc32c(decryptPlaintext) },
+    }),
+  );
+  await assert.rejects(provider(client).rewrapDek(unwrapInput()), isProviderFailure);
+  assert.deepEqual(decryptPlaintext, Buffer.alloc(32));
+});
+
+test("the recovered DEK buffer is cleared after a ciphertext CRC32C failure", async () => {
+  const decryptPlaintext = Buffer.from(TEST_RECOVERED_DEK);
+  const client = new MockKmsClient(
+    () => successfulResponse({ ciphertextCrc32c: { value: 1 } }),
+    () => ({
+      plaintext: decryptPlaintext,
+      plaintextCrc32c: { value: crc32c(decryptPlaintext) },
+    }),
+  );
+  await assert.rejects(provider(client).rewrapDek(unwrapInput()), isProviderFailure);
+  assert.deepEqual(decryptPlaintext, Buffer.alloc(32));
+});
+
+test("rewrapping fails before KMS for unapproved, malformed, or cross-parent metadata", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1],
+  });
+  const inputs: readonly DekUnwrappingInput[] = [
+    unwrapInput({ kmsKeyVersion: UNKNOWN_VERSION }),
+    unwrapInput({ kmsKeyVersion: CROSS_PARENT_VERSION }),
+    unwrapInput({ kmsKeyVersion: `${CRYPTO_KEY_VERSION}-malformed` }),
+    unwrapInput({ kmsKeyReference: CROSS_PARENT_REFERENCE }),
+    unwrapInput({ kmsKeyReference: CROSS_PARENT_REFERENCE, kmsKeyVersion: HISTORICAL_VERSION_1 }),
+    unwrapInput({ kmsProvider: KMS_PROVIDER.AWS_KMS }),
+    unwrapInput({
+      wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.AWS_KMS_GENERATE_DATA_KEY_AES_256,
+    }),
+    unwrapInput({ wrappedDekFormat: "not-a-supported-format" as never }),
+    unwrapInput({ kmsProvider: "not-a-known-provider" as never }),
+    unwrapInput({ canonicalContext: Buffer.alloc(0) }),
+    unwrapInput({ wrappedDek: Buffer.alloc(0) }),
+  ];
+  for (const input of inputs) {
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
+    await assert.rejects(
+      provider(client, versions).rewrapDek(input),
+      isProviderFailure,
+    );
+    assert.equal(client.decryptRequests.length, 0);
+    assert.equal(client.requests.length, 0);
+  }
+});
+
+test("rewrapping fails closed on Decrypt CRC32C and recovered DEK length failures", async () => {
+  const failures: readonly GcpKmsDecryptResponse[] = [
+    successfulDecryptResponse({ plaintextCrc32c: undefined }),
+    successfulDecryptResponse({ plaintextCrc32c: { value: 1 } }),
+    (() => {
+      const plaintext = Buffer.alloc(31, 0xa5);
+      return {
+        plaintext,
+        plaintextCrc32c: { value: crc32c(plaintext) },
+      } satisfies GcpKmsDecryptResponse;
+    })(),
+  ];
+  for (const response of failures) {
+    const plaintext = response.plaintext;
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => response,
+    );
+    await assert.rejects(
+      provider(client).rewrapDek(unwrapInput()),
+      isProviderFailure,
+    );
+    assert.equal(client.requests.length, 0);
+    assert.ok(Buffer.isBuffer(plaintext));
+    assert.deepEqual(plaintext, Buffer.alloc(plaintext.length));
+  }
+});
+
+test("rewrapping fails closed on missing, wrong, or unverified Encrypt response fields", async () => {
+  const responses: readonly GcpKmsEncryptResponse[] = [
+    successfulResponse({ name: undefined }),
+    successfulResponse({ name: HISTORICAL_VERSION_1 }),
+    successfulResponse({ verifiedPlaintextCrc32c: false }),
+    successfulResponse({ verifiedAdditionalAuthenticatedDataCrc32c: false }),
+    successfulResponse({ ciphertext: Buffer.alloc(0) }),
+    successfulResponse({ ciphertextCrc32c: undefined }),
+    successfulResponse({ ciphertextCrc32c: { value: 1 } }),
+  ];
+  for (const response of responses) {
+    const client = new MockKmsClient(
+      () => response,
+      () => successfulDecryptResponse(),
+    );
+    await assert.rejects(
+      provider(client).rewrapDek(unwrapInput()),
+      isProviderFailure,
+    );
+    assert.equal(client.requests.length, 1);
+    // The recovered DEK must have been cleared on every failure path.
+    assertCleared(client.requests[0]);
+  }
+});
+
+test("rewrapping returns no plaintext DEK and never exposes plaintext in errors", async () => {
+  const client = new MockKmsClient(
+    () => successfulResponse({ name: undefined }),
+    () => successfulDecryptResponse(),
+  );
+  await assert.rejects(
+    provider(client).rewrapDek(unwrapInput()),
+    (error: unknown) => {
+      assert.equal(isProviderFailure(error), true);
+      assert.doesNotMatch(
+        (error as Error).message,
+        /[0-9a-f]{32}/i,
+        "no plaintext DEK hex may appear in the error",
+      );
+      return true;
+    },
+  );
+
+  const successClient = new MockKmsClient(
+    () => successfulResponse(),
+    () => successfulDecryptResponse(),
+  );
+  const result = await provider(successClient).rewrapDek(unwrapInput());
+  // The result carries only the opaque wrapped DEK and metadata.
+  assert.deepEqual(Object.keys(result).sort(), [
+    "kmsKeyReference",
+    "kmsKeyVersion",
+    "kmsProvider",
+    "wrappedDek",
+    "wrappedDekAlgorithm",
+    "wrappedDekFormat",
+  ]);
+  result.wrappedDek.fill(0);
+});
+
+test("rewrapping does not mutate the caller input or the original wrapped-DEK buffer", async () => {
+  const originalWrappedDek = Buffer.from(TEST_CIPHERTEXT);
+  const input = unwrapInput({ wrappedDek: originalWrappedDek });
+  const client = new MockKmsClient(
+    () => successfulResponse(),
+    () => successfulDecryptResponse(),
+  );
+  const result = await provider(client).rewrapDek(input);
+
+  assert.deepEqual(originalWrappedDek, Buffer.from(TEST_CIPHERTEXT));
+  assert.equal(input.kmsKeyVersion, CRYPTO_KEY_VERSION);
+  assert.equal(input.kmsKeyReference, CRYPTO_KEY_REFERENCE);
+  assert.deepEqual(input.wrappedDek, TEST_CIPHERTEXT);
+  result.wrappedDek.fill(0);
+});
+
+test("rewrapping snapshots caller-owned buffers before the first await", async () => {
+  const originalWrappedDek = Buffer.from(TEST_CIPHERTEXT);
+  const originalCanonicalContext = Buffer.from(CANONICAL_CONTEXT);
+  const input = unwrapInput({
+    wrappedDek: originalWrappedDek,
+    canonicalContext: originalCanonicalContext,
+  });
+
+  let decryptResolve:
+    | ((response: GcpKmsDecryptResponse) => void)
+    | undefined;
+  const decryptPlaintext = Buffer.from(TEST_RECOVERED_DEK);
+  let decryptCiphertextSnapshot: Buffer | undefined;
+  let decryptAadSnapshot: Buffer | undefined;
+  let encryptPlaintextSnapshot: Buffer | undefined;
+  let encryptAadSnapshot: Buffer | undefined;
+
+  const client = new MockKmsClient(
+    () => {
+      const request = client.requests[client.requests.length - 1];
+      encryptPlaintextSnapshot = Buffer.from(request.plaintext);
+      encryptAadSnapshot = Buffer.from(request.additionalAuthenticatedData);
+      return successfulResponse();
+    },
+    (request) => {
+      // Snapshot the bytes actually supplied in the Decrypt request and
+      // hold the response pending.
+      decryptCiphertextSnapshot = Buffer.from(request.ciphertext);
+      decryptAadSnapshot = Buffer.from(request.additionalAuthenticatedData);
+      return new Promise<GcpKmsDecryptResponse>((resolve) => {
+        decryptResolve = resolve;
+      });
+    },
+  );
+
+  const rewrapPromise = provider(client).rewrapDek(input);
+
+  // The synchronous portion of rewrapDek() runs before the call returns:
+  // input validation, private buffer copies, and the Decrypt request
+  // composition. The Decrypt handler has therefore already snapshotted the
+  // request bytes and is pending.
+  assert.ok(decryptResolve, "Decrypt must be pending before the caller mutates");
+
+  // While Decrypt is pending, mutate the original caller-owned buffers.
+  originalWrappedDek.fill(0xaa);
+  originalCanonicalContext.fill(0xbb);
+
+  // Resolve Decrypt with a valid 32-byte plaintext DEK and valid CRC32C.
+  decryptResolve!({
+    plaintext: decryptPlaintext,
+    plaintextCrc32c: { value: crc32c(decryptPlaintext) },
+  });
+  const result = await rewrapPromise;
+
+  // The Decrypt request used the original bytes, captured at call time.
+  assert.ok(decryptCiphertextSnapshot);
+  assert.ok(decryptAadSnapshot);
+  assert.deepEqual(decryptCiphertextSnapshot, Buffer.from(TEST_CIPHERTEXT));
+  assert.deepEqual(decryptAadSnapshot, CANONICAL_CONTEXT);
+
+  // The Encrypt request uses the exact original canonical-context bytes,
+  // not the mutated caller buffer.
+  assert.ok(encryptAadSnapshot);
+  assert.deepEqual(encryptAadSnapshot, CANONICAL_CONTEXT);
+  assert.notDeepEqual(encryptAadSnapshot, Buffer.alloc(CANONICAL_CONTEXT.length, 0xbb));
+
+  // The DEK passed to Encrypt remains byte-for-byte identical to the
+  // recovered DEK.
+  assert.ok(encryptPlaintextSnapshot);
+  assert.deepEqual(encryptPlaintextSnapshot, TEST_RECOVERED_DEK);
+  assert.equal(encryptPlaintextSnapshot.length, 32);
+
+  // The recovered plaintext buffer is still cleared after completion.
+  assert.deepEqual(decryptPlaintext, Buffer.alloc(32));
+
+  assert.equal(result.kmsKeyVersion, CRYPTO_KEY_VERSION);
+  result.wrappedDek.fill(0);
+});
+
+test("rewrapping regression: createAndWrapDek and unwrapDek keep their existing behavior", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1],
+  });
+  const client = new MockKmsClient(
+    () => successfulResponse(),
+    () => successfulDecryptResponse(),
+  );
+
+  // createAndWrapDek still generates a fresh DEK pinned to the current
+  // write version and returns plaintext plus wrapped metadata.
+  const wrapped = await provider(client, versions).createAndWrapDek({
+    canonicalContext: CANONICAL_CONTEXT,
+  });
+  assert.equal(client.requests[0].name, CRYPTO_KEY_VERSION);
+  assert.notDeepEqual(wrapped.plaintextDek, Buffer.alloc(32));
+  assert.equal(wrapped.kmsKeyVersion, CRYPTO_KEY_VERSION);
+  wrapped.plaintextDek.fill(0);
+  wrapped.wrappedDek.fill(0);
+
+  // unwrapDek still returns the recovered 32-byte DEK to the caller.
+  const recovered = await provider(client, versions).unwrapDek(
+    unwrapInput({ kmsKeyVersion: HISTORICAL_VERSION_1 }),
+  );
+  assert.deepEqual(recovered, TEST_RECOVERED_DEK);
+  recovered.fill(0);
 });
