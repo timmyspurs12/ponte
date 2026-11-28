@@ -1020,6 +1020,85 @@ test("rewrapping does not mutate the caller input or the original wrapped-DEK bu
   result.wrappedDek.fill(0);
 });
 
+test("rewrapping snapshots caller-owned buffers before the first await", async () => {
+  const originalWrappedDek = Buffer.from(TEST_CIPHERTEXT);
+  const originalCanonicalContext = Buffer.from(CANONICAL_CONTEXT);
+  const input = unwrapInput({
+    wrappedDek: originalWrappedDek,
+    canonicalContext: originalCanonicalContext,
+  });
+
+  let decryptResolve:
+    | ((response: GcpKmsDecryptResponse) => void)
+    | undefined;
+  const decryptPlaintext = Buffer.from(TEST_RECOVERED_DEK);
+  let decryptCiphertextSnapshot: Buffer | undefined;
+  let decryptAadSnapshot: Buffer | undefined;
+  let encryptPlaintextSnapshot: Buffer | undefined;
+  let encryptAadSnapshot: Buffer | undefined;
+
+  const client = new MockKmsClient(
+    () => {
+      const request = client.requests[client.requests.length - 1];
+      encryptPlaintextSnapshot = Buffer.from(request.plaintext);
+      encryptAadSnapshot = Buffer.from(request.additionalAuthenticatedData);
+      return successfulResponse();
+    },
+    (request) => {
+      // Snapshot the bytes actually supplied in the Decrypt request and
+      // hold the response pending.
+      decryptCiphertextSnapshot = Buffer.from(request.ciphertext);
+      decryptAadSnapshot = Buffer.from(request.additionalAuthenticatedData);
+      return new Promise<GcpKmsDecryptResponse>((resolve) => {
+        decryptResolve = resolve;
+      });
+    },
+  );
+
+  const rewrapPromise = provider(client).rewrapDek(input);
+
+  // The synchronous portion of rewrapDek() runs before the call returns:
+  // input validation, private buffer copies, and the Decrypt request
+  // composition. The Decrypt handler has therefore already snapshotted the
+  // request bytes and is pending.
+  assert.ok(decryptResolve, "Decrypt must be pending before the caller mutates");
+
+  // While Decrypt is pending, mutate the original caller-owned buffers.
+  originalWrappedDek.fill(0xaa);
+  originalCanonicalContext.fill(0xbb);
+
+  // Resolve Decrypt with a valid 32-byte plaintext DEK and valid CRC32C.
+  decryptResolve!({
+    plaintext: decryptPlaintext,
+    plaintextCrc32c: { value: crc32c(decryptPlaintext) },
+  });
+  const result = await rewrapPromise;
+
+  // The Decrypt request used the original bytes, captured at call time.
+  assert.ok(decryptCiphertextSnapshot);
+  assert.ok(decryptAadSnapshot);
+  assert.deepEqual(decryptCiphertextSnapshot, Buffer.from(TEST_CIPHERTEXT));
+  assert.deepEqual(decryptAadSnapshot, CANONICAL_CONTEXT);
+
+  // The Encrypt request uses the exact original canonical-context bytes,
+  // not the mutated caller buffer.
+  assert.ok(encryptAadSnapshot);
+  assert.deepEqual(encryptAadSnapshot, CANONICAL_CONTEXT);
+  assert.notDeepEqual(encryptAadSnapshot, Buffer.alloc(CANONICAL_CONTEXT.length, 0xbb));
+
+  // The DEK passed to Encrypt remains byte-for-byte identical to the
+  // recovered DEK.
+  assert.ok(encryptPlaintextSnapshot);
+  assert.deepEqual(encryptPlaintextSnapshot, TEST_RECOVERED_DEK);
+  assert.equal(encryptPlaintextSnapshot.length, 32);
+
+  // The recovered plaintext buffer is still cleared after completion.
+  assert.deepEqual(decryptPlaintext, Buffer.alloc(32));
+
+  assert.equal(result.kmsKeyVersion, CRYPTO_KEY_VERSION);
+  result.wrappedDek.fill(0);
+});
+
 test("rewrapping regression: createAndWrapDek and unwrapDek keep their existing behavior", async () => {
   const versions = approvedVersions({
     approvedHistoricalVersions: [HISTORICAL_VERSION_1],

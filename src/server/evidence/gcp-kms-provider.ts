@@ -595,26 +595,48 @@ export class GcpKmsDekProvider implements DekProvider, DekUnwrapper, DekRewrappe
   async rewrapDek(input: DekUnwrappingInput): Promise<RewrappedDek> {
     let recoveredDek: Buffer | undefined;
     try {
-      // A. Validate and recover through the existing unwrapDek() path so
-      // every approved-version membership, same-parent, provider,
-      // algorithm, format, canonical-context, request-size and CRC32C
-      // validation remains enforced. An approved historical version is
-      // accepted for recovery.
-      recoveredDek = await this.unwrapDek(input);
+      // Snapshot the caller-owned mutable buffers synchronously, before
+      // the first await: validate the input shape and create private
+      // Buffer copies of the wrapped DEK and the canonical wrapping
+      // context. The caller could otherwise mutate those buffers while
+      // Decrypt is in flight, changing the bytes this operation uses.
+      if (!input || typeof input !== "object") return providerFailure();
+      const wrappedDek = Buffer.isBuffer(input.wrappedDek)
+        ? Buffer.from(input.wrappedDek)
+        : undefined;
+      const canonicalContext = Buffer.isBuffer(input.canonicalContext)
+        ? Buffer.from(input.canonicalContext)
+        : undefined;
+      if (!wrappedDek || !canonicalContext) return providerFailure();
+
+      // A. Validate and recover through the existing unwrapDek() path
+      // using a stable input built from the private copies, so every
+      // approved-version membership, same-parent, provider, algorithm,
+      // format, canonical-context, request-size and CRC32C validation
+      // remains enforced. An approved historical version is accepted for
+      // recovery.
+      const stableInput: DekUnwrappingInput = {
+        ...input,
+        wrappedDek,
+        canonicalContext,
+      };
+      recoveredDek = await this.unwrapDek(stableInput);
 
       // B. Rewrap the exact same 32-byte DEK under the current write
-      // version. No new DEK is generated and the exact original canonical
-      // wrapping context is reused as additional authenticated data.
-      const canonicalContext = assertWrappingContext({
-        canonicalContext: input.canonicalContext,
+      // version. No new DEK is generated and the exact original
+      // canonical wrapping context (the private copy, never the
+      // caller-owned buffer after the first await) is reused as
+      // additional authenticated data.
+      const canonicalContextForEncrypt = assertWrappingContext({
+        canonicalContext,
       });
       const request: GcpKmsEncryptRequest = Object.freeze({
         name: this.currentWriteVersion,
         plaintext: recoveredDek,
-        additionalAuthenticatedData: canonicalContext,
+        additionalAuthenticatedData: canonicalContextForEncrypt,
         plaintextCrc32c: Object.freeze({ value: crc32c(recoveredDek) }),
         additionalAuthenticatedDataCrc32c: Object.freeze({
-          value: crc32c(canonicalContext),
+          value: crc32c(canonicalContextForEncrypt),
         }),
       });
       const [response] = await this.client.encrypt(request);
