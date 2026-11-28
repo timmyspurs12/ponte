@@ -9,8 +9,10 @@ import {
   type GcpKmsDecryptResponse,
   type GcpKmsEncryptRequest,
   type GcpKmsEncryptResponse,
+  parseGcpCryptoKey,
   parseGcpCryptoKeyVersion,
 } from "../../src/server/evidence/gcp-kms-provider";
+import type { ApprovedKmsKeyVersions } from "../../src/server/evidence/approved-kms-key-versions";
 import {
   decryptEvidenceEnvelope,
   encryptEvidenceEnvelope,
@@ -29,6 +31,16 @@ const CRYPTO_KEY_VERSION =
   "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/7";
 const CRYPTO_KEY_REFERENCE =
   "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence";
+const HISTORICAL_VERSION_1 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/3";
+const HISTORICAL_VERSION_2 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/5";
+const UNKNOWN_VERSION =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/99";
+const CROSS_PARENT_VERSION =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/other-key/cryptoKeyVersions/3";
+const CROSS_PARENT_REFERENCE =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/other-key";
 const CANONICAL_CONTEXT = Buffer.from(
   "PONTE_KMS_WRAPPING_CONTEXT_V1 deterministic test context",
   "utf8",
@@ -45,6 +57,18 @@ const TEST_RECOVERED_DEK = Buffer.from(
 const isProviderFailure = (error: unknown): boolean =>
   error instanceof EvidenceCandidatePreparationError &&
   error.code === "PROVIDER_FAILURE";
+
+/** Immutable approved-version configuration used by the provider tests. */
+function approvedVersions(
+  overrides: Partial<ApprovedKmsKeyVersions> = {},
+): ApprovedKmsKeyVersions {
+  return {
+    cryptoKeyReference: CRYPTO_KEY_REFERENCE,
+    currentWriteVersion: CRYPTO_KEY_VERSION,
+    approvedHistoricalVersions: [],
+    ...overrides,
+  };
+}
 
 // This deterministic mock exercises adapter-side protocol checks only. It is
 // not evidence that a live KMS Encrypt operation succeeded.
@@ -103,11 +127,11 @@ class MockKmsClient implements GcpKmsClient {
   }
 }
 
-function provider(client: GcpKmsClient): GcpKmsDekProvider {
-  return new GcpKmsDekProvider({
-    cryptoKeyVersion: CRYPTO_KEY_VERSION,
-    client,
-  });
+function provider(
+  client: GcpKmsClient,
+  versions: ApprovedKmsKeyVersions = approvedVersions(),
+): GcpKmsDekProvider {
+  return new GcpKmsDekProvider({ approvedVersions: versions, client });
 }
 
 function assertCleared(request: GcpKmsEncryptRequest): void {
@@ -156,6 +180,19 @@ test("accepts only an immutable approved-region CryptoKeyVersion resource", () =
     "projects/ponte-kms-12345/locations/africa-south1/keyRings/not a ring/cryptoKeys/key/cryptoKeyVersions/7",
   ]) {
     assert.throws(() => parseGcpCryptoKeyVersion(invalid), isProviderFailure);
+  }
+
+  // The parent CryptoKey parser accepts only the exact immutable parent
+  // form in the approved region.
+  const parent = parseGcpCryptoKey(CRYPTO_KEY_REFERENCE);
+  assert.equal(parent.cryptoKeyReference, CRYPTO_KEY_REFERENCE);
+  assert.equal(parent.location, APPROVED_GCP_KMS_LOCATION);
+  for (const invalid of [
+    "projects/ponte-kms-12345/locations/us-central1/keyRings/ponte-evidence/cryptoKeys/route-evidence",
+    // A CryptoKeyVersion resource is not a CryptoKey parent.
+    CRYPTO_KEY_VERSION,
+  ]) {
+    assert.throws(() => parseGcpCryptoKey(invalid), isProviderFailure);
   }
 });
 
@@ -277,17 +314,41 @@ test("disabled, destroyed, or otherwise unusable KMS failures are fixed and clea
   }
 });
 
-test("configuration validation and malformed canonical context fail before any client operation", async () => {
+test("the provider constructor validates the approved-version configuration before use", () => {
   const client = new MockKmsClient(() => successfulResponse());
+
+  // Missing configuration fails closed at construction.
   assert.throws(
-    () =>
-      new GcpKmsDekProvider({
-        cryptoKeyVersion: CRYPTO_KEY_REFERENCE,
-        client,
-      }),
+    () => new GcpKmsDekProvider({ client } as never),
     isProviderFailure,
   );
 
+  // Malformed or inconsistent configuration fails closed at construction:
+  // a CryptoKey parent instead of a version, a cross-parent version, a
+  // duplicated historical version, the current write version duplicated as
+  // a historical version, and an unknown field.
+  const invalidConfigs: readonly ApprovedKmsKeyVersions[] = [
+    approvedVersions({ currentWriteVersion: CRYPTO_KEY_REFERENCE }),
+    approvedVersions({ currentWriteVersion: CROSS_PARENT_VERSION }),
+    approvedVersions({
+      approvedHistoricalVersions: [HISTORICAL_VERSION_1, HISTORICAL_VERSION_1],
+    }),
+    approvedVersions({ approvedHistoricalVersions: [CRYPTO_KEY_VERSION] }),
+    approvedVersions({ approvedHistoricalVersions: [CROSS_PARENT_VERSION] }),
+    approvedVersions({ approvedHistoricalVersions: ["not-a-version"] }),
+    { ...approvedVersions(), extraField: "not accepted" } as ApprovedKmsKeyVersions,
+  ];
+  for (const config of invalidConfigs) {
+    assert.throws(
+      () => new GcpKmsDekProvider({ approvedVersions: config, client }),
+      isProviderFailure,
+      `expected fail-closed for ${JSON.stringify(config)}`,
+    );
+  }
+});
+
+test("configuration validation and malformed canonical context fail before any client operation", async () => {
+  const client = new MockKmsClient(() => successfulResponse());
   await assert.rejects(
     provider(client).createAndWrapDek({ canonicalContext: Buffer.alloc(0) }),
     isProviderFailure,
@@ -318,6 +379,102 @@ test("the adapter builds a CryptoKey-parent Decrypt request with exact persisted
   recoveredDek.fill(0);
 });
 
+test("Decrypt recovers a DEK wrapped by the current write version", async () => {
+  const client = new MockKmsClient(
+    () => successfulResponse(),
+    () => successfulDecryptResponse(),
+  );
+  const recoveredDek = await provider(client).unwrapDek(unwrapInput());
+  assert.deepEqual(recoveredDek, TEST_RECOVERED_DEK);
+  recoveredDek.fill(0);
+});
+
+test("Decrypt recovers a DEK wrapped by one approved historical version", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1],
+  });
+  const client = new MockKmsClient(
+    () => successfulResponse(),
+    () => successfulDecryptResponse(),
+  );
+  const recoveredDek = await provider(client, versions).unwrapDek(
+    unwrapInput({ kmsKeyVersion: HISTORICAL_VERSION_1 }),
+  );
+  assert.deepEqual(recoveredDek, TEST_RECOVERED_DEK);
+  recoveredDek.fill(0);
+});
+
+test("Decrypt recovers a DEK wrapped by any of multiple approved historical versions", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1, HISTORICAL_VERSION_2],
+  });
+  for (const historical of [HISTORICAL_VERSION_1, HISTORICAL_VERSION_2]) {
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
+    const recoveredDek = await provider(client, versions).unwrapDek(
+      unwrapInput({ kmsKeyVersion: historical }),
+    );
+    assert.deepEqual(recoveredDek, TEST_RECOVERED_DEK);
+    recoveredDek.fill(0);
+  }
+});
+
+test("an approved historical version and the current write version share one parent", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1],
+  });
+  for (const storedVersion of [CRYPTO_KEY_VERSION, HISTORICAL_VERSION_1]) {
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
+    const recoveredDek = await provider(client, versions).unwrapDek(
+      unwrapInput({ kmsKeyVersion: storedVersion }),
+    );
+    assert.deepEqual(recoveredDek, TEST_RECOVERED_DEK);
+    recoveredDek.fill(0);
+  }
+});
+
+test("Decrypt rejects unapproved, unknown, malformed, or cross-parent versions before KMS", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1],
+  });
+  const inputs: readonly DekUnwrappingInput[] = [
+    // A valid version under the same parent that is not approved.
+    unwrapInput({ kmsKeyVersion: UNKNOWN_VERSION }),
+    // A valid version under a different parent CryptoKey.
+    unwrapInput({ kmsKeyVersion: CROSS_PARENT_VERSION }),
+    // A malformed version resource.
+    unwrapInput({ kmsKeyVersion: `${CRYPTO_KEY_VERSION}-malformed` }),
+    unwrapInput({
+      kmsKeyVersion:
+        "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/latest",
+    }),
+    // A stored parent reference that does not match the configured parent
+    // (a valid CryptoKey reference, but the wrong one).
+    unwrapInput({ kmsKeyReference: CROSS_PARENT_REFERENCE }),
+    // A stored version whose derived parent differs from the stored
+    // reference, and a stored reference that differs from the version's
+    // parent.
+    unwrapInput({
+      kmsKeyReference: CROSS_PARENT_REFERENCE,
+      kmsKeyVersion: HISTORICAL_VERSION_1,
+    }),
+  ];
+
+  for (const input of inputs) {
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
+    await assert.rejects(provider(client, versions).unwrapDek(input), isProviderFailure);
+    assert.equal(client.decryptRequests.length, 0);
+  }
+});
+
 test("Decrypt rejects mismatched, malformed, synthetic, or non-GCP persisted metadata before KMS", async () => {
   const inputs: readonly DekUnwrappingInput[] = [
     unwrapInput({ kmsKeyReference: `${CRYPTO_KEY_REFERENCE}-other` }),
@@ -337,10 +494,17 @@ test("Decrypt rejects mismatched, malformed, synthetic, or non-GCP persisted met
       wrappedDekAlgorithm: WRAPPED_DEK_ALGORITHM.LOCAL_TEST_RANDOM_BYTES_V1,
       wrappedDekFormat: WRAPPED_DEK_FORMAT.LOCAL_TEST_RANDOM_BYTES_V1,
     }),
+    unwrapInput({ wrappedDekFormat: "not-a-supported-format" as never }),
+    unwrapInput({ kmsProvider: "not-a-known-provider" as never }),
+    unwrapInput({ canonicalContext: Buffer.alloc(0) }),
+    unwrapInput({ canonicalContext: "not-a-context-buffer" as never }),
   ];
 
   for (const input of inputs) {
-    const client = new MockKmsClient(() => successfulResponse());
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
     await assert.rejects(provider(client).unwrapDek(input), isProviderFailure);
     assert.equal(client.decryptRequests.length, 0);
   }
@@ -351,7 +515,10 @@ test("Decrypt rejects empty or non-byte wrapped ciphertext before KMS", async ()
     Buffer.alloc(0),
     "not-an-opaque-byte-buffer" as unknown as Buffer,
   ]) {
-    const client = new MockKmsClient(() => successfulResponse());
+    const client = new MockKmsClient(
+      () => successfulResponse(),
+      () => successfulDecryptResponse(),
+    );
     await assert.rejects(
       provider(client).unwrapDek(unwrapInput({ wrappedDek })),
       isProviderFailure,
@@ -360,12 +527,34 @@ test("Decrypt rejects empty or non-byte wrapped ciphertext before KMS", async ()
   }
 });
 
+test("Decrypt rejects an oversized request before KMS", async () => {
+  const oversizedWrappedDek = Buffer.alloc(8 * 1024, 0x42);
+  const client = new MockKmsClient(
+    () => successfulResponse(),
+    () => successfulDecryptResponse(),
+  );
+  await assert.rejects(
+    provider(client).unwrapDek(
+      unwrapInput({ wrappedDek: oversizedWrappedDek }),
+    ),
+    isProviderFailure,
+  );
+  assert.equal(client.decryptRequests.length, 0);
+});
+
 test("Decrypt requires a valid plaintext CRC32C and exactly 32 recovered DEK bytes, clearing failures", async () => {
   const invalidResponses = [
     successfulDecryptResponse({ plaintextCrc32c: undefined }),
     successfulDecryptResponse({ plaintextCrc32c: { value: 1 } }),
     (() => {
       const plaintext = Buffer.alloc(31, 0xa5);
+      return {
+        plaintext,
+        plaintextCrc32c: { value: crc32c(plaintext) },
+      } satisfies GcpKmsDecryptResponse;
+    })(),
+    (() => {
+      const plaintext = Buffer.alloc(33, 0xa5);
       return {
         plaintext,
         plaintextCrc32c: { value: crc32c(plaintext) },
@@ -426,6 +615,46 @@ test("Decrypt KMS errors are fixed, non-leaking provider errors", async () => {
       return true;
     });
   }
+});
+
+test("fresh wrapping is pinned to the current write version even when historical versions are approved", async () => {
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1, HISTORICAL_VERSION_2],
+  });
+  const client = new MockKmsClient(() => successfulResponse());
+  const result = await provider(client, versions).createAndWrapDek({
+    canonicalContext: CANONICAL_CONTEXT,
+  });
+
+  // The Encrypt request targets the exact current write version resource,
+  // never any approved historical version.
+  assert.equal(client.requests.length, 1);
+  assert.equal(client.requests[0].name, CRYPTO_KEY_VERSION);
+  assert.notEqual(client.requests[0].name, HISTORICAL_VERSION_1);
+  assert.notEqual(client.requests[0].name, HISTORICAL_VERSION_2);
+  assert.equal(result.kmsKeyVersion, CRYPTO_KEY_VERSION);
+  assert.equal(result.kmsKeyReference, CRYPTO_KEY_REFERENCE);
+});
+
+test("an Encrypt response naming an approved historical version still fails closed", async () => {
+  // The Encrypt response name must equal the exact current write version
+  // resource. A response naming an approved historical version is a
+  // mismatch and must be rejected even though that version is approved for
+  // decryption.
+  const versions = approvedVersions({
+    approvedHistoricalVersions: [HISTORICAL_VERSION_1],
+  });
+  const client = new MockKmsClient(() =>
+    successfulResponse({ name: HISTORICAL_VERSION_1 }),
+  );
+  await assert.rejects(
+    provider(client, versions).createAndWrapDek({
+      canonicalContext: CANONICAL_CONTEXT,
+    }),
+    isProviderFailure,
+  );
+  assert.equal(client.requests.length, 1);
+  assertCleared(client.requests[0]);
 });
 
 test("a mocked recovered DEK can hand off to AES-256-GCM decryption and authenticates AAD and DEK", async () => {

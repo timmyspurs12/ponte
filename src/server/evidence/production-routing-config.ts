@@ -9,13 +9,22 @@
 //
 // ## Server-controlled configuration
 //
-// The KMS key resource is read from the `PONTE_KMS_CRYPTO_KEY_VERSION`
-// environment variable. Environment variables are deployment configuration,
-// not request data: no request body, user identity, URL parameter or
-// client-provided value can choose a KMS resource. The value must be the
-// exact immutable `CryptoKeyVersion` resource form validated by the adapter
+// The KMS key configuration is the approved-version unit from
+// `resolveApprovedKmsKeyVersions()`: the stable parent `CryptoKey`, the
+// single current write `CryptoKeyVersion`, and zero or more approved
+// historical `CryptoKeyVersion` resources. This function takes no caller
+// arguments and reads only the single server-controlled, reviewed
+// deployment configuration source. The reviewed configuration's
+// `currentWriteVersion` is enforced to be exactly consistent with the
+// PR #24 `PONTE_KMS_CRYPTO_KEY_VERSION` authority; until a genuinely
+// reviewed configuration exists, resolution reports `CONFIG_MISSING` and
+// production composition fails closed. Every approved resource must be
+// the exact immutable `CryptoKeyVersion` form validated by the adapter
 // (`parseGcpCryptoKeyVersion`), including the approved `africa-south1`
-// location restriction.
+// location restriction, and every version must derive to the one configured
+// parent `CryptoKey`. No request data, caller value, or client-provided
+// value can choose a KMS resource, and no historical version is ever
+// accepted from request data or used for fresh DEK wrapping.
 //
 // The Registry address is required from the single server-controlled
 // deployment configuration source, `resolveTrustedReaderConfig()`. That
@@ -73,13 +82,16 @@ import "server-only";
 import { KeyManagementServiceClient } from "@google-cloud/kms";
 import {
   GcpKmsDekProvider,
-  parseGcpCryptoKeyVersion,
   wrapKeyManagementServiceClient,
   type GcpKmsClient,
 } from "./gcp-kms-provider";
+import {
+  resolveApprovedKmsKeyVersions,
+  resolveApprovedKmsKeyVersionsForTest,
+  type ApprovedKmsKeyVersions,
+} from "./approved-kms-key-versions";
 import { EvidenceCandidatePreparationError } from "./errors";
 import { resolveLocalRoutingEvidencePreparationDependencies } from "./local-routing-config";
-import { PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV } from "./kms-config-constants";
 import type { RoutingPreparationDependencies } from "./routing-orchestration";
 import {
   isBrandedReaderConfig,
@@ -128,23 +140,46 @@ export function assertOperatorScopedReaderConfig(
 }
 
 /**
- * Reads and validates the pinned KMS key resource before any provider or
- * client is constructed. Missing configuration fails closed; every malformed
- * form — CryptoKey parent, alias, wrong region, malformed version segment —
- * is rejected by the adapter's own exact-resource validation, which also
- * fails closed with the same fixed provider error.
+ * Resolves the approved KMS key-version configuration and fails closed on
+ * any non-success outcome (`CONFIG_MISSING`, `CONFIG_INVALID`,
+ * `CONFIG_CHANGED`). This is the single server-controlled, reviewed
+ * deployment configuration source; it takes no caller arguments. Missing,
+ * malformed, inconsistent, or post-initialization-changed configuration
+ * fails closed with the existing fixed provider error before any provider
+ * or client is constructed.
  */
-function readConfiguredCryptoKeyVersion(): string {
-  const raw = process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV];
-  if (typeof raw !== "string" || raw.length === 0) return failClosed();
-  return parseGcpCryptoKeyVersion(raw).cryptoKeyVersion;
+function resolveApprovedVersionsOrFailClosed(): ApprovedKmsKeyVersions {
+  const resolved = resolveApprovedKmsKeyVersions();
+  if (!resolved.ok) return failClosed();
+  return resolved.config;
 }
 
 type KmsClientFactory = () => GcpKmsClient;
 
 interface KmsClientCacheEntry {
-  readonly keyVersion: string;
+  readonly approvedVersions: ApprovedKmsKeyVersions;
   readonly narrow: GcpKmsClient;
+}
+
+/**
+ * True when two resolved approved configurations are the same unit: the
+ * same parent, the same current write version, and the same historical
+ * set (compared as a sorted set, matching the configuration immutability
+ * policy in `approved-kms-key-versions.ts`).
+ */
+function isSameApprovedVersions(
+  cached: ApprovedKmsKeyVersions,
+  resolved: ApprovedKmsKeyVersions,
+): boolean {
+  if (cached.cryptoKeyReference !== resolved.cryptoKeyReference) return false;
+  if (cached.currentWriteVersion !== resolved.currentWriteVersion)
+    return false;
+  const cachedHistorical = [...cached.approvedHistoricalVersions].sort();
+  const resolvedHistorical = [...resolved.approvedHistoricalVersions].sort();
+  return (
+    cachedHistorical.length === resolvedHistorical.length &&
+    cachedHistorical.every((value, index) => value === resolvedHistorical[index])
+  );
 }
 
 /**
@@ -178,11 +213,12 @@ function createProductionKmsClient(): GcpKmsClient {
 }
 
 function acquireKmsClient(
-  keyVersion: string,
+  approvedVersions: ApprovedKmsKeyVersions,
   factory: KmsClientFactory,
 ): GcpKmsClient {
   if (kmsClientCache) {
-    if (kmsClientCache.keyVersion !== keyVersion) return failClosed();
+    if (!isSameApprovedVersions(kmsClientCache.approvedVersions, approvedVersions))
+      return failClosed();
     return kmsClientCache.narrow;
   }
   let narrow: GcpKmsClient;
@@ -194,7 +230,7 @@ function acquireKmsClient(
     // recorded.
     return failClosed();
   }
-  kmsClientCache = { keyVersion, narrow };
+  kmsClientCache = { approvedVersions, narrow };
   return narrow;
 }
 
@@ -205,7 +241,7 @@ function acquireKmsClient(
  * reaches `acquireKmsClient`.
  */
 function buildProductionDependencies(
-  cryptoKeyVersion: string,
+  approvedVersions: ApprovedKmsKeyVersions,
   readerConfig: TrustedReaderConfigResult,
   clientFactory: KmsClientFactory,
   enforceOperatorScope: boolean,
@@ -218,9 +254,9 @@ function buildProductionDependencies(
   const registryAddress = readerConfig.config.registryAddress;
   if (!REGISTRY_ADDRESS_PATTERN.test(registryAddress)) return failClosed();
 
-  const client = acquireKmsClient(cryptoKeyVersion, clientFactory);
+  const client = acquireKmsClient(approvedVersions, clientFactory);
   return {
-    provider: new GcpKmsDekProvider({ cryptoKeyVersion, client }),
+    provider: new GcpKmsDekProvider({ approvedVersions, client }),
     registryAddress,
   };
 }
@@ -239,9 +275,9 @@ function buildProductionDependencies(
  * plaintext fallback and no synthetic provider fallback.
  */
 export function resolveProductionRoutingEvidencePreparationDependencies(): RoutingPreparationDependencies {
-  const cryptoKeyVersion = readConfiguredCryptoKeyVersion();
+  const approvedVersions = resolveApprovedVersionsOrFailClosed();
   return buildProductionDependencies(
-    cryptoKeyVersion,
+    approvedVersions,
     resolveTrustedReaderConfig(),
     createProductionKmsClient,
     true,
@@ -264,12 +300,14 @@ export function resolveProductionRoutingEvidencePreparationDependencies(): Routi
 export function resolveProductionRoutingEvidencePreparationDependenciesForTest(options: {
   readonly readerConfig: TrustedReaderConfigResult;
   readonly clientFactory: () => GcpKmsClient;
+  readonly approvedVersions: unknown;
 }): RoutingPreparationDependencies {
   if (process.env.NODE_ENV !== "test")
     throw new Error(PRODUCTION_RESOLVER_TEST_SEAM_ERROR);
-  const cryptoKeyVersion = readConfiguredCryptoKeyVersion();
+  const resolved = resolveApprovedKmsKeyVersionsForTest(options.approvedVersions);
+  if (!resolved.ok) return failClosed();
   return buildProductionDependencies(
-    cryptoKeyVersion,
+    resolved.config,
     options.readerConfig,
     options.clientFactory,
     false,

@@ -1,11 +1,12 @@
 # PONTE Phase 2D.2.2 — KMS key lifecycle: approved historical versions
 
-**Status:** trust boundary only. This phase establishes a fail-closed,
-server-controlled configuration contract for the approved versions of the
-existing GCP symmetric Cloud KMS key. It does **not** enable historical
-decryption, does **not** implement DEK rewrapping, does **not** change the
-existing `GcpKmsDekProvider` or `DekProvider` contract, and does **not**
-activate production KMS or production evidence delivery.
+**Status:** approved historical-version recovery is implemented in the
+GCP KMS provider. This phase establishes a fail-closed, server-controlled
+configuration contract for the approved versions of the existing GCP
+symmetric Cloud KMS key, and the provider recovers DEKs wrapped by any
+version in the effective approved set. It does **not** implement DEK
+rewrapping, does **not** change the `DekProvider` write contract, and does
+**not** activate production KMS or production evidence delivery.
 
 ## What this phase adds
 
@@ -39,10 +40,13 @@ is a deployment prerequisite, not a code task.
   `GcpKmsDekProvider.createAndWrapDek()` wraps a fresh DEK. The adapter
   pins encryption to the exact immutable `CryptoKeyVersion` resource and
   re-verifies `EncryptResponse.name` against it.
-- **Approved historical versions** are the versions a future historical
-  unwrap path would be permitted to recover DEKs under. They are recorded
-  here as *approved policy* only; this PR enables no recovery and no
-  rewrapping.
+- **Approved historical versions** are the versions the historical unwrap
+  path is permitted to recover DEKs under. `GcpKmsDekProvider.unwrapDek()`
+  authorizes a stored version by **approved-set membership**: the stored
+  `kms_key_version` must belong to the effective approved set
+  `{ currentWriteVersion } ∪ approvedHistoricalVersions`. Historical
+  versions are **decrypt-only**: they are never used for fresh DEK
+  wrapping, and no rewrapping is performed.
 - The current write version belongs to the approved set by construction:
   it is validated with the same exact-resource rules as every historical
   version, and the effective approved set is the union
@@ -99,6 +103,30 @@ This phase does not alter or weaken the existing KMS client lifecycle:
 the process-scoped `KeyManagementServiceClient` introduced in PR #24
 remains lazy, immutable, and restart-gated exactly as before.
 
+## Historical unwrap authorization contract
+
+`GcpKmsDekProvider.unwrapDek()` validates one persisted unwrapping input
+against the immutable approved configuration and fails closed with the
+existing fixed `PROVIDER_FAILURE` boundary — **before any Cloud KMS
+request** — when any of the following does not hold:
+
+- The stored provider, algorithm, and format match the supported GCP
+  combination (`GCP_CLOUD_KMS`, `GOOGLE_SYMMETRIC_ENCRYPTION`,
+  `GCP_KMS_ENCRYPT_CIPHERTEXT_V1`).
+- The stored `kms_key_reference` equals the configured parent `CryptoKey`
+  exactly.
+- The stored `kms_key_version` parses as an exact immutable
+  `CryptoKeyVersion` resource and derives to that same parent.
+- The stored `kms_key_version` belongs to the effective approved set
+  (`currentWriteVersion ∪ approvedHistoricalVersions`).
+
+No arbitrary key reference or version list is accepted from request data,
+database metadata, or caller configuration. The provider re-validates the
+approved-version configuration at construction (defense in depth) and
+never uses a historical version for `createAndWrapDek()`: fresh wrapping
+remains pinned to the exact `currentWriteVersion` resource, with the
+`EncryptResponse.name` equality, CRC32C, and size-budget checks intact.
+
 ## Stored `kms_key_version` is application provenance
 
 Cloud KMS `Decrypt` is invoked against the parent `CryptoKey`; the server
@@ -113,11 +141,10 @@ cryptographic integrity guarantees.
 
 ## What remains blocked (preserved limitations)
 
-- **No historical unwrap.** `GcpKmsDekProvider.unwrapDek()` is unchanged
-  and still requires the stored key version to match the single configured
-  provider version. This PR does not change that behavior.
-- **No DEK rewrapping.** No `DekRewrapper` capability exists yet, and no
+- **No DEK rewrapping.** No `DekRewrapper` capability exists, and no
   rewrap audit table or persisted rewrap operation is defined here.
+  Historical versions are decrypt-only; existing wrapped DEK values are
+  never rewritten.
 - **No reviewed KMS deployment configuration and no provisioned
   production key.** The resolver fails closed until a reviewed
   configuration exists; no real KMS call is made in CI, and no cloud
