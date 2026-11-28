@@ -116,7 +116,8 @@ The `GRANT ... WITH INHERIT/SET` syntax requires PostgreSQL 16+; a version
 guard in Phase 1 fails explicitly on older servers.
 
 **Runtime validation was completed for both supported versions via the
-Phase 2D.1.1 CI matrix** (PR #23, commit `5b26e14`, workflow
+Phase 2D.1.1 CI matrix** (PR #23, final corrected implementation at
+commit `e65a9638`, workflow
 [`frontend.yml`](../.github/workflows/frontend.yml)):
 
 - **PostgreSQL 16** — full quality suite run against a `postgres:16`
@@ -135,8 +136,12 @@ Phase 2D.1.1 CI matrix** (PR #23, commit `5b26e14`, workflow
   executed before the rejection. The full application suite
   intentionally never runs on PostgreSQL 15. **Assertion green.**
 
-Workflow run evidence: [run #88](https://github.com/timmyspurs12/ponte/actions/runs/46064851383)
-(all three jobs: `quality (16)`, `quality (18)`, `pg15-version-guard`).
+Workflow run evidence: [run #90](https://github.com/timmyspurs12/ponte/actions/runs/46115390304)
+validated the final corrected implementation, including the numeric
+`server_version_num >= 160000` assertion, and passed all three jobs:
+`quality (16)`, `quality (18)`, and `pg15-version-guard`. (The earlier
+runs #87–#89 preceded the final correction and are not the validated
+final-head run.)
 
 One incidental assertion was adjusted for the matrix: the foundation
 test previously matched `/PostgreSQL 18/` against `version()`, hard-coding
