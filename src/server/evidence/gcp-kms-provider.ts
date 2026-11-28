@@ -1,5 +1,9 @@
-// Dormant, server-only Google Cloud KMS adapter. No application composition
-// root imports or selects it in this phase.
+// Server-only Google Cloud KMS adapter. The production evidence composition
+// root (`production-routing-config.ts`) selects this adapter only after its
+// required KMS key and Registry deployment configuration validates. No real
+// KMS operation or production activation has yet occurred: the Registry
+// deployment manifest is still missing, so production resolution currently
+// fails closed.
 import "server-only";
 
 import { randomBytes } from "node:crypto";
@@ -289,12 +293,6 @@ function assertGcpUnwrappingInput(
 }
 
 /**
- * Creates the official client only when a caller explicitly invokes this
- * factory. It accepts no credential path or credential object, never reads a
- * repository file, and relies solely on the Google SDK's Application Default
- * Credentials when a future composition root deliberately chooses to use it.
- */
-/**
  * Wraps one existing official `KeyManagementServiceClient` in the narrow
  * adapter boundary. Wrapping is a pure, side-effect-free adaptation: the
  * official client instance is reused as-is, and no credential discovery or
@@ -329,14 +327,21 @@ export function wrapKeyManagementServiceClient(
   });
 }
 
+/**
+ * Creates the official client only when a caller explicitly invokes this
+ * factory. It accepts no credential path or credential object, never reads a
+ * repository file, and relies solely on the Google SDK's Application Default
+ * Credentials when a composition root deliberately chooses to use it.
+ */
 export function createGoogleCloudKmsClient(): GcpKmsClient {
   return wrapKeyManagementServiceClient(new KeyManagementServiceClient());
 }
 
 /**
- * Explicit opt-in constructor for a future composition root. It is intentionally
- * unused: normal Routing continues to select only its guarded local test
- * provider in this phase.
+ * Explicit opt-in constructor that builds a provider from an official client
+ * using Application Default Credentials. The production composition root
+ * manages its own process-scoped client lifecycle and does not call this
+ * factory, so it remains an opt-in entry point rather than a default.
  */
 export function createGcpKmsDekProviderWithApplicationDefaultCredentials(
   cryptoKeyVersion: string,

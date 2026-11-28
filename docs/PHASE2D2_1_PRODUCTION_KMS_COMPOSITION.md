@@ -27,6 +27,9 @@ configuration is missing, malformed, or unsupported.
     the explicitly test-only seam for exercising the production composition
     function with a mocked Registry configuration and an injected mocked KMS
     client. See the test-only boundary below.
+  - `resetProductionKmsClientCacheForTest()` — test-only cache reset that
+    simulates a process restart so tests can initialize their own immutable
+    client configuration independently of each other.
 - **`src/server/evidence/gcp-kms-provider.ts`** — the client wrapping was
   extracted into `wrapKeyManagementServiceClient()`, a pure adaptation of an
   already-constructed official client into the narrow `GcpKmsClient`
@@ -73,20 +76,41 @@ configuration still fails closed with `PROVIDER_FAILURE` — no placeholder
 or environment-variable Registry override, no synthetic fallback in
 production.
 
-## Lazy process-scoped KMS client reuse
+## Process-scoped KMS client reuse with immutable configuration
 
 No KMS client is constructed at import time. The official
 `KeyManagementServiceClient` is created lazily on the first valid
 production dependency resolution — and only after KMS configuration and
-Registry configuration have both been validated — then reused for later
-resolutions in the same process that resolve with the same key version.
-No fresh client is constructed per Routing request. The cache is keyed by
-the configured key version (the identity of the effective KMS
-configuration): if the effective KMS configuration changes within a
-running process, the cached pair is replaced — the previous official SDK
-client is closed best effort — instead of silently reusing a client bound
-to stale configuration. No cloud call occurs until a prepared evidence
-candidate actually needs a DEK (the provider's `createAndWrapDek`).
+Registry configuration have both been validated — and is then reused for
+later resolutions in the same process that resolve with the same key
+version. No fresh client is constructed per Routing request.
+
+The process-scoped client configuration is **immutable** once
+initialized:
+
+- The first valid production resolution initializes the client and records
+  the configured key version.
+- Later resolutions with the same key version reuse that client.
+- If `PONTE_KMS_CRYPTO_KEY_VERSION` changes after initialization,
+  resolution **fails closed** with the existing `PROVIDER_FAILURE`
+  boundary. This change requires a **process restart**; the resolver never
+  hot-replaces the active client and never closes it from the
+  request-resolution path, because earlier requests may still hold
+  providers backed by it.
+- A failed configuration change never corrupts the existing cache: the
+  cache is written only once, atomically, on successful initialization. A
+  process restart resets the cache and allows the new immutable deployment
+  configuration to initialize normally.
+
+This deliberately does **not** support hot-reloading KMS configuration.
+Changes to the ADC credential source or workload identity configuration
+also require a process restart. No credential contents are fingerprinted
+and no secrets are exposed. No cloud call occurs until a prepared
+evidence candidate actually needs a DEK (the provider's `createAndWrapDek`).
+
+**No real KMS operation has occurred.** The GCP adapter is exercised only
+through injected mocked clients, and the Registry deployment manifest is
+still absent, so production resolution currently fails closed.
 
 ## What remains blocked (preserved limitations)
 
@@ -128,9 +152,10 @@ candidate actually needs a DEK (the provider's `createAndWrapDek`).
 8. The selected GCP provider executes the real preparation contract
    (`createAndWrapDek`) through an injected mocked KMS client.
 9. Two valid dependency resolutions reuse one KMS client (one construction
-   for both); a changed key version constructs a fresh pair and never
-   silently reuses stale configuration; a repeat resolution of the same key
-   version reuses the cached client.
+   for both); a changed key version fails closed instead of closing or
+   replacing the active client; the original client remains reusable when
+   the configured key version is restored; a failed initialization attempt
+   never leaves a partially replaced cache entry.
 10. Missing or invalid KMS configuration, and missing Registry
     configuration, construct no client at all (validation completes before
     any construction).

@@ -39,17 +39,33 @@
 // production code: the service calls `resolveEvidencePreparationDependencies()`
 // with no arguments, and in development/test the selector never reaches this
 // module at all, so a KMS environment setting can never cause an ADC lookup
-// or a Google Cloud contact in local execution.
+// or a Google Cloud contact in local execution. The test-only
+// `resetProductionKmsClientCacheForTest()` clears the process-scoped client
+// cache (equivalent to a process restart) so tests can initialize their own
+// immutable configuration independently of each other.
 //
-// ## Lazy process-scoped KMS client reuse
+// ## Process-scoped KMS client reuse with immutable configuration
 //
 // This module constructs no KMS client at import time. The official
 // `KeyManagementServiceClient` is created lazily on the first valid
-// production dependency resolution and reused for later resolutions in the
-// same process that resolve with the same key version. If the effective
-// KMS configuration changes within a running process, the cached client is
-// replaced (the previous SDK client is closed best effort) rather than
-// silently reused for stale configuration. No cloud call is made until a
+// production dependency resolution, and the process-scoped client
+// configuration is treated as **immutable** once initialized:
+//
+// - The first valid production resolution initializes the client and
+//   records the configured key version.
+// - Later resolutions with the same key version reuse that client.
+// - If the configured key version changes after initialization, resolution
+//   fails closed with the existing `PROVIDER_FAILURE` boundary and the
+//   change requires a process restart. The resolver never closes or
+//   replaces the active client, because earlier requests may still hold
+//   providers backed by it.
+// - A failed configuration change never corrupts the existing cache: the
+//   cache is only written once, atomically, on successful initialization.
+//
+// This deliberately does not support hot-reloading KMS configuration.
+// Changes to the ADC credential source or workload identity configuration
+// likewise require a process restart. No credential contents are
+// fingerprinted and no secrets are exposed. No cloud call is made until a
 // prepared evidence candidate actually needs a DEK (the provider's
 // `createAndWrapDek`).
 import "server-only";
@@ -129,57 +145,62 @@ function readConfiguredCryptoKeyVersion(): string {
   return parseGcpCryptoKeyVersion(raw).cryptoKeyVersion;
 }
 
-/** One KMS client pair: the narrow adapter boundary plus the official SDK
- * client it wraps. Injected test factories provide only the narrow client. */
-interface KmsClientCreation {
-  readonly narrow: GcpKmsClient;
-  readonly official: KeyManagementServiceClient | undefined;
-}
-
-type KmsClientFactory = () => KmsClientCreation;
+type KmsClientFactory = () => GcpKmsClient;
 
 interface KmsClientCacheEntry {
   readonly keyVersion: string;
   readonly narrow: GcpKmsClient;
-  readonly official: KeyManagementServiceClient | undefined;
 }
 
 /**
- * Process-scoped lazy client cache. The cache is keyed by the configured
- * key version — the identity of the effective KMS configuration: a
- * resolution with a different key version always constructs a fresh pair
- * instead of silently reusing a client bound to stale configuration. The
- * replaced SDK client is closed best effort.
+ * Process-scoped lazy client cache. The configuration is immutable once
+ * initialized: the first valid production resolution records the configured
+ * key version and the initialized client. A later resolution whose
+ * configured key version differs fails closed — the active client is never
+ * closed or replaced from the request-resolution path, because earlier
+ * requests may still hold providers backed by it. The cache is written only
+ * once, atomically, on successful initialization; a failed attempt leaves
+ * no partially replaced entry. A process restart resets the cache and
+ * allows the new immutable deployment configuration to initialize normally.
  */
 let kmsClientCache: KmsClientCacheEntry | undefined;
 
+/**
+ * Test-only: simulates a process restart by clearing the process-scoped
+ * client cache, so tests can initialize their own immutable configuration
+ * without depending on the cache state left by other tests. Throws unless
+ * `NODE_ENV === "test"`; never called from production code.
+ */
+export function resetProductionKmsClientCacheForTest(): void {
+  if (process.env.NODE_ENV !== "test")
+    throw new Error(PRODUCTION_RESOLVER_TEST_SEAM_ERROR);
+  kmsClientCache = undefined;
+}
+
 /** Production factory: one official SDK client, wrapped once. */
-function createProductionKmsClient(): KmsClientCreation {
-  const official = new KeyManagementServiceClient();
-  return { official, narrow: wrapKeyManagementServiceClient(official) };
+function createProductionKmsClient(): GcpKmsClient {
+  return wrapKeyManagementServiceClient(new KeyManagementServiceClient());
 }
 
 function acquireKmsClient(
   keyVersion: string,
   factory: KmsClientFactory,
 ): GcpKmsClient {
-  if (kmsClientCache?.keyVersion === keyVersion) {
+  if (kmsClientCache) {
+    if (kmsClientCache.keyVersion !== keyVersion) return failClosed();
     return kmsClientCache.narrow;
   }
-  if (kmsClientCache?.official) {
-    try {
-      kmsClientCache.official.close();
-    } catch {
-      // Best effort only: cleanup must never replace the resolution outcome.
-    }
+  let narrow: GcpKmsClient;
+  try {
+    narrow = factory();
+  } catch {
+    // A construction failure fails closed with the provider boundary and
+    // leaves the cache uninitialized: no partially replaced entry is ever
+    // recorded.
+    return failClosed();
   }
-  const created = factory();
-  kmsClientCache = {
-    keyVersion,
-    narrow: created.narrow,
-    official: created.official,
-  };
-  return created.narrow;
+  kmsClientCache = { keyVersion, narrow };
+  return narrow;
 }
 
 /**
@@ -255,7 +276,7 @@ export function resolveProductionRoutingEvidencePreparationDependenciesForTest(o
   return buildProductionDependencies(
     cryptoKeyVersion,
     options.readerConfig,
-    () => ({ narrow: options.clientFactory(), official: undefined }),
+    options.clientFactory,
     false,
   );
 }

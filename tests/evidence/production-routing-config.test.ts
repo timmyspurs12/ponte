@@ -8,6 +8,7 @@ import {
   PRODUCTION_RESOLVER_TEST_SEAM_ERROR,
   assertOperatorScopedReaderConfig,
   isLocalEvidenceRuntime,
+  resetProductionKmsClientCacheForTest,
   resolveEvidencePreparationDependencies,
   resolveProductionRoutingEvidencePreparationDependencies,
   resolveProductionRoutingEvidencePreparationDependenciesForTest,
@@ -44,6 +45,10 @@ const KEY_VERSION_4 =
   "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/14";
 const KEY_VERSION_5 =
   "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/15";
+const KEY_VERSION_6 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/16";
+const KEY_VERSION_7 =
+  "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence/cryptoKeyVersions/17";
 const KEY_REFERENCE =
   "projects/ponte-kms-12345/locations/africa-south1/keyRings/ponte-evidence/cryptoKeys/route-evidence";
 const TEST_REGISTRY = "0x1111111111111111111111111111111111111111";
@@ -243,6 +248,9 @@ test("a test-scoped Registry brand is never production deployment authority", ()
 
 test("production configuration selects the GCP provider through the test-only seam", () => {
   withLocalGuards();
+  // Simulate a process restart: this test initializes its own
+  // immutable client configuration independently of other tests.
+  resetProductionKmsClientCacheForTest();
   process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_1;
   const client = new MockKmsClient();
   let factoryInvocations = 0;
@@ -269,6 +277,9 @@ test("production configuration selects the GCP provider through the test-only se
 
 test("the selected GCP provider executes the preparation contract with an injected mocked KMS client", async () => {
   withLocalGuards();
+  // Simulate a process restart: this test initializes its own
+  // immutable client configuration independently of other tests.
+  resetProductionKmsClientCacheForTest();
   process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_2;
   const client = new MockKmsClient();
   try {
@@ -306,6 +317,9 @@ test("the selected GCP provider executes the preparation contract with an inject
 
 test("two valid dependency resolutions reuse one KMS client", async () => {
   withLocalGuards();
+  // Simulate a process restart: this test initializes its own
+  // immutable client configuration independently of other tests.
+  resetProductionKmsClientCacheForTest();
   process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_3;
   const client = new MockKmsClient();
   let factoryInvocations = 0;
@@ -336,8 +350,57 @@ test("two valid dependency resolutions reuse one KMS client", async () => {
   }
 });
 
-test("a changed KMS configuration replaces the cached client instead of reusing stale configuration", () => {
+test("a changed key version fails closed instead of closing or replacing the active client", () => {
   withLocalGuards();
+  // Simulate a process restart: this test initializes its own
+  // immutable client configuration independently of other tests.
+  resetProductionKmsClientCacheForTest();
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_4;
+  const clientA = new MockKmsClient();
+  let factoryA = 0;
+  const clientB = new MockKmsClient();
+  let factoryB = 0;
+  try {
+    // The first valid resolution initializes the process-scoped client and
+    // records key version 4.
+    const first =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest({
+        readerConfig: testScopedReaderConfig(),
+        clientFactory: () => {
+          factoryA += 1;
+          return clientA;
+        },
+      });
+    assert.equal(first.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
+
+    // The configured key version changes within the process. The resolver
+    // must fail closed with the existing provider boundary: it never closes
+    // or replaces the active client, and it never constructs a client for
+    // the changed configuration.
+    process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_5;
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: testScopedReaderConfig(),
+          clientFactory: () => {
+            factoryB += 1;
+            return clientB;
+          },
+        }),
+      isProviderFailure,
+    );
+    assert.equal(factoryB, 0);
+    assert.equal(clientA.encryptRequests.length, 0);
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("the existing client remains reusable when the configured key version is restored", async () => {
+  withLocalGuards();
+  // Simulate a process restart: this test initializes its own
+  // immutable client configuration independently of other tests.
+  resetProductionKmsClientCacheForTest();
   process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_4;
   const clientA = new MockKmsClient();
   let factoryA = 0;
@@ -352,37 +415,100 @@ test("a changed KMS configuration replaces the cached client instead of reusing 
           return clientA;
         },
       });
-    assert.equal(first.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
 
-    // Effective KMS configuration changes within the process: the second
-    // resolution must not silently reuse the client bound to key version 4.
+    // A changed configuration fails closed and must not corrupt the
+    // existing cache entry.
     process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_5;
-    const second =
-      resolveProductionRoutingEvidencePreparationDependenciesForTest({
-        readerConfig: testScopedReaderConfig(),
-        clientFactory: () => {
-          factoryB += 1;
-          return clientB;
-        },
-      });
-    assert.equal(second.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
-    assert.equal(factoryA, 1);
-    assert.equal(factoryB, 1);
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: testScopedReaderConfig(),
+          clientFactory: () => {
+            factoryB += 1;
+            return clientB;
+          },
+        }),
+      isProviderFailure,
+    );
 
-    // Resolving the same (version 5) configuration again reuses the
-    // cached client: the third closure is never invoked.
-    let factoryThird = 0;
-    const third =
+    // Restoring the original key version keeps the original client
+    // reusable: no new client is constructed and the same mock client
+    // serves the restored resolution.
+    process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_4;
+    const restored =
       resolveProductionRoutingEvidencePreparationDependenciesForTest({
         readerConfig: testScopedReaderConfig(),
         clientFactory: () => {
-          factoryThird += 1;
-          return clientB;
+          factoryA += 1;
+          return clientA;
         },
       });
-    assert.equal(third.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
-    assert.equal(factoryB, 1);
-    assert.equal(factoryThird, 0);
+    assert.equal(restored.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
+    assert.equal(factoryA, 1);
+    assert.equal(factoryB, 0);
+
+    // The restored resolution is served by the original mock client: its
+    // recorded requests grow on the same object.
+    const result = await restored.provider.createAndWrapDek({
+      canonicalContext: Buffer.alloc(96),
+    });
+    assert.equal(clientA.encryptRequests.length, 1);
+    assert.equal(result.kmsKeyVersion, KEY_VERSION_4);
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("a failed initialization attempt never leaves a partially replaced cache entry", async () => {
+  withLocalGuards();
+  // Simulate a process restart: this test initializes its own
+  // immutable client configuration independently of other tests.
+  resetProductionKmsClientCacheForTest();
+  process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_6;
+  let throwingFactoryCalls = 0;
+  const client = new MockKmsClient();
+  try {
+    // The first initialization attempt fails: the cache must stay
+    // uninitialized rather than referencing a client that was never
+    // successfully created.
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: testScopedReaderConfig(),
+          clientFactory: () => {
+            throwingFactoryCalls += 1;
+            throw new Error("mocked KMS client construction failure");
+          },
+        }),
+      isProviderFailure,
+    );
+    assert.equal(throwingFactoryCalls, 1);
+
+    // A subsequent valid initialization for the same key version succeeds
+    // and initializes the cache normally.
+    const initialized =
+      resolveProductionRoutingEvidencePreparationDependenciesForTest({
+        readerConfig: testScopedReaderConfig(),
+        clientFactory: () => client,
+      });
+    assert.equal(initialized.provider.provider, KMS_PROVIDER.GCP_CLOUD_KMS);
+
+    // The initialized cache now rejects a changed key version instead of
+    // replacing the successfully initialized client.
+    process.env[PRODUCTION_KMS_CRYPTO_KEY_VERSION_ENV] = KEY_VERSION_7;
+    assert.throws(
+      () =>
+        resolveProductionRoutingEvidencePreparationDependenciesForTest({
+          readerConfig: testScopedReaderConfig(),
+          clientFactory: () => client,
+        }),
+      isProviderFailure,
+    );
+
+    await initialized.provider.createAndWrapDek({
+      canonicalContext: Buffer.alloc(96),
+    });
+    assert.equal(client.encryptRequests.length, 1);
   } finally {
     restoreEnvironment();
   }
